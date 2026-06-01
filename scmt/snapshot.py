@@ -10,6 +10,7 @@ from collections import defaultdict
 from dataclasses import asdict
 
 from . import patterns
+from .archive import build_session_trades
 from .model import Leg, Mission
 from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
 from .overrides import apply_override, get_overrides
@@ -256,6 +257,9 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
         # session income; when filtering to trade, sum the trade missions' rewards
         earned = sum(m.reward for m in visible if m.reward) if trade_only else state.total_awarded
 
+        # manual commodity-terminal trades this session (buy/sell), with a rollup
+        trades, trade_summary = build_session_trades(state)
+
         # autocomplete catalog for the editor: known stations (persisted map +
         # anything seen this session) and cargo names (canonical list + live).
         stations = set(zone_names.values())
@@ -302,6 +306,8 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
             "routes": routes,
             "plan": plan,
             "missions": mission_dicts,
+            "trades": trades,
+            "trade_summary": trade_summary,
             "catalog": {"stations": sorted(stations), "cargo": sorted(cargo_names)},
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }

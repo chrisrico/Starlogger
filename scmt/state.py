@@ -6,7 +6,7 @@ import re
 import threading
 
 from . import patterns
-from .model import Leg, Mission
+from .model import Leg, Mission, Trade
 from .planner import classify_station
 
 
@@ -16,6 +16,7 @@ class State:
     def __init__(self) -> None:
         self.lock = threading.RLock()
         self.missions: dict[str, Mission] = {}
+        self.trades: dict[str, Trade] = {}  # manual terminal trades this session
         self.zone_names: dict[str, str] = {}  # zoneHostId -> station name
         self.player: str | None = None
         self.location: str | None = None  # current station (where the client last requested inventory)
@@ -58,12 +59,13 @@ class State:
         otherwise the account/player name is kept."""
         with self.lock:
             # archive the session about to be cleared, if it had any activity
-            if self.on_session_end and (self.missions or self.total_awarded):
+            if self.on_session_end and (self.missions or self.total_awarded or self.trades):
                 try:
                     self.on_session_end(self)
                 except Exception as e:
                     print(f"[archive] session-end hook failed: {e}")
             self.missions.clear()
+            self.trades.clear()
             self.zone_names.clear()
             self.total_awarded = 0
             self._pending_award.clear()
@@ -99,6 +101,8 @@ class State:
                 return
             if self._ship(line, ts):
                 return
+            if self._trade(line, ts):
+                return
             self._mission(line, ts)
 
     # -- handlers -------------------------------------------------------- #
@@ -131,7 +135,7 @@ class State:
         that flag) so a stray re-match can't double-archive or wipe a fresh login."""
         if not patterns.SHUTDOWN.search(line):
             return False
-        if self.logged_in or self.missions or self.total_awarded:
+        if self.logged_in or self.missions or self.total_awarded or self.trades:
             self.reset()  # keeps player name; fires the session-end (archive) hook
         self.logged_in = False
         self.session_started_at = None
@@ -172,6 +176,27 @@ class State:
                 self.ship_ts = ts
                 self.in_seat = True
                 self.ships_used.add(self.ship)
+            return True
+        return False
+
+    def _trade(self, line: str, ts: str | None) -> bool:
+        """Record a manual commodity-terminal buy/sell. The request line is the only
+        record (no settle/confirm follow-up), so it's treated as effective. SCU comes
+        from the box data (boxSize x unitAmount), authoritative for both directions.
+        Keyed by ts|action|guid|shop so re-feeding the log upserts, not duplicates."""
+        for action, pat in (("buy", patterns.TRADE_BUY), ("sell", patterns.TRADE_SELL)):
+            m = pat.search(line)
+            if not m:
+                continue
+            guid = m.group("guid").lower()
+            shop = m.group("shop")
+            scu = round(float(m.group("box")) * int(m.group("units")))
+            tid = f"{ts}|{action}|{guid}|{shop}"
+            self.trades[tid] = Trade(
+                trade_id=tid, action=action, commodity_guid=guid, scu=scu,
+                auec=round(float(m.group("auec"))), shop=shop,
+                shop_label=patterns.friendly_shop(shop), ts=ts,
+            )
             return True
         return False
 

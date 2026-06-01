@@ -92,6 +92,43 @@ END_MISSION = re.compile(
 )
 AWARD = re.compile(r'Added notification "Awarded\s*(?P<amt>\d+)\s*aUEC')
 
+# Manual commodity-terminal trades (NOT mission cargo). The game logs the player
+# pressing Buy/Sell at a trade kiosk via CEntityComponentCommodityUIProvider. The
+# request line is the only record -- there's no settle/confirm follow-up -- so a
+# parsed trade is "submitted", treated as effective. SCU is taken from the box
+# data (boxSize x unitAmount); the `quantity[...]` field is inconsistent (cSCU on
+# buy, SCU on sell). The commodity is logged only as a `resourceGUID`; its name is
+# resolved from the game's ResourceTypeDatabase (see scmt/commodities.py).
+#   ...SendCommodityBuyRequest> ... shopName[SCShop_...] ... price[1067040.000000]
+#      ... resourceGUID[35121003-...] ... quantity[28800.000000 cSCU]
+#      Cargo Box Data: boxSize[16.000000] | unitAmount[18] ...
+#   ...SendCommoditySellRequest> ... shopName[SCShop_...] ... amount[793520.000000]
+#      ... resourceGUID[9e65a7bd-...] ... Cargo Box Data:  [boxSize[16] | unitAmount[14]] ...
+_BOX = r".*?boxSize\[(?P<box>[0-9.]+)\]\s*\|\s*unitAmount\[(?P<units>\d+)\]"
+TRADE_BUY = re.compile(
+    r"SendCommodityBuyRequest>.*?shopName\[(?P<shop>[^\]]*)\].*?"
+    r"price\[(?P<auec>[0-9.]+)\].*?resourceGUID\[(?P<guid>[0-9a-fA-F-]+)\]" + _BOX
+)
+TRADE_SELL = re.compile(
+    r"SendCommoditySellRequest>.*?shopName\[(?P<shop>[^\]]*)\].*?"
+    r"amount\[(?P<auec>[0-9.]+)\].*?resourceGUID\[(?P<guid>[0-9a-fA-F-]+)\]" + _BOX
+)
+
+# Shop names are entity codes ("SCShop_ht_delta_shubin_m_store"), not station names
+# (and on a different id namespace than mission zoneHostIds, so the station-name map
+# can't resolve them). Strip the SCShop_ wrapper + size/tech noise tokens to a
+# readable best-effort label ("Shubin", "Admin"); the raw code is kept alongside.
+_SHOP_NOISE = {"scshop", "ht", "lt", "mt", "m", "s", "g", "l", "delta", "alpha",
+               "beta", "gamma", "store", "shop", "base", "stand", "kiosk", "a", "b", "c"}
+
+
+def friendly_shop(shop: str) -> str:
+    """Best-effort readable label for a commodity-shop entity code."""
+    toks = [t for t in re.split(r"[_\s]+", shop or "") if t]
+    keep = [t for t in toks if t.lower() not in _SHOP_NOISE and len(t) > 1]
+    keep = keep or [t for t in toks if t.lower() != "scshop"]  # fall back if over-stripped
+    return " ".join(w.capitalize() for w in keep) or (shop or "Trade terminal")
+
 # Login/logout boundary: gamerules SC_Frontend (menu) vs SC_Default (in the PU).
 SESSION = re.compile(r'eCVS_InGame.*?gamerules="(?P<gr>SC_\w+)"')
 

@@ -545,6 +545,45 @@ def extract_records(workdir: str, p4k: str, sb: str) -> str:
     return recs
 
 
+def query_resource_types(p4k: str, sb: str | None = None) -> dict:
+    """Pull the single ``ResourceTypeDatabase`` DataCore record (commodity catalog)
+    via ``dcb query`` -- seconds, vs the minutes a full ``dcb extract`` costs. Returns
+    the parsed record dict (StarBreaker prints its match-count header to stderr, so
+    stdout is the bare JSON; we still slice from the first ``{`` defensively)."""
+    sb = sb or ensure_binary()
+    out = _run(sb, p4k, ["dcb", "query", "ResourceTypeDatabase", "--p4k", p4k], timeout=600)
+    return json.JSONDecoder().raw_decode(out[out.index("{"):])[0]
+
+
+def build_commodity_map(p4k: str, sb: str | None = None, loc: dict | None = None) -> dict:
+    """{resourceGUID(lower) -> commodity display name}, from the ResourceTypeDatabase.
+
+    Maps every resource's ``_RecordId_`` (the UUID the trade log carries as
+    ``resourceGUID``) to a name -- the localised ``displayName`` when a ``global.ini``
+    (``loc``) is supplied, else the ``_RecordName_`` token (``ResourceType.Quartz`` ->
+    ``Quartz``, CamelCase split). Walks nested groups."""
+    rec = query_resource_types(p4k, sb)
+    out: dict[str, str] = {}
+
+    def walk(g: dict) -> None:
+        for r in g.get("resources", []):
+            guid = (r.get("_RecordId_") or "").lower()
+            if not guid:
+                continue
+            name = _loc_text(r.get("displayName"), loc) if loc else ""
+            if not name:
+                rn = r.get("_RecordName_", "")
+                tok = rn.split(".", 1)[1] if "." in rn else rn
+                name = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", tok)
+            out[guid] = name
+        for sub in g.get("groups", []):
+            walk(sub)
+
+    for g in rec.get("_RecordValue_", {}).get("groups", []):
+        walk(g)
+    return out
+
+
 def _pad_block(short: int, x0: int) -> dict:
     """Represent `short` phantom SCU (capacity we know from an override but can't place
     from geometry) as one reasonably-shaped block at x=x0, instead of a 1×N strip that

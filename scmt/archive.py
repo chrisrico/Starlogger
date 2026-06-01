@@ -12,6 +12,7 @@ import os
 import threading
 import time
 
+from .commodities import load_commodities, resolve_commodity
 from .config import SESSIONS_KEEP, SESSIONS_PATH
 from .overrides import apply_override, get_overrides
 from .patterns import canonical_ship_name
@@ -53,6 +54,7 @@ def build_summary(state: State) -> dict:
             "destinations": sorted({l.location for l in drops if l.location}),
         })
     missions.sort(key=lambda x: (x["status"] != "completed", x["title"]))
+    trades, trade_totals = build_session_trades(state)
     return {
         "key": _session_key(state),
         "started_at": state.session_started_at,
@@ -63,8 +65,39 @@ def build_summary(state: State) -> dict:
         "earned": state.total_awarded,
         "counts": counts,
         "missions": missions,
+        "trades": trades,
+        "trade_totals": trade_totals,
         "archived_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+
+
+def build_session_trades(state: State) -> tuple[list, dict]:
+    """Serialize a session's manual terminal trades + a spent/earned/net rollup,
+    resolving each commodity GUID to a name via the local commodities map."""
+    cmap = load_commodities()
+    trades = []
+    totals = {"spent": 0, "earned": 0, "net": 0, "buy_scu": 0, "sell_scu": 0, "count": 0}
+    for t in sorted(state.trades.values(), key=lambda t: t.ts or ""):
+        trades.append({
+            "action": t.action,
+            "commodity": resolve_commodity(t.commodity_guid, cmap),
+            "commodity_guid": t.commodity_guid,
+            "scu": t.scu,
+            "auec": t.auec,
+            "unit_price": t.unit_price,
+            "shop": t.shop_label,
+            "shop_raw": t.shop,
+            "ts": t.ts,
+        })
+        totals["count"] += 1
+        if t.action == "buy":
+            totals["spent"] += t.auec
+            totals["buy_scu"] += t.scu
+        else:
+            totals["earned"] += t.auec
+            totals["sell_scu"] += t.scu
+    totals["net"] = totals["earned"] - totals["spent"]
+    return trades, totals
 
 
 def filter_sessions(sessions: list, trade_only: bool = False, show_unfinished: bool = True) -> list:
@@ -79,7 +112,7 @@ def filter_sessions(sessions: list, trade_only: bool = False, show_unfinished: b
             ms = [m for m in ms if m.get("is_trade")]
         if not show_unfinished:
             ms = [m for m in ms if m.get("status") != "unfinished"]
-        if not ms:
+        if not ms and not s.get("trades"):
             continue
         counts = {"completed": 0, "abandoned": 0, "failed": 0, "unfinished": 0, "total": len(ms)}
         for m in ms:
@@ -103,9 +136,18 @@ def load_sessions(path: str = SESSIONS_PATH) -> list:
             # normalize ship names so sessions archived before the canonical-name
             # fix don't show both "Crusader Mercury Star Runner" and "Mercury Star
             # Runner" (display-only; the stored file is left untouched).
+            cmap = load_commodities()
             for s in data:
                 if s.get("ships"):
                     s["ships"] = sorted({canonical_ship_name(x) for x in s["ships"]})
+                # Re-resolve trade commodity names from their stored GUID against the
+                # current map, so trades archived before commodities.json existed (or
+                # built later) self-heal from "Commodity xxxxxxxx" to a real name on
+                # read -- no archive rebuild needed. Only overrides on a known GUID.
+                for t in s.get("trades") or []:
+                    name = cmap.get((t.get("commodity_guid") or "").lower())
+                    if name:
+                        t["commodity"] = name
             _cache["data"] = data
             _cache["mtime"] = mt
         except (OSError, json.JSONDecodeError):

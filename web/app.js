@@ -26,6 +26,7 @@ let SESSIONS = null;  // archived sessions
 let PROGRESSION = null;  // hauler rank-progression summary (top of Archive tab)
 let TRADE = localStorage.getItem("tradeOnly") === "1";  // archive: trade sessions only
 let SHOW_UNFINISHED = localStorage.getItem("showUnfinished") === "1";  // archive: include unfinished
+let SHOW_CONTRACTS = localStorage.getItem("showContracts") !== "0";  // archive: show mission contracts (vs manual cargo only)
 const sessQ = () => {
   const p = [];
   if (TRADE) p.push("trade=1");
@@ -36,6 +37,13 @@ function toggleUnfinished() {
   SHOW_UNFINISHED = $("unfToggle").checked;
   localStorage.setItem("showUnfinished", SHOW_UNFINISHED ? "1" : "0");
   loadSessions();
+}
+// Hide the mission-contract lists to review just manual cargo trades. Pure display
+// (no refetch): re-render the cached sessions with contracts suppressed.
+function toggleContracts() {
+  SHOW_CONTRACTS = $("contractsToggle").checked;
+  localStorage.setItem("showContracts", SHOW_CONTRACTS ? "1" : "0");
+  setHTML("history", sessionsView(SESSIONS));
 }
 // ---- archive trade-only toggle (Archive tab only; live views are always cargo) ----
 function toggleTrade() {
@@ -1037,6 +1045,45 @@ function progressionView(p) {
   </div>`;
 }
 
+// Manual buy/sell trades for one session, shown under its mission list. Buys are a
+// cost (−, red), sells income (+, green); SCU is the box-derived amount.
+function tradesBlock(s) {
+  const trades = s.trades || [];
+  if (!trades.length) return "";
+  const tt = s.trade_totals || {};
+  const net = tt.net || 0;
+  const rows = trades.map(t => {
+    const buy = t.action === "buy";
+    return `<div class="srow-t"><span class="badge tb-${t.action}">${t.action}</span>
+      <span class="sm-title">${esc(t.commodity)} <span class="sub">· ${num(t.scu)} SCU · ${esc(t.shop)}</span></span>
+      <span class="sm-rew ${buy ? "neg" : "pos"}">${buy ? "−" : "+"}${num(t.auec)} aUEC</span></div>`;
+  }).join("");
+  return `<div class="strades">
+    <div class="strades-h">Manual trades · ${tt.count || trades.length}
+      <span class="sub">net <span class="${net >= 0 ? "pos" : "neg"}">${net >= 0 ? "+" : "−"}${num(Math.abs(net))} aUEC</span>
+      · bought ${num(tt.buy_scu || 0)} · sold ${num(tt.sell_scu || 0)} SCU</span></div>
+    ${rows}</div>`;
+}
+
+// Aggregate trade ledger across every shown session — spent / earned / net.
+function tradeLedgerView(sessions) {
+  const tot = {spent: 0, earned: 0, net: 0, buy_scu: 0, sell_scu: 0, count: 0};
+  for (const s of sessions || [])
+    for (const k in tot) tot[k] += (s.trade_totals || {})[k] || 0;
+  if (!tot.count) return "";
+  const stat = (lbl, val, cls) =>
+    `<div class="tl-stat"><span class="tl-v ${cls || ""}">${val}</span><span class="tl-l">${lbl}</span></div>`;
+  return `<div class="card trade-ledger">
+    <h3><span>Manual Trade Ledger</span><span class="scu">${tot.count} trades</span></h3>
+    <div class="tl-body">
+      ${stat("spent", num(tot.spent) + " aUEC", "neg")}
+      ${stat("earned", num(tot.earned) + " aUEC", "pos")}
+      ${stat("net", (tot.net >= 0 ? "+" : "−") + num(Math.abs(tot.net)) + " aUEC", tot.net >= 0 ? "pos" : "neg")}
+      ${stat("bought", num(tot.buy_scu) + " SCU", "")}
+      ${stat("sold", num(tot.sell_scu) + " SCU", "")}
+    </div></div>`;
+}
+
 function sessionsView(sessions) {
   const bar = `<div class="archbar">
     <span class="arch-title">Session Archive${sessions ? " · " + sessions.length : ""}</span>
@@ -1047,14 +1094,23 @@ function sessionsView(sessions) {
       <label class="switch" title="Include missions left unfinished when each session ended">
         <input type="checkbox" id="unfToggle" ${SHOW_UNFINISHED ? "checked" : ""} onchange="toggleUnfinished()">
         <span class="sw"></span><span class="sw-lbl">Show unfinished</span></label>
+      <label class="switch" title="Show mission contracts; turn off to review just manual cargo trades">
+        <input type="checkbox" id="contractsToggle" ${SHOW_CONTRACTS ? "checked" : ""} onchange="toggleContracts()">
+        <span class="sw"></span><span class="sw-lbl">Show contracts</span></label>
     </div></div>`;
   const prog = progressionView(PROGRESSION);
   if (!sessions) return bar + prog + `<div class="empty">loading archive…</div>`;
   if (!sessions.length) return bar + prog + `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
-  return bar + prog + `<div class="grid">` + sessions.map(s => {
+  const ledger = tradeLedgerView(sessions);
+  // "Show contracts" off → review just manual cargo trades: drop sessions with no
+  // trades and suppress each card's mission list + contract counts.
+  const shown = SHOW_CONTRACTS ? sessions : sessions.filter(s => (s.trades || []).length);
+  if (!shown.length)
+    return bar + prog + ledger + `<div class="empty">No manual cargo trades recorded in these sessions.</div>`;
+  return bar + prog + ledger + `<div class="grid">` + shown.map(s => {
     const c = s.counts || {};
     const dur = fmtDuration(s.started_at, s.ended_at);
-    const stats = [
+    const stats = !SHOW_CONTRACTS ? "" : [
       c.completed ? `<span class="stat-i good">✔ ${c.completed}</span>` : "",
       c.abandoned ? `<span class="stat-i bad">⊘ ${c.abandoned}</span>` : "",
       c.failed ? `<span class="stat-i bad">✕ ${c.failed}</span>` : "",
@@ -1065,16 +1121,18 @@ function sessionsView(sessions) {
       s.player ? `<span class="chip">${esc(s.player)}</span>` : "",
       ...(s.ships || []).map(sh => `<span class="chip">${esc(sh)}</span>`),
     ].join("");
-    const missions = (s.missions || []).map(m =>
-      `<div class="srow-m"><span class="badge b-${m.status}">${esc(m.status)}</span>
-        <span class="sm-title">${esc(m.title)}</span>
-        <span class="sm-rew">${m.reward ? num(m.reward) + " aUEC" : ""}</span></div>`).join("")
-      || '<div class="sub" style="padding:8px 16px">no missions recorded</div>';
+    const missions = !SHOW_CONTRACTS ? "" :
+      `<div class="smissions">${(s.missions || []).map(m =>
+        `<div class="srow-m"><span class="badge b-${m.status}">${esc(m.status)}</span>
+          <span class="sm-title">${esc(m.title)}</span>
+          <span class="sm-rew">${m.reward ? num(m.reward) + " aUEC" : ""}</span></div>`).join("")
+        || '<div class="sub" style="padding:8px 16px">no missions recorded</div>'}</div>`;
     return `<div class="card session">
       <h3><span>${fmtWhen(s.started_at)} <span class="sub">→ ${fmtWhen(s.ended_at)}${dur ? " · " + dur : ""}</span></span>
         <span class="scu">${num(s.earned || 0)} aUEC</span></h3>
       <div class="srow"><div class="meta">${meta}</div><div class="counts">${stats}</div></div>
-      <div class="smissions">${missions}</div>
+      ${missions}
+      ${tradesBlock(s)}
     </div>`;
   }).join("") + `</div>`;
 }

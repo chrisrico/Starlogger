@@ -77,15 +77,23 @@ def backfill_archive(log_path: str, stop: threading.Event) -> None:
     parse when its first session is already archived -- backups are immutable and
     parsed atomically, so one archived session means the file was fully processed.
     Self-healing: if sessions.json is wiped, the keys are gone so everything
-    re-archives; nothing to keep in sync."""
-    archived = {s.get("key") for s in load_sessions()}
+    re-archives; nothing to keep in sync. Also schema-aware -- a backup whose
+    archived session predates a summary field (e.g. `trades`, added later) is
+    re-parsed once to backfill it, so a deploy that adds a field heals existing
+    history without a manual --rebuild."""
+    # only treat a session as "done" once its archived entry carries the current
+    # schema (the `trades` key); older entries lack it and get re-parsed once.
+    def archived_keys() -> set:
+        return {s.get("key") for s in load_sessions() if "trades" in s}
+
+    archived = archived_keys()
     before = len(archived)
     for f in find_log_backups(log_path):
         if stop.is_set():
             return
         key = _first_session_key(f)
         if key and key in archived:
-            continue  # this backup's session(s) already archived -> skip full parse
+            continue  # this backup's session(s) already archived at current schema
         st = State()
         st.on_session_end = archive_session
         try:
@@ -93,7 +101,7 @@ def backfill_archive(log_path: str, stop: threading.Event) -> None:
         except OSError:
             continue
         st.reset()  # closed log -> flush its final (ended) session
-        archived = {s.get("key") for s in load_sessions()}
+        archived = archived_keys()
     added = len(archived) - before
     if added:
         print(f"[archive] backfilled {added} session(s) from logbackups")

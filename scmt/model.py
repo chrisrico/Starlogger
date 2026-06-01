@@ -21,6 +21,30 @@ class Leg:
 
 
 @dataclass
+class Trade:
+    """A manual commodity-terminal transaction (buy/sell), parsed from the game log.
+
+    Distinct from mission cargo: the player bought or sold a commodity at a trade
+    kiosk. `commodity` is resolved from `commodity_guid` at display/archive time
+    (the log only carries the GUID). `scu` is derived from the box data, `auec` is
+    the total transaction value. `trade_id` is a stable composite so re-feeding the
+    same log (restart / rotation replay) upserts rather than duplicates."""
+    trade_id: str
+    action: str  # "buy" | "sell"
+    commodity_guid: str
+    scu: int
+    auec: int
+    shop: str  # raw shop entity code
+    shop_label: str  # readable best-effort label
+    ts: str | None = None
+    commodity: str | None = None  # resolved name, filled lazily
+
+    @property
+    def unit_price(self) -> int:
+        return round(self.auec / self.scu) if self.scu else 0
+
+
+@dataclass
 class Mission:
     mission_id: str
     title: str = ""

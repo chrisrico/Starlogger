@@ -18,6 +18,7 @@ DATA_DIR = os.environ.get("SCMT_DATA_DIR", BASE_DIR)
 WEB_DIR = os.path.join(BASE_DIR, "web")  # static assets always ship with the code
 OVERRIDES_PATH = os.path.join(DATA_DIR, "overrides.json")
 SHIP_CARGO_PATH = os.path.join(DATA_DIR, "ships_cargo.json")
+COMMODITIES_PATH = os.path.join(DATA_DIR, "commodities.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
