@@ -23,34 +23,24 @@ let LAST = null;      // latest snapshot
 let EDIT = null;      // mission_id whose editor is open
 let EDIT_ZONE = null; // zoneHostId whose station-name editor is open
 let SESSIONS = null;  // archived sessions
-let PROGRESSION = null;  // hauler rank-progression summary (top of Archive tab)
-let TRADE = localStorage.getItem("tradeOnly") === "1";  // archive: trade sessions only
-let SHOW_UNFINISHED = localStorage.getItem("showUnfinished") === "1";  // archive: include unfinished
-let SHOW_CONTRACTS = localStorage.getItem("showContracts") !== "0";  // archive: show mission contracts (vs manual cargo only)
+// Contract-log filters (live in the contract-log header as a compact "Hide …" bar).
+// Stored in hide-semantics; mapped to the API's show-flags in sessQ().
+let HIDE_NONTRADE = localStorage.getItem("hideNonTrade") === "1";   // default: show non-cargo too
+let HIDE_UNFINISHED = localStorage.getItem("hideUnfinished") !== "0";  // default: hide unfinished
 const sessQ = () => {
   const p = [];
-  if (TRADE) p.push("trade=1");
-  if (SHOW_UNFINISHED) p.push("unfinished=1");
+  if (HIDE_NONTRADE) p.push("trade=1");          // trade-only = hide non-trade
+  if (!HIDE_UNFINISHED) p.push("unfinished=1");  // include unfinished = not hiding them
   return p.length ? "?" + p.join("&") : "";
 };
-function toggleUnfinished() {
-  SHOW_UNFINISHED = $("unfToggle").checked;
-  localStorage.setItem("showUnfinished", SHOW_UNFINISHED ? "1" : "0");
+function toggleHideNonTrade() {
+  HIDE_NONTRADE = $("fNonTrade").checked;
+  localStorage.setItem("hideNonTrade", HIDE_NONTRADE ? "1" : "0");
   loadSessions();
 }
-// Hide the mission-contract lists to review just manual cargo trades. Pure display
-// (no refetch): re-render the cached sessions with contracts suppressed.
-function toggleContracts() {
-  SHOW_CONTRACTS = $("contractsToggle").checked;
-  localStorage.setItem("showContracts", SHOW_CONTRACTS ? "1" : "0");
-  setHTML("history", sessionsView(SESSIONS));
-}
-// ---- archive trade-only toggle (Archive tab only; live views are always cargo) ----
-function toggleTrade() {
-  // checkbox reads "Show non-trade": checked = include non-trade sessions, i.e.
-  // NOT trade-only. TRADE (trade-only) stays the underlying flag the API expects.
-  TRADE = !$("tradeToggle").checked;
-  localStorage.setItem("tradeOnly", TRADE ? "1" : "0");
+function toggleHideUnfinished() {
+  HIDE_UNFINISHED = $("fUnfinished").checked;
+  localStorage.setItem("hideUnfinished", HIDE_UNFINISHED ? "1" : "0");
   loadSessions();
 }
 
@@ -1003,120 +993,34 @@ function fmtDuration(a, b) {
   const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
   return h ? `${h}h ${m}m` : `${m}m`;
 }
-function fmtDay(iso) {
-  if (!iso) return "?";
-  const d = new Date(iso.length <= 10 ? iso + "T00:00:00" : iso);
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+
+function sessionsView(sessions) {
+  if (!sessions) return `<div class="empty">loading archive…</div>`;
+  if (!sessions.length) return `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
+  // Two flat logs side by side, pooled across every session: the contract log (with
+  // its own compact Hide-* filter bar) and the manual-trade load log.
+  return `<div class="logs2">${contractLogView(sessions)}${tradeLogView(sessions)}</div>`;
 }
 
-// Hauler rank-progression panel shown at the top of the Archive tab. Derived from
-// the logs (org + rank live there, not in sessions.json); see scmt/progression.py.
-function progressionView(p) {
-  if (!p || !p.primary) return "";
-  const pr = p.primary;
-  const maxN = Math.max(1, ...pr.ranks.map(r => r.completed));
-  const ranks = pr.ranks.map(r => `
-    <div class="prog-row">
-      <span class="prog-rank">${esc(r.rank)}</span>
-      <span class="prog-bar"><span style="width:${Math.round(100 * r.completed / maxN)}%"></span></span>
-      <span class="prog-n">${r.completed}</span>
-      <span class="prog-span sub">${fmtDay(r.first)}${r.first !== r.last ? " – " + fmtDay(r.last) : ""}</span>
-    </div>`).join("") +
-    (pr.untitled ? `<div class="prog-row sub"><span class="prog-rank">untitled</span>
-      <span class="prog-bar"></span><span class="prog-n">${pr.untitled}</span>
-      <span class="prog-span"></span></div>` : "");
-  const milestones = pr.milestones.map(m =>
-    `<span class="ms"><b>${esc(m.rank)}</b> <span class="sub">${fmtDay(m.ts)}</span></span>`
-  ).join('<span class="ms-arrow">→</span>') || '<span class="sub">—</span>';
-  const maxD = Math.max(1, ...pr.by_day.map(d => d.count));
-  const days = pr.by_day.map(d =>
-    `<span class="dbar" title="${d.day}: ${d.count} completed">
-       <span style="height:${Math.max(6, Math.round(100 * d.count / maxD))}%"></span></span>`).join("");
-  const others = (p.haulers || []).slice(1)
-    .map(h => `<span class="chip">${esc(h.org)} · ${h.completed}</span>`).join("");
-  return `<div class="card progression">
-    <h3><span>Rank Progression · ${esc(pr.org)}</span><span class="scu">${num(pr.total)} completed</span></h3>
-    <div class="prog-body">
-      <div class="prog-ranks">${ranks}</div>
-      <div class="prog-line"><span class="prog-lbl">Promotions</span><div class="ms-row">${milestones}</div></div>
-      <div class="prog-line"><span class="prog-lbl">By day</span><div class="dbars">${days}</div></div>
-      ${others ? `<div class="prog-line"><span class="prog-lbl">Other haulers</span><div class="ms-row">${others}</div></div>` : ""}
-    </div>
+// Compact "Hide …" filter bar (lives in the contract-log header). Inverts the API's
+// show-flags: checked = exclude. Both re-fetch (server-side filtering).
+function contractFilterBar() {
+  return `<div class="filtbar">
+    <label class="chk" title="Exclude non-cargo missions (couriers, combat, etc.)">
+      <input type="checkbox" id="fNonTrade" ${HIDE_NONTRADE ? "checked" : ""} onchange="toggleHideNonTrade()"> Hide non-trade</label>
+    <label class="chk" title="Exclude missions left unfinished when the session ended">
+      <input type="checkbox" id="fUnfinished" ${HIDE_UNFINISHED ? "checked" : ""} onchange="toggleHideUnfinished()"> Hide unfinished</label>
   </div>`;
 }
 
-// Manual buy/sell trades for one session, shown under its mission list. Buys are a
-// cost (−, red), sells income (+, green); SCU is the box-derived amount.
-function tradesBlock(s) {
-  const trades = s.trades || [];
-  if (!trades.length) return "";
-  const tt = s.trade_totals || {};
-  const net = tt.net || 0;
-  const rows = trades.map(t => {
-    const buy = t.action === "buy";
-    return `<div class="srow-t"><span class="badge tb-${t.action}">${t.action}</span>
-      <span class="sm-title">${esc(t.commodity)} <span class="sub">· ${num(t.scu)} SCU · ${esc(t.shop)}</span></span>
-      <span class="sm-rew ${buy ? "neg" : "pos"}">${buy ? "−" : "+"}${num(t.auec)} aUEC</span></div>`;
-  }).join("");
-  return `<div class="strades">
-    <div class="strades-h">Manual trades · ${tt.count || trades.length}
-      <span class="sub">net <span class="${net >= 0 ? "pos" : "neg"}">${net >= 0 ? "+" : "−"}${num(Math.abs(net))} aUEC</span>
-      · bought ${num(tt.buy_scu || 0)} · sold ${num(tt.sell_scu || 0)} SCU</span></div>
-    ${rows}</div>`;
-}
-
-// Aggregate trade ledger across every shown session — spent / earned / net.
-function tradeLedgerView(sessions) {
-  const tot = {spent: 0, earned: 0, net: 0, buy_scu: 0, sell_scu: 0, count: 0};
-  for (const s of sessions || [])
-    for (const k in tot) tot[k] += (s.trade_totals || {})[k] || 0;
-  if (!tot.count) return "";
-  const stat = (lbl, val, cls) =>
-    `<div class="tl-stat"><span class="tl-v ${cls || ""}">${val}</span><span class="tl-l">${lbl}</span></div>`;
-  return `<div class="card trade-ledger">
-    <h3><span>Manual Trade Ledger</span><span class="scu">${tot.count} trades</span></h3>
-    <div class="tl-body">
-      ${stat("spent", num(tot.spent) + " aUEC", "neg")}
-      ${stat("earned", num(tot.earned) + " aUEC", "pos")}
-      ${stat("net", (tot.net >= 0 ? "+" : "−") + num(Math.abs(tot.net)) + " aUEC", tot.net >= 0 ? "pos" : "neg")}
-      ${stat("bought", num(tot.buy_scu) + " SCU", "")}
-      ${stat("sold", num(tot.sell_scu) + " SCU", "")}
-    </div></div>`;
-}
-
-function sessionsView(sessions) {
-  const bar = `<div class="archbar">
-    <span class="arch-title">Session Archive${sessions ? " · " + sessions.length : ""}</span>
-    <div class="archctl">
-      <label class="switch" title="Include non-cargo sessions (couriers, combat, etc.) in the archive">
-        <input type="checkbox" id="tradeToggle" ${TRADE ? "" : "checked"} onchange="toggleTrade()">
-        <span class="sw"></span><span class="sw-lbl">Show non-trade</span></label>
-      <label class="switch" title="Include missions left unfinished when each session ended">
-        <input type="checkbox" id="unfToggle" ${SHOW_UNFINISHED ? "checked" : ""} onchange="toggleUnfinished()">
-        <span class="sw"></span><span class="sw-lbl">Show unfinished</span></label>
-      <label class="switch" title="Show mission contracts; turn off to review just manual cargo trades">
-        <input type="checkbox" id="contractsToggle" ${SHOW_CONTRACTS ? "checked" : ""} onchange="toggleContracts()">
-        <span class="sw"></span><span class="sw-lbl">Show contracts</span></label>
-    </div></div>`;
-  const prog = progressionView(PROGRESSION);
-  if (!sessions) return bar + prog + `<div class="empty">loading archive…</div>`;
-  if (!sessions.length) return bar + prog + `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
-  const ledger = tradeLedgerView(sessions);
-  // EXPERIMENT (try/archive-two-grids): instead of per-session cards, two flat logs
-  // side by side — a contract log and a trade log, each pooled across all sessions.
-  // "Show contracts" off hides the contract log; the trade log goes full width.
-  const contracts = SHOW_CONTRACTS ? contractLogView(sessions) : "";
-  const trades = tradeLogView(sessions);
-  return bar + prog + ledger +
-    `<div class="logs2${SHOW_CONTRACTS ? "" : " one"}">${contracts}${trades}</div>`;
-}
-
-// Flat, cross-session log of every mission contract (newest session first). Archived
-// missions carry no per-mission timestamp, so rows are dated by their session start.
+// Flat, cross-session log of every mission contract, time-ordered (newest first) by
+// when it ended (else when accepted — both now carried per mission in the archive).
 function contractLogView(sessions) {
   const rows = [];
   for (const s of sessions || [])
-    for (const m of s.missions || []) rows.push({ when: s.started_at, m });
+    for (const m of s.missions || [])
+      rows.push({ when: m.ended_at || m.accepted_at || s.started_at, m });
+  rows.sort((a, b) => (b.when || "").localeCompare(a.when || ""));
   const total = rows.reduce((a, r) => a + (r.m.reward || 0), 0);
   const body = rows.map(r => {
     const dest = (r.m.destinations || []).filter(Boolean);
@@ -1128,34 +1032,81 @@ function contractLogView(sessions) {
   }).join("");
   return `<div class="card logcard">
     <h3><span>Contract Log · ${rows.length}</span><span class="scu">${num(total)} aUEC</span></h3>
+    ${contractFilterBar()}
     ${rows.length ? `<div class="logwrap"><table class="logtable">
       <thead><tr><th>When</th><th>Status</th><th>Contract</th><th class="lt-num">Reward</th></tr></thead>
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No contracts in range.</div>`}
   </div>`;
 }
 
-// Flat, cross-session log of every manual trade, precisely time-ordered (trades carry
-// their own ts). aUEC is signed: buys spend (−), sells earn (+).
+// Group manual trades into "loads": a buy paired (FIFO, per commodity) with the
+// possibly-split sells that draw it down, so profit can be read per whole load even
+// when a sell is split. A buy not yet fully sold is "open"/"holding" (profit only on
+// the sold portion); a sell with no buy in range surfaces as a "no basis" row.
+function buildLoads(trades) {
+  const chrono = [...trades].sort((a, b) => (a.ts || "").localeCompare(b.ts || ""));
+  const open = {};   // commodity key -> FIFO queue of open buy lots
+  const loads = [];
+  for (const t of chrono) {
+    const key = t.commodity_guid || t.commodity;
+    if (t.action === "buy") {
+      const lot = { commodity: t.commodity, ts: t.ts, buyPlace: t.shop, buyScu: t.scu,
+                    cost: t.auec, soldScu: 0, revenue: 0, sellPlaces: [] };
+      (open[key] = open[key] || []).push(lot);
+      loads.push(lot);
+    } else {
+      let remain = t.scu;
+      const q = open[key] || [];
+      while (remain > 0 && q.length) {
+        const lot = q[0], take = Math.min(lot.buyScu - lot.soldScu, remain);
+        lot.soldScu += take;
+        lot.revenue += t.auec * (t.scu ? take / t.scu : 1);  // prorate split sells
+        if (t.shop && !lot.sellPlaces.includes(t.shop)) lot.sellPlaces.push(t.shop);
+        remain -= take;
+        if (lot.soldScu >= lot.buyScu - 0.001) q.shift();
+      }
+      if (remain > 0)  // sold more than any tracked buy → unmatched sell
+        loads.push({ commodity: t.commodity, ts: t.ts, buyPlace: null, buyScu: 0, cost: 0,
+                     soldScu: remain, revenue: t.auec * (t.scu ? remain / t.scu : 1),
+                     sellPlaces: [t.shop], noBasis: true });
+    }
+  }
+  return loads;
+}
+
+// Cross-session manual-trade LOAD log: each row is a buy + its sells, with realised
+// profit (revenue − the cost of the sold portion). Newest load first.
 function tradeLogView(sessions) {
-  const rows = [];
+  const trades = [];
   for (const s of sessions || [])
-    for (const t of s.trades || []) rows.push(t);
-  rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
-  const net = rows.reduce((a, t) => a + (t.action === "buy" ? -t.auec : t.auec), 0);
-  const body = rows.map(t => {
-    const buy = t.action === "buy";
+    for (const t of s.trades || []) trades.push(t);
+  const loads = buildLoads(trades).sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  let totalProfit = 0;
+  const body = loads.map(L => {
+    const sold = L.soldScu;
+    const realisedCost = L.buyScu ? L.cost * (sold / L.buyScu) : 0;
+    const profit = Math.round(L.revenue - realisedCost);
+    const priced = sold > 0;
+    if (priced) totalProfit += profit;
+    const route = [L.buyPlace, (L.sellPlaces || []).join(" / ")].filter(Boolean).join(" → ") || "—";
+    let tag, scu;
+    if (L.noBasis) { tag = `<span class="lt-tag warn">no basis</span>`; scu = num(sold); }
+    else if (sold >= L.buyScu) { tag = `<span class="lt-tag good">closed</span>`; scu = num(L.buyScu); }
+    else if (sold > 0) { tag = `<span class="lt-tag">open</span>`; scu = `${num(sold)}/${num(L.buyScu)}`; }
+    else { tag = `<span class="lt-tag">holding</span>`; scu = num(L.buyScu); }
     return `<tr>
-      <td class="lt-when">${fmtWhen(t.ts)}</td>
-      <td><span class="badge tb-${t.action}">${t.action}</span></td>
-      <td class="lt-title">${esc(t.commodity)}</td>
-      <td class="lt-num">${num(t.scu)}</td>
-      <td class="lt-num ${buy ? "neg" : "pos"}">${buy ? "−" : "+"}${num(t.auec)}</td>
-      <td class="lt-shop">${esc(t.shop)}</td></tr>`;
+      <td class="lt-when">${fmtWhen(L.ts)}</td>
+      <td class="lt-title">${esc(L.commodity)} ${tag}</td>
+      <td class="lt-shop">${esc(route)}</td>
+      <td class="lt-num">${scu}</td>
+      <td class="lt-num ${L.cost ? "neg" : ""}">${L.cost ? "−" + num(L.cost) : "—"}</td>
+      <td class="lt-num ${L.revenue ? "pos" : ""}">${L.revenue ? "+" + num(Math.round(L.revenue)) : "—"}</td>
+      <td class="lt-num ${!priced ? "" : profit >= 0 ? "pos" : "neg"}">${priced ? (profit >= 0 ? "+" : "−") + num(Math.abs(profit)) : "—"}</td></tr>`;
   }).join("");
   return `<div class="card logcard">
-    <h3><span>Trade Log · ${rows.length}</span><span class="scu ${net >= 0 ? "pos" : "neg"}">${net >= 0 ? "+" : "−"}${num(Math.abs(net))} aUEC</span></h3>
-    ${rows.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>When</th><th>Trade</th><th>Commodity</th><th class="lt-num">SCU</th><th class="lt-num">aUEC</th><th>Shop</th></tr></thead>
+    <h3><span>Trade Loads · ${loads.length}</span><span class="scu ${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span></h3>
+    ${loads.length ? `<div class="logwrap"><table class="logtable">
+      <thead><tr><th>When</th><th>Commodity</th><th>Route</th><th class="lt-num">SCU</th><th class="lt-num">Cost</th><th class="lt-num">Revenue</th><th class="lt-num">Profit</th></tr></thead>
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No manual trades in range.</div>`}
   </div>`;
 }
@@ -1164,9 +1115,6 @@ async function loadSessions() {
   try {
     SESSIONS = await (await fetch("/api/sessions" + sessQ(), { cache: "no-store" })).json();
   } catch (e) { SESSIONS = SESSIONS || []; }
-  try {
-    PROGRESSION = await (await fetch("/api/progression", { cache: "no-store" })).json();
-  } catch (e) { /* keep last good progression */ }
   setHTML("history", sessionsView(SESSIONS));
 }
 
