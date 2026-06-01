@@ -11,6 +11,7 @@ from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_states, write_override
 from .settings import set_setting
 from .shipcargo import load_ship_cargo
+from .tradeflags import set_lost
 from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot, build_test_snapshot
 from .state import State
 from .stations import get_station_names, set_station_name
@@ -143,6 +144,21 @@ def create_app(state: State) -> Flask:
                     sib = dict(prev_ov.get(oid) or {})
                     sib["origin"] = origin
                     write_override(oid, sib)
+        except Exception as e:  # pragma: no cover
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": True})
+
+    @app.post("/api/trade-lost")
+    def api_trade_lost():
+        # Flag (or unflag) a manual-trade buy whose cargo was lost (destroyed/stolen),
+        # so its unsold remainder realises as a loss in the trade-load view. Keyed by
+        # the trade's stable id (ts|action|guid|shop), which the frontend reconstructs.
+        payload = request.get_json(force=True, silent=True) or {}
+        tid = payload.get("trade_id")
+        if not isinstance(tid, str) or not tid:
+            return jsonify({"ok": False, "error": "trade_id required"}), 400
+        try:
+            set_lost(tid, bool(payload.get("lost", True)))
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
         return jsonify({"ok": True})

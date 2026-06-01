@@ -1044,6 +1044,10 @@ function contractLogView(sessions) {
 // possibly-split sells that draw it down, so profit can be read per whole load even
 // when a sell is split. A buy not yet fully sold is "open"/"holding" (profit only on
 // the sold portion); a sell with no buy in range surfaces as a "no basis" row.
+// Stable id matching State.trade_id (ts|action|guid|shop, raw shop name), so a load
+// can be flagged lost server-side. Computed from fields the trade dict already has.
+const tradeId = t => t.id || `${t.ts}|${t.action}|${t.commodity_guid}|${t.shop_raw || t.shop}`;
+
 function buildLoads(trades) {
   const chrono = [...trades].sort((a, b) => (a.ts || "").localeCompare(b.ts || ""));
   const open = {};   // commodity key -> FIFO queue of open buy lots
@@ -1052,7 +1056,7 @@ function buildLoads(trades) {
     const key = t.commodity_guid || t.commodity;
     if (t.action === "buy") {
       const lot = { commodity: t.commodity, ts: t.ts, buyPlace: t.shop, buyScu: t.scu,
-                    cost: t.auec, soldScu: 0, revenue: 0, sellPlaces: [] };
+                    cost: t.auec, soldScu: 0, revenue: 0, sellPlaces: [], id: tradeId(t) };
       (open[key] = open[key] || []).push(lot);
       loads.push(lot);
     } else {
@@ -1091,22 +1095,30 @@ function tradeLogView(sessions) {
     for (const t of s.trades || []) add(t);
   for (const t of (LAST && LAST.trades) || []) add(t);  // live session
   const loads = buildLoads(trades).sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  const LOST = new Set((LAST && LAST.lost_trades) || []);
   let totalProfit = 0;
   const body = loads.map(L => {
-    const sold = L.soldScu;
-    const realisedCost = L.buyScu ? L.cost * (sold / L.buyScu) : 0;
+    const sold = L.soldScu, lost = L.id && LOST.has(L.id);
+    // a lost load writes off the unsold remainder: realise the FULL buy cost.
+    const realisedCost = lost ? L.cost : (L.buyScu ? L.cost * (sold / L.buyScu) : 0);
     const profit = Math.round(L.revenue - realisedCost);
-    const priced = sold > 0;
+    const priced = sold > 0 || lost;   // lost loads realise even with no sells
     if (priced) totalProfit += profit;
     const route = [L.buyPlace, (L.sellPlaces || []).join(" / ")].filter(Boolean).join(" → ") || "—";
     let tag, scu;
-    if (L.noBasis) { tag = `<span class="lt-tag warn">no basis</span>`; scu = num(sold); }
+    if (lost) { tag = `<span class="lt-tag lost">lost</span>`; scu = `${num(sold)}/${num(L.buyScu)}`; }
+    else if (L.noBasis) { tag = `<span class="lt-tag warn">no basis</span>`; scu = num(sold); }
     else if (sold >= L.buyScu) { tag = `<span class="lt-tag good">closed</span>`; scu = num(L.buyScu); }
     else if (sold > 0) { tag = `<span class="lt-tag">open</span>`; scu = `${num(sold)}/${num(L.buyScu)}`; }
     else { tag = `<span class="lt-tag">holding</span>`; scu = num(L.buyScu); }
-    return `<tr>
+    // a buy-based load that isn't fully sold can be marked lost (cargo destroyed /
+    // stolen); a lost one can be restored. No action on fully-closed or no-basis rows.
+    let act = "";
+    if (lost) act = `<button class="lt-act" title="Restore — not lost" onclick='markTradeLost(${JSON.stringify(L.id)}, false)'>↩</button>`;
+    else if (!L.noBasis && sold < L.buyScu) act = `<button class="lt-act" title="Mark this haul lost (cargo destroyed/stolen)" onclick='markTradeLost(${JSON.stringify(L.id)}, true)'>✕</button>`;
+    return `<tr class="${lost ? "lt-lost" : ""}">
       <td class="lt-when">${fmtWhen(L.ts)}</td>
-      <td class="lt-title">${esc(L.commodity)} ${tag}</td>
+      <td class="lt-title">${esc(L.commodity)} ${tag}${act}</td>
       <td class="lt-shop">${esc(route)}</td>
       <td class="lt-num">${scu}</td>
       <td class="lt-num ${L.cost ? "neg" : ""}">${L.cost ? "−" + num(L.cost) : "—"}</td>
@@ -1126,6 +1138,23 @@ async function loadSessions() {
     SESSIONS = await (await fetch("/api/sessions" + sessQ(), { cache: "no-store" })).json();
   } catch (e) { SESSIONS = SESSIONS || []; }
   setHTML("history", sessionsView(SESSIONS));
+}
+
+// Flag/unflag a trade load as lost (cargo destroyed/stolen). Optimistically updates
+// the live snapshot's lost set so the row re-renders immediately, then persists.
+async function markTradeLost(id, lost) {
+  if (LAST) {
+    const set = new Set(LAST.lost_trades || []);
+    lost ? set.add(id) : set.delete(id);
+    LAST.lost_trades = [...set];
+  }
+  setHTML("history", sessionsView(SESSIONS));
+  try {
+    await fetch("/api/trade-lost", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trade_id: id, lost }),
+    });
+  } catch (e) { /* next poll reconciles from the server */ }
 }
 
 // ---- poll loop ---- //

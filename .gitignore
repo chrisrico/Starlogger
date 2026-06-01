@@ -12,6 +12,7 @@ overrides.json
 sessions.json
 settings.json
 station_names.json
+trade_flags.json
 *.log
 
 # build artifacts

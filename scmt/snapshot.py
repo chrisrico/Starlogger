@@ -18,6 +18,7 @@ from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
 from .overrides import apply_override, get_overrides
 from .settings import get_settings
 from .shipcargo import load_ship_cargo, ship_capacity, ship_grid, ship_layout
+from .tradeflags import lost_trade_ids
 from .state import State
 from .stations import get_station_names, learn_station_names
 
@@ -311,6 +312,8 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
             "missions": mission_dicts,
             "trades": trades,
             "trade_summary": trade_summary,
+            "lost_trades": lost_trade_ids(),
+
             "catalog": {"stations": sorted(stations), "cargo": sorted(cargo_names)},
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }

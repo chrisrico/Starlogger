@@ -279,6 +279,13 @@ main{padding:22px;max-width:1280px;margin:0 auto}
   padding:1px 6px;border:1px solid var(--line-2);border-radius:2px;color:var(--ink-3);white-space:nowrap}
 .lt-tag.good{color:var(--green);border-color:rgba(92,227,154,.4)}
 .lt-tag.warn{color:var(--amber);border-color:rgba(245,184,92,.4)}
+.lt-tag.lost{color:var(--red);border-color:rgba(255,94,116,.45);background:rgba(255,94,116,.08)}
+.lt-act{margin-left:6px;padding:0 5px;font-size:11px;line-height:1.4;cursor:pointer;color:var(--ink-3);
+  background:transparent;border:1px solid var(--line-2);border-radius:2px;opacity:0;transition:opacity .12s}
+.logtable tr:hover .lt-act{opacity:1}
+.lt-act:hover{color:var(--red);border-color:rgba(255,94,116,.5)}
+.lt-lost td{opacity:.6}
+.lt-lost .lt-act{opacity:.8}
 /* EXPERIMENT (try/archive-two-grids): two flat logs filling the viewport height.
    --header-h is the measured sticky-header height (set by app.js); 44px = main's
    top+bottom padding. Each card is a flex column whose table area scrolls. */
