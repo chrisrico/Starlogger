@@ -1020,8 +1020,17 @@ function sessionsView(sessions) {
   return `<div class="arch-acc">${contractLogView(sessions)}${tradeLogView(sessions)}${travelLogView(sessions)}</div>`;
 }
 
+// Departed → arrived elapsed, seconds-aware (jumps run seconds to minutes). "" if no arrival.
+function fmtTravelTime(dep, arr) {
+  if (!dep || !arr) return "";
+  const s = Math.round((new Date(arr) - new Date(dep)) / 1000);
+  if (s < 0 || !isFinite(s)) return "";
+  const m = Math.floor(s / 60);
+  return m ? `${m}m ${s % 60}s` : `${s}s`;
+}
+
 // Cross-session quantum-travel log: each completed (or in-progress) jump, From → To
-// with arrival, pooled with the live session's jumps. Newest first.
+// with arrival + elapsed travel time, pooled with the live session's jumps. Newest first.
 function travelLogView(sessions) {
   const seen = new Set(), rows = [];
   const add = t => {
@@ -1036,13 +1045,15 @@ function travelLogView(sessions) {
     const arr = t.arrived
       ? ` <span class="lt-tag good" title="arrived ${esc(t.arrived)}">✔</span>`
       : ` <span class="lt-tag" title="no arrival logged">⋯</span>`;
+    const dur = fmtTravelTime(t.ts, t.arrived);
     return `<tr>
       <td class="lt-when">${fmtWhen(t.ts)}</td>
       <td class="lt-title">${esc(t.from)} <span class="sub">→</span> ${esc(t.to)}${arr}</td>
+      <td class="lt-num">${dur || '<span class="sub">—</span>'}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
   const inner = rows.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>Departed</th><th>Route</th><th>Ship</th></tr></thead>
+      <thead><tr><th>Departed</th><th>Route</th><th class="lt-num">Time</th><th>Ship</th></tr></thead>
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No quantum travel in range.</div>`;
   return logSection("travel", `Travel Log · ${rows.length}`,
                     `<span class="scu">${rows.length} jumps</span>`, inner);
