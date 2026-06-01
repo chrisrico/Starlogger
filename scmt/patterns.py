@@ -175,6 +175,29 @@ QT_ROUTE = re.compile(
 QT_ARRIVED = re.compile(
     r"(?P<ship>[A-Za-z][A-Za-z0-9_]+?)_\d+\[\d+\]\|CSCItemNavigation::OnQuantumDriveArrived"
 )
+# Same CalculateRoute event, second line: the QT fuel estimate for the jump.
+QT_FUEL = re.compile(
+    r"(?P<ship>[A-Za-z][A-Za-z0-9_]+?)_\d+\[\d+\]\|CSCItemNavigation::CalculateRoute\|"
+    r"Successfully calculated route to (?P<to>\S+) fuel estimate (?P<fuel>[0-9.]+)"
+)
+
+
+def qt_system(code: str) -> str:
+    """Classify a quantum destination code by system (for a travel tag). Inter-system
+    crossings (jump points) get "Jump Point"; otherwise the home system, best-effort."""
+    c = re.sub(r"\.\w+$|_?\{[^}]*\}", "", code).lower()
+    if re.search(r"(pyro|stan|stanton|terra|nyx|sol)-(pyro|stan|stanton|terra|nyx|sol)", c) \
+            or "_jp" in c or c.endswith("jpstation"):
+        return "Jump Point"
+    if "pyro" in c:
+        return "Pyro"
+    if "nyx" in c:
+        return "Nyx"
+    if "terra" in c:
+        return "Terra"
+    if re.search(r"stan|_s\d|cru|hur|arc|mic", c):
+        return "Stanton"
+    return ""
 
 _ROMAN = {"1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII"}
 

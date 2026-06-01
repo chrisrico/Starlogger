@@ -225,7 +225,16 @@ class State:
         m = patterns.QT_ROUTE.search(line)
         if m:
             self.travel_routes.append({"ts": ts, "ship": m.group("ship"),
-                                       "frm": m.group("frm").strip(), "to": m.group("to")})
+                                       "frm": m.group("frm").strip(), "to": m.group("to"),
+                                       "fuel": None})
+            return True
+        m = patterns.QT_FUEL.search(line)
+        if m:
+            # the fuel-estimate line follows its route line (same ts); attach to it
+            for r in reversed(self.travel_routes):
+                if r["ship"] == m.group("ship") and r["to"] == m.group("to") and r.get("fuel") is None:
+                    r["fuel"] = round(float(m.group("fuel")))
+                    break
             return True
         m = patterns.QT_ARRIVED.search(line)
         if m:

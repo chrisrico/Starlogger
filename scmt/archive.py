@@ -15,7 +15,7 @@ import time
 from .commodities import load_commodities, resolve_commodity
 from .config import SESSIONS_KEEP, SESSIONS_PATH
 from .overrides import apply_override, get_overrides
-from .patterns import canonical_ship_name, decode_qt_dest, friendly_ship
+from .patterns import canonical_ship_name, decode_qt_dest, friendly_ship, qt_system
 from .state import State
 
 _cache = {"mtime": None, "data": []}
@@ -101,6 +101,8 @@ def build_session_travels(state: State) -> list:
             "from": r["frm"],
             "to": decode_qt_dest(r["to"]),
             "to_code": r["to"],
+            "system": qt_system(r["to"]),
+            "fuel": r.get("fuel"),
             "arrived": arr,
         })
     return out

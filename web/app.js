@@ -1029,8 +1029,33 @@ function fmtTravelTime(dep, arr) {
   return m ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
-// Cross-session quantum-travel log: each completed (or in-progress) jump, From → To
-// with arrival + elapsed travel time, pooled with the live session's jumps. Newest first.
+// Pool every session's trades + the live ones, deduped (shared by the trade & travel logs).
+function pooledTrades(sessions) {
+  const out = [], seen = new Set();
+  const add = t => {
+    const k = `${t.ts}|${t.action}|${t.commodity_guid}|${t.scu}`;
+    if (!seen.has(k)) { seen.add(k); out.push(t); }
+  };
+  for (const s of sessions || []) for (const t of s.trades || []) add(t);
+  for (const t of (LAST && LAST.trades) || []) add(t);
+  return out;
+}
+// Commodities still aboard at time `ts`: net SCU (buys − sells) up to then, per commodity.
+function cargoAboardAt(trades, ts) {
+  const inv = {};
+  for (const t of trades) {
+    if ((t.ts || "") > ts) continue;
+    inv[t.commodity] = (inv[t.commodity] || 0) + (t.action === "buy" ? t.scu : -t.scu);
+  }
+  return Object.entries(inv).filter(([, s]) => s > 0.5).map(([c, s]) => ({ c, scu: Math.round(s) }));
+}
+function fuelShort(n) {
+  return !n ? "—" : n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : "" + n;
+}
+
+// Cross-session quantum-travel log: each jump From → To with arrival + travel time, a
+// system/jump-point tag, the QT-fuel estimate, and what cargo was aboard (from the
+// trades). Pooled with the live session's jumps. Newest first.
 function travelLogView(sessions) {
   const seen = new Set(), rows = [];
   const add = t => {
@@ -1041,6 +1066,7 @@ function travelLogView(sessions) {
     for (const t of s.travels || []) add(t);
   for (const t of (LAST && LAST.travels) || []) add(t);  // live session
   rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  const trades = pooledTrades(sessions);
   let totalSecs = 0;
   const body = rows.map(t => {
     const arr = t.arrived
@@ -1051,15 +1077,23 @@ function travelLogView(sessions) {
     // travel time rides the arrow, between origin and destination (plain "→", NOT a
     // .sub span — `td .sub{display:block}` would force it onto its own line).
     const leg = `<span class="qt-leg">→${dur ? `<span class="qt-dur">${dur}</span>` : ""}</span>`;
+    const sys = t.system
+      ? ` <span class="qt-sys s-${t.system.replace(/\s+/g, "").toLowerCase()}">${esc(t.system)}</span>` : "";
+    const aboard = cargoAboardAt(trades, t.ts);
+    const cargo = aboard.length
+      ? aboard.map(a => `<span class="qt-cargo">${esc(a.c)}<span class="qt-cscu">${num(a.scu)}</span></span>`).join(" ")
+      : `<span class="qt-none">—</span>`;
     return `<tr>
       <td class="lt-when">${fmtWhen(t.ts)}</td>
-      <td class="lt-title">${esc(t.from)} ${leg} ${esc(t.to)}${arr}</td>
+      <td class="lt-title">${esc(t.from)} ${leg} ${esc(t.to)}${arr}${sys}</td>
+      <td class="qt-cargocell">${cargo}</td>
+      <td class="lt-num" title="QT fuel estimate">${fuelShort(t.fuel)}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
   const th = Math.floor(totalSecs / 3600), tm = Math.round((totalSecs % 3600) / 60);
   const tot = totalSecs ? ` · ${th ? th + "h " + tm + "m" : tm + "m"} in QT` : "";
   const inner = rows.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>Departed</th><th>Route</th><th>Ship</th></tr></thead>
+      <thead><tr><th>Departed</th><th>Route</th><th>Cargo aboard</th><th class="lt-num">QT fuel</th><th>Ship</th></tr></thead>
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No quantum travel in range.</div>`;
   return logSection("travel", `Travel Log · ${rows.length}`,
                     `<span class="scu">${rows.length} jumps${tot}</span>`, inner);
@@ -1143,18 +1177,9 @@ function buildLoads(trades) {
 // Cross-session manual-trade LOAD log: each row is a buy + its sells, with realised
 // profit (revenue − the cost of the sold portion). Newest load first.
 function tradeLogView(sessions) {
-  // Pool archived trades with the CURRENT (un-archived) session's trades from the live
-  // snapshot, so a just-made trade shows immediately instead of only after the session
-  // is archived (logout/relaunch). Dedup by ts|action|commodity|scu in case a session
-  // archives mid-poll and briefly appears in both feeds.
-  const trades = [], seen = new Set();
-  const add = t => {
-    const k = `${t.ts}|${t.action}|${t.commodity_guid}|${t.scu}`;
-    if (!seen.has(k)) { seen.add(k); trades.push(t); }
-  };
-  for (const s of sessions || [])
-    for (const t of s.trades || []) add(t);
-  for (const t of (LAST && LAST.trades) || []) add(t);  // live session
+  // Pool archived trades with the CURRENT (un-archived) session's so a just-made trade
+  // shows immediately (not only after logout); pooledTrades dedups both feeds.
+  const trades = pooledTrades(sessions);
   const loads = buildLoads(trades).sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
   const LOST = new Set((LAST && LAST.lost_trades) || []);
   let totalProfit = 0;
