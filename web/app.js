@@ -1006,10 +1006,11 @@ function sessionsView(sessions) {
 // show-flags: checked = exclude. Both re-fetch (server-side filtering).
 function contractFilterBar() {
   return `<div class="filtbar">
+    <span class="filt-lbl">Hide</span>
     <label class="chk" title="Exclude non-cargo missions (couriers, combat, etc.)">
-      <input type="checkbox" id="fNonTrade" ${HIDE_NONTRADE ? "checked" : ""} onchange="toggleHideNonTrade()"> Hide non-trade</label>
+      <input type="checkbox" id="fNonTrade" ${HIDE_NONTRADE ? "checked" : ""} onchange="toggleHideNonTrade()">Non-hauling</label>
     <label class="chk" title="Exclude missions left unfinished when the session ended">
-      <input type="checkbox" id="fUnfinished" ${HIDE_UNFINISHED ? "checked" : ""} onchange="toggleHideUnfinished()"> Hide unfinished</label>
+      <input type="checkbox" id="fUnfinished" ${HIDE_UNFINISHED ? "checked" : ""} onchange="toggleHideUnfinished()">Unfinished</label>
   </div>`;
 }
 
@@ -1077,9 +1078,18 @@ function buildLoads(trades) {
 // Cross-session manual-trade LOAD log: each row is a buy + its sells, with realised
 // profit (revenue − the cost of the sold portion). Newest load first.
 function tradeLogView(sessions) {
-  const trades = [];
+  // Pool archived trades with the CURRENT (un-archived) session's trades from the live
+  // snapshot, so a just-made trade shows immediately instead of only after the session
+  // is archived (logout/relaunch). Dedup by ts|action|commodity|scu in case a session
+  // archives mid-poll and briefly appears in both feeds.
+  const trades = [], seen = new Set();
+  const add = t => {
+    const k = `${t.ts}|${t.action}|${t.commodity_guid}|${t.scu}`;
+    if (!seen.has(k)) { seen.add(k); trades.push(t); }
+  };
   for (const s of sessions || [])
-    for (const t of s.trades || []) trades.push(t);
+    for (const t of s.trades || []) add(t);
+  for (const t of (LAST && LAST.trades) || []) add(t);  // live session
   const loads = buildLoads(trades).sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
   let totalProfit = 0;
   const body = loads.map(L => {
@@ -1139,3 +1149,19 @@ async function refresh() {
 refresh();
 loadShipList();
 setInterval(refresh, 3000);
+
+// Keep --header-h / --footer-h synced with the sticky header and footer so the
+// Archive's two logs fill exactly the remaining viewport (heights shift as the
+// readouts/gauge/footer text update) without making the page itself scroll.
+(function trackChrome() {
+  const header = document.querySelector("header"), footer = document.querySelector("footer");
+  const set = (el, name) => el && document.documentElement.style.setProperty(name, el.offsetHeight + "px");
+  const sync = () => { set(header, "--header-h"); set(footer, "--footer-h"); };
+  sync();
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(sync);
+    if (header) ro.observe(header);
+    if (footer) ro.observe(footer);
+  }
+  window.addEventListener("resize", sync);
+})();
