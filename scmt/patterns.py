@@ -66,10 +66,17 @@ _LOC_BODY_CODE = {"CRU": "Crusader", "HUR": "Hurston", "ARC": "ArcCorp", "MIC": 
 def decode_location(code: str) -> tuple[str | None, bool]:
     """Decode a Location[...] code into (name, is_station).
 
+    Prefers the p4k station catalog (authoritative: "RR_ARC_L1" -> "ARC-L1 Wide Forest
+    Station"); falls back to the structural heuristic when the code isn't catalogued.
+
     "Stanton2_Orison" -> ("Orison", True)   — a precise station.
     "RR_CRU_LEO"       -> ("Crusader", False) — only the body (orbital region).
     unrecognized       -> (None, False).
     """
+    from . import locations  # lazy: locations imports scdata which imports this module's siblings
+    named = locations.resolve_code(code)
+    if named:
+        return (named, True)
     parts = code.split("_")
     if len(parts) >= 2 and _LOC_SYS_PREFIX.match(parts[0]):
         place = " ".join(parts[1:]).strip()

@@ -135,19 +135,20 @@ def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
         else:
             reason = None
 
-        # Commodity GUID->name map (for manual-trade tracking). Cheap to build (one
-        # dcb query), gated like ship cargo: rebuild when missing or the major
+        # Commodity + station reference data (commodity GUID->name + cargo-name list;
+        # station code->name + station list). Cheap to build (one global.ini extract +
+        # one dcb query), gated like ship cargo: rebuild when missing or the major
         # version moved on. Independent of `reason` so a fresh data dir with current
         # ships still gets it.
-        from . import commodities
-        if not commodities.load_commodities():
-            cmty_reason = "no cache"
+        from . import commodities, locations
+        if not commodities.load_commodities() or not locations.location_codes():
+            ref_reason = "no cache"
         elif ver and major_version(ver) != major_version(commodities.commodities_version()):
-            cmty_reason = f"version {commodities.commodities_version() or '?'} -> {ver}"
+            ref_reason = f"version {commodities.commodities_version() or '?'} -> {ver}"
         else:
-            cmty_reason = None
+            ref_reason = None
 
-        if reason or cmty_reason:
+        if reason or ref_reason:
             p4k = scdata.find_p4k(log_path)
             if not p4k:
                 print("[ship cargo] skip refresh: Data.p4k not found next to Game.log")
@@ -161,12 +162,14 @@ def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
                             print(f"[ship cargo] rebuilt {len(ships)} ships ({reason})")
                     except Exception as e:  # keep old cache, retry next check
                         print(f"[ship cargo] rebuild failed: {e}")
-                if cmty_reason:
+                if ref_reason:
                     try:
-                        cmap = scdata.build_commodity_map(p4k)
-                        if cmap:
-                            commodities.save_commodities(cmap, game_version=ver)
-                            print(f"[commodities] built {len(cmap)} commodity names ({cmty_reason})")
+                        ref = scdata.build_reference_data(p4k)
+                        commodities.save_commodities(ref["commodities"], game_version=ver,
+                                                     names=ref["commodity_names"])
+                        locations.save_locations(ref["location_codes"], game_version=ver)
+                        print(f"[reference] built {len(ref['commodity_names'])} commodities + "
+                              f"{len(ref['station_names'])} stations ({ref_reason})")
                     except Exception as e:
-                        print(f"[commodities] build failed: {e}")
+                        print(f"[reference] build failed: {e}")
         stop.wait(300)  # re-check for a version bump (e.g. after a patch + relaunch)

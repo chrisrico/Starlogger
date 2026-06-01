@@ -11,6 +11,8 @@ from dataclasses import asdict
 
 from . import patterns
 from .archive import build_session_trades
+from .commodities import commodity_names
+from .locations import station_names
 from .model import Leg, Mission
 from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
 from .overrides import apply_override, get_overrides
@@ -260,10 +262,11 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
         # manual commodity-terminal trades this session (buy/sell), with a rollup
         trades, trade_summary = build_session_trades(state)
 
-        # autocomplete catalog for the editor: known stations (persisted map +
-        # anything seen this session) and cargo names (canonical list + live).
-        stations = set(zone_names.values())
-        cargo_names = set(patterns.COMMODITY_NAMES)
+        # autocomplete catalog for the editor: station names (p4k catalog + persisted
+        # map + anything seen this session) and cargo names (p4k commodity list +
+        # canonical fallback + live).
+        stations = set(zone_names.values()) | set(station_names())
+        cargo_names = set(patterns.COMMODITY_NAMES) | set(commodity_names())
         for mis in missions:
             for leg in mis.legs.values():
                 if leg.location:

@@ -22,13 +22,14 @@ _cache = {"mtime": None, "map": {}, "meta": {}}
 
 
 def save_commodities(cmap: dict, game_version: str | None = None,
-                     path: str = COMMODITIES_PATH) -> None:
+                     names: list | None = None, path: str = COMMODITIES_PATH) -> None:
     data = {
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "game_version": game_version,
         "count": len(cmap),
         "commodities": cmap,
+        "names": sorted(names) if names else sorted(set(cmap.values())),
     }
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -61,6 +62,12 @@ def resolve_commodity(guid: str | None, cmap: dict | None = None) -> str:
         return "Unknown commodity"
     cmap = load_commodities() if cmap is None else cmap
     return cmap.get(guid.lower()) or f"Commodity {guid[:8]}"
+
+
+def commodity_names(path: str = COMMODITIES_PATH) -> list:
+    """Clean trade-commodity display names for the cargo autocomplete."""
+    load_commodities(path)
+    return _cache["meta"].get("names") or sorted(set(_cache["map"].values()))
 
 
 def commodities_version(path: str = COMMODITIES_PATH) -> str | None:
