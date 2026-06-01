@@ -1040,22 +1040,12 @@ function pooledTrades(sessions) {
   for (const t of (LAST && LAST.trades) || []) add(t);
   return out;
 }
-// Commodities still aboard at time `ts`: net SCU (buys − sells) up to then, per commodity.
-function cargoAboardAt(trades, ts) {
-  const inv = {};
-  for (const t of trades) {
-    if ((t.ts || "") > ts) continue;
-    inv[t.commodity] = (inv[t.commodity] || 0) + (t.action === "buy" ? t.scu : -t.scu);
-  }
-  return Object.entries(inv).filter(([, s]) => s > 0.5).map(([c, s]) => ({ c, scu: Math.round(s) }));
-}
 function fuelShort(n) {
   return !n ? "—" : n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : "" + n;
 }
 
-// Cross-session quantum-travel log: each jump From → To with arrival + travel time, a
-// system/jump-point tag, the QT-fuel estimate, and what cargo was aboard (from the
-// trades). Pooled with the live session's jumps. Newest first.
+// Cross-session quantum-travel log: each jump as Status · From → To · Time · System ·
+// QT fuel · Ship. Pooled with the live session's jumps. Newest first.
 function travelLogView(sessions) {
   const seen = new Set(), rows = [];
   const add = t => {
@@ -1066,34 +1056,28 @@ function travelLogView(sessions) {
     for (const t of s.travels || []) add(t);
   for (const t of (LAST && LAST.travels) || []) add(t);  // live session
   rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
-  const trades = pooledTrades(sessions);
   let totalSecs = 0;
   const body = rows.map(t => {
-    const arr = t.arrived
-      ? ` <span class="lt-tag good" title="arrived ${esc(t.arrived)}">✔</span>`
-      : ` <span class="lt-tag" title="no arrival logged">⋯</span>`;
+    const status = t.arrived
+      ? `<span class="lt-tag good" title="arrived ${esc(t.arrived)}">✔ arrived</span>`
+      : `<span class="lt-tag" title="no arrival logged">⋯ in transit</span>`;
     const dur = fmtTravelTime(t.ts, t.arrived);
     if (t.arrived) totalSecs += Math.max(0, (new Date(t.arrived) - new Date(t.ts)) / 1000);
-    // travel time rides the arrow, between origin and destination (plain "→", NOT a
-    // .sub span — `td .sub{display:block}` would force it onto its own line).
-    const leg = `<span class="qt-leg">→${dur ? `<span class="qt-dur">${dur}</span>` : ""}</span>`;
     const sys = t.system
-      ? ` <span class="qt-sys s-${t.system.replace(/\s+/g, "").toLowerCase()}">${esc(t.system)}</span>` : "";
-    const aboard = cargoAboardAt(trades, t.ts);
-    const cargo = aboard.length
-      ? aboard.map(a => `<span class="qt-cargo">${esc(a.c)}<span class="qt-cscu">${num(a.scu)}</span></span>`).join(" ")
-      : `<span class="qt-none">—</span>`;
+      ? `<span class="qt-sys s-${t.system.replace(/\s+/g, "").toLowerCase()}">${esc(t.system)}</span>` : "";
     return `<tr>
       <td class="lt-when">${fmtWhen(t.ts)}</td>
-      <td class="lt-title">${esc(t.from)} ${leg} ${esc(t.to)}${arr}${sys}</td>
-      <td class="qt-cargocell">${cargo}</td>
+      <td>${status}</td>
+      <td class="lt-title">${esc(t.from)} <span class="qt-leg">→</span> ${esc(t.to)}</td>
+      <td class="lt-num">${dur || '<span class="qt-none">—</span>'}</td>
+      <td>${sys}</td>
       <td class="lt-num" title="QT fuel estimate">${fuelShort(t.fuel)}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
   const th = Math.floor(totalSecs / 3600), tm = Math.round((totalSecs % 3600) / 60);
   const tot = totalSecs ? ` · ${th ? th + "h " + tm + "m" : tm + "m"} in QT` : "";
   const inner = rows.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>Departed</th><th>Route</th><th>Cargo aboard</th><th class="lt-num">QT fuel</th><th>Ship</th></tr></thead>
+      <thead><tr><th>Departed</th><th>Status</th><th>Route</th><th class="lt-num">Time</th><th>System</th><th class="lt-num">QT fuel</th><th>Ship</th></tr></thead>
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No quantum travel in range.</div>`;
   return logSection("travel", `Travel Log · ${rows.length}`,
                     `<span class="scu">${rows.length} jumps${tot}</span>`, inner);

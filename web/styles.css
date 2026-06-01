@@ -311,17 +311,12 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .lt-title{color:var(--ink)}
 .lt-num{font-family:var(--mono);text-align:right;white-space:nowrap}
 .lt-shop{color:var(--ink-2);white-space:nowrap}
-.qt-leg{white-space:nowrap;color:var(--ink-3)}
-.qt-dur{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-left:3px}
+.qt-leg{color:var(--ink-3)}
 .qt-sys{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;
   padding:1px 6px;border-radius:2px;border:1px solid var(--line-2);color:var(--ink-3);white-space:nowrap}
 .qt-sys.s-pyro{color:var(--amber);border-color:rgba(245,184,92,.4)}
 .qt-sys.s-stanton{color:var(--cyan);border-color:rgba(79,220,255,.4)}
 .qt-sys.s-jumppoint{color:var(--green);border-color:rgba(92,227,154,.4);background:rgba(92,227,154,.06)}
-.qt-cargocell{white-space:normal}
-.qt-cargo{display:inline-flex;align-items:baseline;gap:4px;margin:1px 4px 1px 0;padding:1px 6px;
-  font-size:11px;border:1px solid var(--line);border-radius:2px;color:var(--ink-2);white-space:nowrap}
-.qt-cscu{font-family:var(--mono);font-size:10px;color:var(--cyan)}
 .qt-none{color:var(--ink-3)}
 
 /* ---- alert note ---- */
