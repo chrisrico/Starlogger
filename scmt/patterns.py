@@ -95,6 +95,13 @@ AWARD = re.compile(r'Added notification "Awarded\s*(?P<amt>\d+)\s*aUEC')
 # Login/logout boundary: gamerules SC_Frontend (menu) vs SC_Default (in the PU).
 SESSION = re.compile(r'eCVS_InGame.*?gamerules="(?P<gr>SC_\w+)"')
 
+# Clean quit-to-desktop / client close. Unlike a logout it never passes through the
+# SC_Frontend (main-menu) boundary, so it's the only in-log end marker for that path.
+# Verified to appear at most once per session and always as the final log line, so
+# acting on it can't wipe a still-running session. (A hard kill / alt-F4 writes
+# nothing -- the log just stops -- and stays uncatchable until the next launch.)
+SHUTDOWN = re.compile(r"CCIGBroker::FastShutdown")
+
 # Game version header: "Branch: sc-alpha-4.8.0-hotfix" + "Changelist: 11875683".
 VERSION = re.compile(r"Branch:.*?(\d+\.\d+(?:\.\d+)?)")
 CHANGELIST = re.compile(r"Changelist:\s*(\d+)")

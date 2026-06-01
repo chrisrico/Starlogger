@@ -91,6 +91,8 @@ class State:
 
             if self._session_boundary(line, ts):
                 return
+            if self._shutdown(line, ts):
+                return
             if self.session_started_at is None and ts:
                 self.session_started_at = ts
             if self._version(line):
@@ -120,6 +122,19 @@ class State:
             self.logged_in = True
             if self.session_started_at is None:
                 self.session_started_at = ts
+        return True
+
+    def _shutdown(self, line: str, ts: str | None) -> bool:
+        """Clean quit-to-desktop: archive + reset like a logout. The game writes no
+        SC_Frontend boundary on this path, so without it the session would linger
+        until the next launch rotated the log. Guarded on logged_in (and dedup'd by
+        that flag) so a stray re-match can't double-archive or wipe a fresh login."""
+        if not patterns.SHUTDOWN.search(line):
+            return False
+        if self.logged_in or self.missions or self.total_awarded:
+            self.reset()  # keeps player name; fires the session-end (archive) hook
+        self.logged_in = False
+        self.session_started_at = None
         return True
 
     def _version(self, line: str) -> bool:
