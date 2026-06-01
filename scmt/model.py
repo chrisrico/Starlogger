@@ -62,6 +62,22 @@ class Mission:
         return None
 
     @property
+    def host_artifact_zones(self) -> set[str]:
+        """zoneHostIds that tag BOTH a pickup and a dropoff leg of this mission.
+
+        The game hosts a freshly-accepted contract's markers on the *acceptance*
+        station's zone, so a zone shared by collect and deliver is that host
+        artifact, not a real endpoint — naming a leg from it would mislabel every
+        contract whose true destination differs from where it was accepted. The
+        deliver-objective text (Leg.location) is the only trustworthy source until
+        then. Mirrors origin_zone's same-zone skip, on the dropoff side."""
+        pick = {l.zone_host_id for l in self.legs.values()
+                if l.kind == "pickup" and l.zone_host_id}
+        drop = {l.zone_host_id for l in self.legs.values()
+                if l.kind == "dropoff" and l.zone_host_id}
+        return pick & drop
+
+    @property
     def is_trade(self) -> bool:
         """Cargo-hauling/trade mission (vs combat, etc.)."""
         return (

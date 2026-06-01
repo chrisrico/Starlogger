@@ -19,6 +19,17 @@ from .state import State
 from .stations import get_station_names, learn_station_names
 
 
+# Shown for a dropoff whose only location signal is the acceptance-host zone (see
+# Mission.host_artifact_zones): we know a destination exists, just not which yet —
+# the game reveals it via the deliver objective and the label self-heals then.
+PENDING_DEST = "Destination pending"
+
+
+def _unresolved(loc: str) -> bool:
+    """A placeholder destination/origin that should sort after real stations."""
+    return loc.startswith("Unknown station") or loc == PENDING_DEST
+
+
 def _resolve(zone_names: dict, zone: str | None) -> str:
     if zone and zone in zone_names:
         return zone_names[zone]
@@ -81,8 +92,7 @@ def _sorted_groups(groups: dict) -> list:
     for g in out:
         # delivered (done) lines sink to the bottom of each card
         g["items"].sort(key=lambda i: (i.get("done", False), -(i["qty"] or 0), i["cargo"]))
-    out.sort(key=lambda g: (g["location"].startswith("Unknown station"),
-                            g["location"].lower()))
+    out.sort(key=lambda g: (_unresolved(g["location"]), g["location"].lower()))
     return out
 
 
@@ -154,8 +164,24 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
         # active/loading/unloading/route views and counts.
         visible = [m for m in missions if m.mission_id not in hidden_ids]
 
+        # Dropoff legs whose only location signal is the acceptance-host zone (shared
+        # with the mission's pickup) — not a real destination. Keyed by objective id
+        # (per-instance UUIDs, globally unique) so dleg_loc can suppress without a
+        # mission handle. Drops out the moment deliver text sets leg.location.
+        pending_drops = {
+            leg.objective_id
+            for mis in missions
+            for leg in mis.legs.values()
+            if leg.kind == "dropoff" and not leg.location
+            and leg.zone_host_id in mis.host_artifact_zones
+        }
+
         def dleg_loc(leg: Leg) -> str:
-            return leg.location or _resolve(zone_names, leg.zone_host_id)
+            if leg.location:
+                return leg.location
+            if leg.objective_id in pending_drops:
+                return PENDING_DEST
+            return _resolve(zone_names, leg.zone_host_id)
 
         def origin_of(mis: Mission) -> str:
             return mis.origin_name or _resolve(zone_names, mis.origin_zone)
@@ -359,7 +385,9 @@ def _build_unloading_routes(active, origin_of, dleg_loc, mlabel):
             g = unload.setdefault(
                 dest, {"location": dest, "zone": None, "total_scu": 0, "items": [], "has_partial": False}
             )
-            if leg.zone_host_id and not g["zone"]:
+            # a pending dropoff carries the acceptance-host zone (e.g. Baijini); don't
+            # expose it for naming or it'd let the user mis-rename that real station.
+            if leg.zone_host_id and not g["zone"] and dest != PENDING_DEST:
                 g["zone"] = leg.zone_host_id
             if not done:
                 g["total_scu"] += qty or 0
@@ -397,7 +425,7 @@ def _build_unloading_routes(active, origin_of, dleg_loc, mlabel):
     ]
     # routes sorted by origin then destination (unresolved stations last)
     route_list.sort(key=lambda r: (
-        r["origin"].startswith("Unknown station"), r["origin"].lower(),
-        r["destination"].startswith("Unknown station"), r["destination"].lower(),
+        _unresolved(r["origin"]), r["origin"].lower(),
+        _unresolved(r["destination"]), r["destination"].lower(),
     ))
     return _sorted_groups(unload), route_list

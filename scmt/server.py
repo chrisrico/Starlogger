@@ -11,7 +11,7 @@ from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_states, write_override
 from .settings import set_setting
 from .shipcargo import load_ship_cargo
-from .snapshot import build_snapshot, build_test_snapshot
+from .snapshot import PENDING_DEST, build_snapshot, build_test_snapshot
 from .state import State
 from .stations import get_station_names, set_station_name
 
@@ -31,10 +31,21 @@ def _origin_of(mis, ov, zone_names) -> str:
     return (ov or {}).get("origin") or _resolve_zone(zone_names, mis.origin_zone)
 
 
+def _dleg_loc(mis, leg, zone_names) -> str:
+    """A dropoff leg's destination label, matching snapshot.dleg_loc: deliver text
+    wins; an acceptance-host zone (shared with the pickup) is not a real destination
+    and shows as pending until the game reveals it; else resolve the zone."""
+    if leg.location:
+        return leg.location
+    if leg.zone_host_id in mis.host_artifact_zones:
+        return PENDING_DEST
+    return _resolve_zone(zone_names, leg.zone_host_id)
+
+
 def _dests_of(mis, zone_names) -> tuple:
     """A mission's destination signature (sorted dropoff station labels), matching
     snapshot's `destinations`. Used with the origin to identify same-route siblings."""
-    return tuple(sorted({l.location or _resolve_zone(zone_names, l.zone_host_id)
+    return tuple(sorted({_dleg_loc(mis, l, zone_names)
                          for l in mis.legs.values() if l.kind == "dropoff"}))
 
 
