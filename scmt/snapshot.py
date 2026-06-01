@@ -19,15 +19,17 @@ from .state import State
 from .stations import get_station_names, learn_station_names
 
 
-# Shown for a dropoff whose only location signal is the acceptance-host zone (see
-# Mission.host_artifact_zones): we know a destination exists, just not which yet —
-# the game reveals it via the deliver objective and the label self-heals then.
+# Shown for a leg whose only location signal is the acceptance-host zone (see
+# Mission.host_artifact_zones / has_pending_origin): we know an endpoint exists, just
+# not which yet — the game reveals it via the objective text and the label self-heals.
 PENDING_DEST = "Destination pending"
+PENDING_ORIGIN = "Origin pending"
+_PENDING = {PENDING_DEST, PENDING_ORIGIN}
 
 
 def _unresolved(loc: str) -> bool:
     """A placeholder destination/origin that should sort after real stations."""
-    return loc.startswith("Unknown station") or loc == PENDING_DEST
+    return loc.startswith("Unknown station") or loc in _PENDING
 
 
 def _resolve(zone_names: dict, zone: str | None) -> str:
@@ -184,7 +186,11 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
             return _resolve(zone_names, leg.zone_host_id)
 
         def origin_of(mis: Mission) -> str:
-            return mis.origin_name or _resolve(zone_names, mis.origin_zone)
+            if mis.origin_name:
+                return mis.origin_name
+            if mis.has_pending_origin:
+                return PENDING_ORIGIN
+            return _resolve(zone_names, mis.origin_zone)
 
         def mlabel(mis: Mission) -> str:
             # include the reward so same-titled contracts are distinguishable

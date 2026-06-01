@@ -11,7 +11,7 @@ from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_states, write_override
 from .settings import set_setting
 from .shipcargo import load_ship_cargo
-from .snapshot import PENDING_DEST, build_snapshot, build_test_snapshot
+from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot, build_test_snapshot
 from .state import State
 from .stations import get_station_names, set_station_name
 
@@ -26,9 +26,14 @@ def _resolve_zone(zone_names, z) -> str:
 
 def _origin_of(mis, ov, zone_names) -> str:
     """A mission's displayed origin, matching snapshot.build_snapshot: an explicit
-    override origin wins, else the pickup zone resolved through zone_names, else an
-    'Unknown station' label."""
-    return (ov or {}).get("origin") or _resolve_zone(zone_names, mis.origin_zone)
+    override origin wins, else 'Origin pending' when the only pickup is a host
+    artifact, else the pickup zone resolved through zone_names, else 'Unknown station'."""
+    o = (ov or {}).get("origin")
+    if o:
+        return o
+    if mis.has_pending_origin:
+        return PENDING_ORIGIN
+    return _resolve_zone(zone_names, mis.origin_zone)
 
 
 def _dleg_loc(mis, leg, zone_names) -> str:

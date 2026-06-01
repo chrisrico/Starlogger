@@ -78,6 +78,17 @@ class Mission:
         return pick & drop
 
     @property
+    def has_pending_origin(self) -> bool:
+        """A pickup leg exists but its only zone is a host artifact (shared with a
+        dropoff), so origin_zone skipped it — the real origin is unknown until the
+        game logs a Collect/objective line. The origin-side mirror of a host-artifact
+        dropoff. False when origin_zone resolves a real pickup, or there's no pickup."""
+        if self.origin_zone:
+            return False
+        return any(l.kind == "pickup" and l.zone_host_id in self.host_artifact_zones
+                   for l in self.legs.values())
+
+    @property
     def is_trade(self) -> bool:
         """Cargo-hauling/trade mission (vs combat, etc.)."""
         return (
