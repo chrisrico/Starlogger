@@ -44,6 +44,24 @@ function toggleHideUnfinished() {
   loadSessions();
 }
 
+// Which Archive section is expanded (accordion — only one at a time).
+let ARCH_OPEN = localStorage.getItem("archOpen") || "trades";
+function toggleArch(key) {
+  ARCH_OPEN = ARCH_OPEN === key ? "" : key;   // click the open one to collapse all
+  localStorage.setItem("archOpen", ARCH_OPEN);
+  setHTML("history", sessionsView(SESSIONS));
+}
+// One collapsible Archive section: a clickable header (always shown) + a body that
+// renders only when expanded, so the open section can fill the viewport on its own.
+function logSection(key, title, headSpan, body) {
+  const open = ARCH_OPEN === key;
+  return `<div class="card logsec logcard${open ? " open" : ""}">
+    <h3 class="logsec-h" onclick="toggleArch('${key}')">
+      <span class="logsec-chev">${open ? "▾" : "▸"}</span><span>${title}</span>${headSpan || ""}</h3>
+    ${open ? body : ""}
+  </div>`;
+}
+
 // ---- tabs (with URL-hash deep-linking) ---- //
 const TABS = ["loading", "unloading", "routes", "missions", "grid", "history"];
 function activateTab(name) {
@@ -997,9 +1015,9 @@ function fmtDuration(a, b) {
 function sessionsView(sessions) {
   if (!sessions) return `<div class="empty">loading archive…</div>`;
   if (!sessions.length) return `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
-  // Three flat logs side by side, pooled across every session: contracts (with its
-  // own compact Hide-* filter bar), manual-trade loads, and quantum-travel jumps.
-  return `<div class="logs3">${contractLogView(sessions)}${tradeLogView(sessions)}${travelLogView(sessions)}</div>`;
+  // Accordion of three pooled logs (only one expanded at a time so the open one can
+  // own the screen): contracts (with its Hide-* filter bar), trade loads, travel jumps.
+  return `<div class="arch-acc">${contractLogView(sessions)}${tradeLogView(sessions)}${travelLogView(sessions)}</div>`;
 }
 
 // Cross-session quantum-travel log: each completed (or in-progress) jump, From → To
@@ -1023,12 +1041,11 @@ function travelLogView(sessions) {
       <td class="lt-title">${esc(t.from)} <span class="sub">→</span> ${esc(t.to)}${arr}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
-  return `<div class="card logcard">
-    <h3><span>Travel Log · ${rows.length}</span><span class="scu">${rows.length} jumps</span></h3>
-    ${rows.length ? `<div class="logwrap"><table class="logtable">
+  const inner = rows.length ? `<div class="logwrap"><table class="logtable">
       <thead><tr><th>Departed</th><th>Route</th><th>Ship</th></tr></thead>
-      <tbody>${body}</tbody></table></div>` : `<div class="empty">No quantum travel in range.</div>`}
-  </div>`;
+      <tbody>${body}</tbody></table></div>` : `<div class="empty">No quantum travel in range.</div>`;
+  return logSection("travel", `Travel Log · ${rows.length}`,
+                    `<span class="scu">${rows.length} jumps</span>`, inner);
 }
 
 // Compact "Hide …" filter bar (lives in the contract-log header). Inverts the API's
@@ -1060,13 +1077,11 @@ function contractLogView(sessions) {
       <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
       <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
   }).join("");
-  return `<div class="card logcard">
-    <h3><span>Contract Log · ${rows.length}</span><span class="scu">${num(total)} aUEC</span></h3>
-    ${contractFilterBar()}
-    ${rows.length ? `<div class="logwrap"><table class="logtable">
+  const inner = contractFilterBar() + (rows.length ? `<div class="logwrap"><table class="logtable">
       <thead><tr><th>When</th><th>Status</th><th>Contract</th><th class="lt-num">Reward</th></tr></thead>
-      <tbody>${body}</tbody></table></div>` : `<div class="empty">No contracts in range.</div>`}
-  </div>`;
+      <tbody>${body}</tbody></table></div>` : `<div class="empty">No contracts in range.</div>`);
+  return logSection("contracts", `Contract Log · ${rows.length}`,
+                    `<span class="scu">${num(total)} aUEC</span>`, inner);
 }
 
 // Group manual trades into "loads": a buy paired (FIFO, per commodity) with the
@@ -1154,12 +1169,11 @@ function tradeLogView(sessions) {
       <td class="lt-num ${L.revenue ? "pos" : ""}">${L.revenue ? "+" + num(Math.round(L.revenue)) : "—"}</td>
       <td class="lt-num ${!priced ? "" : profit >= 0 ? "pos" : "neg"}">${priced ? (profit >= 0 ? "+" : "−") + num(Math.abs(profit)) : "—"}</td></tr>`;
   }).join("");
-  return `<div class="card logcard">
-    <h3><span>Trade Loads · ${loads.length}</span><span class="scu ${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span></h3>
-    ${loads.length ? `<div class="logwrap"><table class="logtable">
+  const inner = loads.length ? `<div class="logwrap"><table class="logtable">
       <thead><tr><th>When</th><th>Commodity</th><th>Route</th><th class="lt-num">SCU</th><th class="lt-num">Cost</th><th class="lt-num">Revenue</th><th class="lt-num">Profit</th></tr></thead>
-      <tbody>${body}</tbody></table></div>` : `<div class="empty">No manual trades in range.</div>`}
-  </div>`;
+      <tbody>${body}</tbody></table></div>` : `<div class="empty">No manual trades in range.</div>`;
+  return logSection("trades", `Trade Loads · ${loads.length}`,
+                    `<span class="scu ${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span>`, inner);
 }
 
 async function loadSessions() {
