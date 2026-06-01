@@ -23,6 +23,7 @@ let LAST = null;      // latest snapshot
 let EDIT = null;      // mission_id whose editor is open
 let EDIT_ZONE = null; // zoneHostId whose station-name editor is open
 let SESSIONS = null;  // archived sessions
+let PROGRESSION = null;  // hauler rank-progression summary (top of Archive tab)
 let TRADE = localStorage.getItem("tradeOnly") === "1";  // archive: trade sessions only
 let SHOW_UNFINISHED = localStorage.getItem("showUnfinished") === "1";  // archive: include unfinished
 const sessQ = () => {
@@ -994,6 +995,47 @@ function fmtDuration(a, b) {
   const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
   return h ? `${h}h ${m}m` : `${m}m`;
 }
+function fmtDay(iso) {
+  if (!iso) return "?";
+  const d = new Date(iso.length <= 10 ? iso + "T00:00:00" : iso);
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+// Hauler rank-progression panel shown at the top of the Archive tab. Derived from
+// the logs (org + rank live there, not in sessions.json); see scmt/progression.py.
+function progressionView(p) {
+  if (!p || !p.primary) return "";
+  const pr = p.primary;
+  const maxN = Math.max(1, ...pr.ranks.map(r => r.completed));
+  const ranks = pr.ranks.map(r => `
+    <div class="prog-row">
+      <span class="prog-rank">${esc(r.rank)}</span>
+      <span class="prog-bar"><span style="width:${Math.round(100 * r.completed / maxN)}%"></span></span>
+      <span class="prog-n">${r.completed}</span>
+      <span class="prog-span sub">${fmtDay(r.first)}${r.first !== r.last ? " – " + fmtDay(r.last) : ""}</span>
+    </div>`).join("") +
+    (pr.untitled ? `<div class="prog-row sub"><span class="prog-rank">untitled</span>
+      <span class="prog-bar"></span><span class="prog-n">${pr.untitled}</span>
+      <span class="prog-span"></span></div>` : "");
+  const milestones = pr.milestones.map(m =>
+    `<span class="ms"><b>${esc(m.rank)}</b> <span class="sub">${fmtDay(m.ts)}</span></span>`
+  ).join('<span class="ms-arrow">→</span>') || '<span class="sub">—</span>';
+  const maxD = Math.max(1, ...pr.by_day.map(d => d.count));
+  const days = pr.by_day.map(d =>
+    `<span class="dbar" title="${d.day}: ${d.count} completed">
+       <span style="height:${Math.max(6, Math.round(100 * d.count / maxD))}%"></span></span>`).join("");
+  const others = (p.haulers || []).slice(1)
+    .map(h => `<span class="chip">${esc(h.org)} · ${h.completed}</span>`).join("");
+  return `<div class="card progression">
+    <h3><span>Rank Progression · ${esc(pr.org)}</span><span class="scu">${num(pr.total)} completed</span></h3>
+    <div class="prog-body">
+      <div class="prog-ranks">${ranks}</div>
+      <div class="prog-line"><span class="prog-lbl">Promotions</span><div class="ms-row">${milestones}</div></div>
+      <div class="prog-line"><span class="prog-lbl">By day</span><div class="dbars">${days}</div></div>
+      ${others ? `<div class="prog-line"><span class="prog-lbl">Other haulers</span><div class="ms-row">${others}</div></div>` : ""}
+    </div>
+  </div>`;
+}
 
 function sessionsView(sessions) {
   const bar = `<div class="archbar">
@@ -1006,9 +1048,10 @@ function sessionsView(sessions) {
         <input type="checkbox" id="unfToggle" ${SHOW_UNFINISHED ? "checked" : ""} onchange="toggleUnfinished()">
         <span class="sw"></span><span class="sw-lbl">Show unfinished</span></label>
     </div></div>`;
-  if (!sessions) return bar + `<div class="empty">loading archive…</div>`;
-  if (!sessions.length) return bar + `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
-  return bar + `<div class="grid">` + sessions.map(s => {
+  const prog = progressionView(PROGRESSION);
+  if (!sessions) return bar + prog + `<div class="empty">loading archive…</div>`;
+  if (!sessions.length) return bar + prog + `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
+  return bar + prog + `<div class="grid">` + sessions.map(s => {
     const c = s.counts || {};
     const dur = fmtDuration(s.started_at, s.ended_at);
     const stats = [
@@ -1040,6 +1083,9 @@ async function loadSessions() {
   try {
     SESSIONS = await (await fetch("/api/sessions" + sessQ(), { cache: "no-store" })).json();
   } catch (e) { SESSIONS = SESSIONS || []; }
+  try {
+    PROGRESSION = await (await fetch("/api/progression", { cache: "no-store" })).json();
+  } catch (e) { /* keep last good progression */ }
   setHTML("history", sessionsView(SESSIONS));
 }
 
