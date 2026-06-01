@@ -1041,22 +1041,27 @@ function travelLogView(sessions) {
     for (const t of s.travels || []) add(t);
   for (const t of (LAST && LAST.travels) || []) add(t);  // live session
   rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  let totalSecs = 0;
   const body = rows.map(t => {
     const arr = t.arrived
       ? ` <span class="lt-tag good" title="arrived ${esc(t.arrived)}">✔</span>`
       : ` <span class="lt-tag" title="no arrival logged">⋯</span>`;
     const dur = fmtTravelTime(t.ts, t.arrived);
+    if (t.arrived) totalSecs += Math.max(0, (new Date(t.arrived) - new Date(t.ts)) / 1000);
+    // travel time rides the arrow, between origin and destination
+    const leg = `<span class="qt-leg"><span class="sub">→</span>${dur ? `<span class="qt-dur">${dur}</span>` : ""}</span>`;
     return `<tr>
       <td class="lt-when">${fmtWhen(t.ts)}</td>
-      <td class="lt-title">${esc(t.from)} <span class="sub">→</span> ${esc(t.to)}${arr}</td>
-      <td class="lt-num">${dur || '<span class="sub">—</span>'}</td>
+      <td class="lt-title">${esc(t.from)} ${leg} ${esc(t.to)}${arr}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
+  const th = Math.floor(totalSecs / 3600), tm = Math.round((totalSecs % 3600) / 60);
+  const tot = totalSecs ? ` · ${th ? th + "h " + tm + "m" : tm + "m"} in QT` : "";
   const inner = rows.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>Departed</th><th>Route</th><th class="lt-num">Time</th><th>Ship</th></tr></thead>
+      <thead><tr><th>Departed</th><th>Route</th><th>Ship</th></tr></thead>
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No quantum travel in range.</div>`;
   return logSection("travel", `Travel Log · ${rows.length}`,
-                    `<span class="scu">${rows.length} jumps</span>`, inner);
+                    `<span class="scu">${rows.length} jumps${tot}</span>`, inner);
 }
 
 // Compact "Hide …" filter bar (lives in the contract-log header). Inverts the API's
