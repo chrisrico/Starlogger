@@ -18,6 +18,8 @@ class State:
         self.missions: dict[str, Mission] = {}
         self.trades: dict[str, Trade] = {}  # manual terminal trades this session
         self.kiosk_names: dict[str, str] = {}  # kioskId -> place name (from kiosk entity)
+        self.travel_routes: list[dict] = []  # quantum route calcs (ts, ship, frm, to)
+        self.travel_arrivals: list[dict] = []  # quantum drive arrivals (ts, ship)
         self.zone_names: dict[str, str] = {}  # zoneHostId -> station name
         self.player: str | None = None
         self.location: str | None = None  # current station (where the client last requested inventory)
@@ -68,6 +70,8 @@ class State:
             self.missions.clear()
             self.trades.clear()
             self.kiosk_names.clear()
+            self.travel_routes.clear()
+            self.travel_arrivals.clear()
             self.zone_names.clear()
             self.total_awarded = 0
             self._pending_award.clear()
@@ -104,6 +108,8 @@ class State:
             if self._ship(line, ts):
                 return
             if self._trade(line, ts):
+                return
+            if self._travel(line, ts):
                 return
             self._mission(line, ts)
 
@@ -210,6 +216,20 @@ class State:
                 shop_label=patterns.friendly_shop(shop), ts=ts,
                 station=self.kiosk_names.get(m.group("kiosk")),
             )
+            return True
+        return False
+
+    def _travel(self, line: str, ts: str | None) -> bool:
+        """Collect quantum-travel route calcs (named start -> destination code) and
+        arrivals; build_session_travels pairs them into completed jumps."""
+        m = patterns.QT_ROUTE.search(line)
+        if m:
+            self.travel_routes.append({"ts": ts, "ship": m.group("ship"),
+                                       "frm": m.group("frm").strip(), "to": m.group("to")})
+            return True
+        m = patterns.QT_ARRIVED.search(line)
+        if m:
+            self.travel_arrivals.append({"ts": ts, "ship": m.group("ship")})
             return True
         return False
 

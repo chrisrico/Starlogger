@@ -997,9 +997,38 @@ function fmtDuration(a, b) {
 function sessionsView(sessions) {
   if (!sessions) return `<div class="empty">loading archive…</div>`;
   if (!sessions.length) return `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
-  // Two flat logs side by side, pooled across every session: the contract log (with
-  // its own compact Hide-* filter bar) and the manual-trade load log.
-  return `<div class="logs2">${contractLogView(sessions)}${tradeLogView(sessions)}</div>`;
+  // Three flat logs side by side, pooled across every session: contracts (with its
+  // own compact Hide-* filter bar), manual-trade loads, and quantum-travel jumps.
+  return `<div class="logs3">${contractLogView(sessions)}${tradeLogView(sessions)}${travelLogView(sessions)}</div>`;
+}
+
+// Cross-session quantum-travel log: each completed (or in-progress) jump, From → To
+// with arrival, pooled with the live session's jumps. Newest first.
+function travelLogView(sessions) {
+  const seen = new Set(), rows = [];
+  const add = t => {
+    const k = `${t.ts}|${t.ship}|${t.to_code}`;
+    if (!seen.has(k)) { seen.add(k); rows.push(t); }
+  };
+  for (const s of sessions || [])
+    for (const t of s.travels || []) add(t);
+  for (const t of (LAST && LAST.travels) || []) add(t);  // live session
+  rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  const body = rows.map(t => {
+    const arr = t.arrived
+      ? ` <span class="lt-tag good" title="arrived ${esc(t.arrived)}">✔</span>`
+      : ` <span class="lt-tag" title="no arrival logged">⋯</span>`;
+    return `<tr>
+      <td class="lt-when">${fmtWhen(t.ts)}</td>
+      <td class="lt-title">${esc(t.from)} <span class="sub">→</span> ${esc(t.to)}${arr}</td>
+      <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
+  }).join("");
+  return `<div class="card logcard">
+    <h3><span>Travel Log · ${rows.length}</span><span class="scu">${rows.length} jumps</span></h3>
+    ${rows.length ? `<div class="logwrap"><table class="logtable">
+      <thead><tr><th>Departed</th><th>Route</th><th>Ship</th></tr></thead>
+      <tbody>${body}</tbody></table></div>` : `<div class="empty">No quantum travel in range.</div>`}
+  </div>`;
 }
 
 // Compact "Hide …" filter bar (lives in the contract-log header). Inverts the API's

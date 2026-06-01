@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import asdict
 
 from . import patterns
-from .archive import build_session_trades
+from .archive import build_session_trades, build_session_travels
 from .commodities import commodity_names
 from .locations import station_names
 from .model import Leg, Mission
@@ -312,6 +312,7 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
             "missions": mission_dicts,
             "trades": trades,
             "trade_summary": trade_summary,
+            "travels": build_session_travels(state),
             "lost_trades": lost_trade_ids(),
 
             "catalog": {"stations": sorted(stations), "cargo": sorted(cargo_names)},

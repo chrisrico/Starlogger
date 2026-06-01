@@ -15,7 +15,7 @@ import time
 from .commodities import load_commodities, resolve_commodity
 from .config import SESSIONS_KEEP, SESSIONS_PATH
 from .overrides import apply_override, get_overrides
-from .patterns import canonical_ship_name
+from .patterns import canonical_ship_name, decode_qt_dest, friendly_ship
 from .state import State
 
 _cache = {"mtime": None, "data": []}
@@ -71,8 +71,39 @@ def build_summary(state: State) -> dict:
         "missions": missions,
         "trades": trades,
         "trade_totals": trade_totals,
+        "travels": build_session_travels(state),
         "archived_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+
+
+def build_session_travels(state: State) -> list:
+    """Pair quantum route calcs with their arrivals into completed jumps. Collapses
+    recalculations (same ship+from+to in a row) and matches each route to the first
+    arrival of that ship before the next route — so it survives the game logging a
+    route several times. `arrived` is None for a jump with no logged arrival yet."""
+    routes = sorted(state.travel_routes, key=lambda r: r["ts"] or "")
+    arrivals = sorted(state.travel_arrivals, key=lambda a: a["ts"] or "")
+    deduped: list[dict] = []
+    for r in routes:
+        prev = deduped[-1] if deduped else None
+        if prev and (prev["ship"], prev["frm"], prev["to"]) == (r["ship"], r["frm"], r["to"]):
+            continue
+        deduped.append(r)
+    out = []
+    for i, r in enumerate(deduped):
+        nxt = next((x["ts"] for x in deduped[i + 1:] if x["ship"] == r["ship"]), None)
+        arr = next((a["ts"] for a in arrivals
+                    if a["ship"] == r["ship"] and (a["ts"] or "") > (r["ts"] or "")
+                    and (nxt is None or (a["ts"] or "") < nxt)), None)
+        out.append({
+            "ts": r["ts"],
+            "ship": friendly_ship(r["ship"]),
+            "from": r["frm"],
+            "to": decode_qt_dest(r["to"]),
+            "to_code": r["to"],
+            "arrived": arr,
+        })
+    return out
 
 
 def build_session_trades(state: State) -> tuple[list, dict]:

@@ -163,6 +163,58 @@ SESSION = re.compile(r'eCVS_InGame.*?gamerules="(?P<gr>SC_\w+)"')
 # nothing -- the log just stops -- and stays uncatchable until the next launch.)
 SHUTDOWN = re.compile(r"CCIGBroker::FastShutdown")
 
+# Quantum travel. The route calc names a friendly START location and the destination
+# (an internal code); arrival marks the jump complete. Both carry the ship entity.
+#   …RSI_Hermes_<eid>[<eid>]|CSCItemNavigation::CalculateRoute|Projected Start Location
+#     is Stanton Gateway for route to destination pyro3 …[QuantumTravel]
+#   …RSI_Hermes_<eid>[…]|CSCItemNavigation::OnQuantumDriveArrived|Quantum Drive has arrived…
+QT_ROUTE = re.compile(
+    r"(?P<ship>[A-Za-z][A-Za-z0-9_]+?)_\d+\[\d+\]\|CSCItemNavigation::CalculateRoute\|"
+    r"Projected Start Location is (?P<frm>.+?) for route to destination (?P<to>\S+)"
+)
+QT_ARRIVED = re.compile(
+    r"(?P<ship>[A-Za-z][A-Za-z0-9_]+?)_\d+\[\d+\]\|CSCItemNavigation::OnQuantumDriveArrived"
+)
+
+_ROMAN = {"1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII"}
+
+
+_SYS = {"pyro": "Pyro", "stan": "Stanton", "stanton": "Stanton", "terra": "Terra",
+        "nyx": "Nyx", "sol": "Sol", "magnus": "Magnus", "castra": "Castra"}
+
+
+def decode_qt_dest(code: str) -> str:
+    """Best-effort friendly name for a quantum destination code. The start location is
+    already named in the log; destinations are internal codes (``rs_ext_pyro5_l2`` ->
+    "Pyro V L2", ``pyro3`` -> "Pyro III", ``pyro-stan_jp1`` -> "Pyro–Stanton Jump Point",
+    ``Rayari_Cluster_001_Frost_{guid}.socpak`` -> "Rayari Cluster 001 Frost")."""
+    c = re.sub(r"\.\w+$", "", code)             # strip a .socpak/.entity suffix
+    c = re.sub(r"_?\{[^}]*\}", "", c)           # strip a {guid}
+    c = re.sub(r"^(loc_|rs_ext_)+", "", c, flags=re.I)
+    # inter-system jump point: "<sysA>-<sysB>[_jpN]"
+    jp = re.fullmatch(r"([a-z]+)-([a-z]+)(?:_jp\d*)?", c, re.I)
+    if jp:
+        a = _SYS.get(jp.group(1).lower(), jp.group(1).capitalize())
+        b = _SYS.get(jp.group(2).lower(), jp.group(2).capitalize())
+        return f"{a}–{b} Jump Point"
+    out: list[str] = []
+    for p in c.split("_"):
+        pl = p.lower()
+        m = re.fullmatch(r"(pyro|stanton|stan)(\d)?", pl)
+        if m:
+            sysn = {"pyro": "Pyro", "stanton": "Stanton", "stan": "Stanton"}[m.group(1)]
+            out.append(f"{sysn} {_ROMAN[m.group(2)]}" if m.group(2) else sysn)
+        elif re.fullmatch(r"l\d", pl) or pl in ("leo", "heo"):
+            out.append(p.upper())
+        elif pl.startswith("jp"):
+            out.append("Jump Point " + pl[2:])
+        elif pl == "rr":
+            continue
+        else:
+            out.append(p.upper() if len(p) <= 2 else p.capitalize())
+    return " ".join(x for x in out if x).strip() or code
+
+
 # Game version header: "Branch: sc-alpha-4.8.0-hotfix" + "Changelist: 11875683".
 VERSION = re.compile(r"Branch:.*?(\d+\.\d+(?:\.\d+)?)")
 CHANGELIST = re.compile(r"Changelist:\s*(\d+)")
