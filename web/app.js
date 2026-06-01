@@ -1102,39 +1102,62 @@ function sessionsView(sessions) {
   if (!sessions) return bar + prog + `<div class="empty">loading archive…</div>`;
   if (!sessions.length) return bar + prog + `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
   const ledger = tradeLedgerView(sessions);
-  // "Show contracts" off → review just manual cargo trades: drop sessions with no
-  // trades and suppress each card's mission list + contract counts.
-  const shown = SHOW_CONTRACTS ? sessions : sessions.filter(s => (s.trades || []).length);
-  if (!shown.length)
-    return bar + prog + ledger + `<div class="empty">No manual cargo trades recorded in these sessions.</div>`;
-  return bar + prog + ledger + `<div class="grid">` + shown.map(s => {
-    const c = s.counts || {};
-    const dur = fmtDuration(s.started_at, s.ended_at);
-    const stats = !SHOW_CONTRACTS ? "" : [
-      c.completed ? `<span class="stat-i good">✔ ${c.completed}</span>` : "",
-      c.abandoned ? `<span class="stat-i bad">⊘ ${c.abandoned}</span>` : "",
-      c.failed ? `<span class="stat-i bad">✕ ${c.failed}</span>` : "",
-      c.unfinished ? `<span class="stat-i">◷ ${c.unfinished} unfinished</span>` : "",
-    ].filter(Boolean).join("");
-    const meta = [
-      s.game_version ? `<span class="chip">v${esc(s.game_version)}</span>` : "",
-      s.player ? `<span class="chip">${esc(s.player)}</span>` : "",
-      ...(s.ships || []).map(sh => `<span class="chip">${esc(sh)}</span>`),
-    ].join("");
-    const missions = !SHOW_CONTRACTS ? "" :
-      `<div class="smissions">${(s.missions || []).map(m =>
-        `<div class="srow-m"><span class="badge b-${m.status}">${esc(m.status)}</span>
-          <span class="sm-title">${esc(m.title)}</span>
-          <span class="sm-rew">${m.reward ? num(m.reward) + " aUEC" : ""}</span></div>`).join("")
-        || '<div class="sub" style="padding:8px 16px">no missions recorded</div>'}</div>`;
-    return `<div class="card session">
-      <h3><span>${fmtWhen(s.started_at)} <span class="sub">→ ${fmtWhen(s.ended_at)}${dur ? " · " + dur : ""}</span></span>
-        <span class="scu">${num(s.earned || 0)} aUEC</span></h3>
-      <div class="srow"><div class="meta">${meta}</div><div class="counts">${stats}</div></div>
-      ${missions}
-      ${tradesBlock(s)}
-    </div>`;
-  }).join("") + `</div>`;
+  // EXPERIMENT (try/archive-two-grids): instead of per-session cards, two flat logs
+  // side by side — a contract log and a trade log, each pooled across all sessions.
+  // "Show contracts" off hides the contract log; the trade log goes full width.
+  const contracts = SHOW_CONTRACTS ? contractLogView(sessions) : "";
+  const trades = tradeLogView(sessions);
+  return bar + prog + ledger +
+    `<div class="logs2${SHOW_CONTRACTS ? "" : " one"}">${contracts}${trades}</div>`;
+}
+
+// Flat, cross-session log of every mission contract (newest session first). Archived
+// missions carry no per-mission timestamp, so rows are dated by their session start.
+function contractLogView(sessions) {
+  const rows = [];
+  for (const s of sessions || [])
+    for (const m of s.missions || []) rows.push({ when: s.started_at, m });
+  const total = rows.reduce((a, r) => a + (r.m.reward || 0), 0);
+  const body = rows.map(r => {
+    const dest = (r.m.destinations || []).filter(Boolean);
+    return `<tr>
+      <td class="lt-when">${fmtWhen(r.when)}</td>
+      <td><span class="badge b-${r.m.status}">${esc(r.m.status)}</span></td>
+      <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
+      <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
+  }).join("");
+  return `<div class="card logcard">
+    <h3><span>Contract Log · ${rows.length}</span><span class="scu">${num(total)} aUEC</span></h3>
+    ${rows.length ? `<div class="logwrap"><table class="logtable">
+      <thead><tr><th>When</th><th>Status</th><th>Contract</th><th class="lt-num">Reward</th></tr></thead>
+      <tbody>${body}</tbody></table></div>` : `<div class="empty">No contracts in range.</div>`}
+  </div>`;
+}
+
+// Flat, cross-session log of every manual trade, precisely time-ordered (trades carry
+// their own ts). aUEC is signed: buys spend (−), sells earn (+).
+function tradeLogView(sessions) {
+  const rows = [];
+  for (const s of sessions || [])
+    for (const t of s.trades || []) rows.push(t);
+  rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  const net = rows.reduce((a, t) => a + (t.action === "buy" ? -t.auec : t.auec), 0);
+  const body = rows.map(t => {
+    const buy = t.action === "buy";
+    return `<tr>
+      <td class="lt-when">${fmtWhen(t.ts)}</td>
+      <td><span class="badge tb-${t.action}">${t.action}</span></td>
+      <td class="lt-title">${esc(t.commodity)}</td>
+      <td class="lt-num">${num(t.scu)}</td>
+      <td class="lt-num ${buy ? "neg" : "pos"}">${buy ? "−" : "+"}${num(t.auec)}</td>
+      <td class="lt-shop">${esc(t.shop)}</td></tr>`;
+  }).join("");
+  return `<div class="card logcard">
+    <h3><span>Trade Log · ${rows.length}</span><span class="scu ${net >= 0 ? "pos" : "neg"}">${net >= 0 ? "+" : "−"}${num(Math.abs(net))} aUEC</span></h3>
+    ${rows.length ? `<div class="logwrap"><table class="logtable">
+      <thead><tr><th>When</th><th>Trade</th><th>Commodity</th><th class="lt-num">SCU</th><th class="lt-num">aUEC</th><th>Shop</th></tr></thead>
+      <tbody>${body}</tbody></table></div>` : `<div class="empty">No manual trades in range.</div>`}
+  </div>`;
 }
 
 async function loadSessions() {

@@ -322,6 +322,22 @@ main{padding:22px;max-width:1280px;margin:0 auto}
   background:var(--panel-2);border:1px solid var(--line)}
 .tl-v{font-family:var(--mono);font-size:15px;font-weight:600;color:var(--ink)}
 .tl-l{font-family:var(--display);text-transform:uppercase;letter-spacing:.12em;font-size:9.5px;color:var(--ink-3)}
+/* EXPERIMENT (try/archive-two-grids): two flat logs side by side */
+.logs2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.logs2.one{grid-template-columns:1fr}
+@media(max-width:900px){.logs2{grid-template-columns:1fr}}
+.logcard{margin:0}
+.logwrap{max-height:560px;overflow:auto}
+.logtable{width:100%;border-collapse:collapse;font-size:12px}
+.logtable thead th{position:sticky;top:0;background:var(--panel);z-index:1;text-align:left;
+  font-family:var(--display);text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;
+  color:var(--ink-3);padding:8px 12px;border-bottom:1px solid var(--line)}
+.logtable td{padding:6px 12px;border-bottom:1px solid rgba(86,206,255,.06);vertical-align:top}
+.logtable tbody tr:hover{background:rgba(86,206,255,.04)}
+.lt-when{font-family:var(--mono);color:var(--ink-3);font-size:11px;white-space:nowrap}
+.lt-title{color:var(--ink)}
+.lt-num{font-family:var(--mono);text-align:right;white-space:nowrap}
+.lt-shop{color:var(--ink-2);white-space:nowrap}
 
 /* ---- alert note ---- */
 .note{position:relative;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#f3d79a;
