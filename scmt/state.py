@@ -17,6 +17,7 @@ class State:
         self.lock = threading.RLock()
         self.missions: dict[str, Mission] = {}
         self.trades: dict[str, Trade] = {}  # manual terminal trades this session
+        self.kiosk_names: dict[str, str] = {}  # kioskId -> place name (from kiosk entity)
         self.zone_names: dict[str, str] = {}  # zoneHostId -> station name
         self.player: str | None = None
         self.location: str | None = None  # current station (where the client last requested inventory)
@@ -66,6 +67,7 @@ class State:
                     print(f"[archive] session-end hook failed: {e}")
             self.missions.clear()
             self.trades.clear()
+            self.kiosk_names.clear()
             self.zone_names.clear()
             self.total_awarded = 0
             self._pending_award.clear()
@@ -183,7 +185,17 @@ class State:
         """Record a manual commodity-terminal buy/sell. The request line is the only
         record (no settle/confirm follow-up), so it's treated as effective. SCU comes
         from the box data (boxSize x unitAmount), authoritative for both directions.
-        Keyed by ts|action|guid|shop so re-feeding the log upserts, not duplicates."""
+        Keyed by ts|action|guid|shop so re-feeding the log upserts, not duplicates.
+
+        Also learns kioskId -> place from the kiosk-binding line (logged when the kiosk
+        is opened, before the transaction), which names the station ("Cordys") the
+        shop name ("Admin") doesn't."""
+        mk = patterns.KIOSK_BIND.search(line)
+        if mk:
+            place = patterns.friendly_kiosk(mk.group("ent"))
+            if place:
+                self.kiosk_names[mk.group("kid")] = place
+            return True
         for action, pat in (("buy", patterns.TRADE_BUY), ("sell", patterns.TRADE_SELL)):
             m = pat.search(line)
             if not m:
@@ -196,6 +208,7 @@ class State:
                 trade_id=tid, action=action, commodity_guid=guid, scu=scu,
                 auec=round(float(m.group("auec"))), shop=shop,
                 shop_label=patterns.friendly_shop(shop), ts=ts,
+                station=self.kiosk_names.get(m.group("kiosk")),
             )
             return True
         return False

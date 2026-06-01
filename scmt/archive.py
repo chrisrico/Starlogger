@@ -52,8 +52,12 @@ def build_summary(state: State) -> dict:
             "is_trade": m.is_trade,
             "origin": m.origin_name,
             "destinations": sorted({l.location for l in drops if l.location}),
+            "accepted_at": m.accepted_at,
+            "ended_at": m.ended_at,
         })
-    missions.sort(key=lambda x: (x["status"] != "completed", x["title"]))
+    # sort by when it happened (ended, else accepted) so the archive's mission order
+    # is chronological; the frontend re-sorts the pooled contract log the same way.
+    missions.sort(key=lambda x: x.get("ended_at") or x.get("accepted_at") or "")
     trades, trade_totals = build_session_trades(state)
     return {
         "key": _session_key(state),
@@ -85,7 +89,9 @@ def build_session_trades(state: State) -> tuple[list, dict]:
             "scu": t.scu,
             "auec": t.auec,
             "unit_price": t.unit_price,
-            "shop": t.shop_label,
+            "shop": t.place,          # station-preferred ("Cordys" over "Admin")
+            "shop_label": t.shop_label,
+            "station": t.station,
             "shop_raw": t.shop,
             "ts": t.ts,
         })

@@ -35,9 +35,15 @@ class Trade:
     scu: int
     auec: int
     shop: str  # raw shop entity code
-    shop_label: str  # readable best-effort label
+    shop_label: str  # readable label from the shop name ("Admin", "Shubin")
     ts: str | None = None
     commodity: str | None = None  # resolved name, filled lazily
+    station: str | None = None  # kiosk-derived place ("Cordys"), more specific than shop_label
+
+    @property
+    def place(self) -> str:
+        """Best station label: the kiosk-derived place when known, else the shop label."""
+        return self.station or self.shop_label
 
     @property
     def unit_price(self) -> int:

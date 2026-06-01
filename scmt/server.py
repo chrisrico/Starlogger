@@ -9,7 +9,6 @@ from flask import Flask, jsonify, request, send_from_directory
 from .archive import filter_sessions, load_sessions
 from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_states, write_override
-from .progression import rank_progression
 from .settings import set_setting
 from .shipcargo import load_ship_cargo
 from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot, build_test_snapshot
@@ -105,10 +104,6 @@ def create_app(state: State) -> Flask:
             trade_only=request.args.get("trade") == "1",
             show_unfinished=request.args.get("unfinished") == "1",
         ))
-
-    @app.get("/api/progression")
-    def api_progression():
-        return jsonify(rank_progression())
 
     @app.post("/api/override")
     def api_override():

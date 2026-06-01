@@ -106,28 +106,45 @@ AWARD = re.compile(r'Added notification "Awarded\s*(?P<amt>\d+)\s*aUEC')
 #      ... resourceGUID[9e65a7bd-...] ... Cargo Box Data:  [boxSize[16] | unitAmount[14]] ...
 _BOX = r".*?boxSize\[(?P<box>[0-9.]+)\]\s*\|\s*unitAmount\[(?P<units>\d+)\]"
 TRADE_BUY = re.compile(
-    r"SendCommodityBuyRequest>.*?shopName\[(?P<shop>[^\]]*)\].*?"
+    r"SendCommodityBuyRequest>.*?shopName\[(?P<shop>[^\]]*)\].*?kioskId\[(?P<kiosk>\d+)\].*?"
     r"price\[(?P<auec>[0-9.]+)\].*?resourceGUID\[(?P<guid>[0-9a-fA-F-]+)\]" + _BOX
 )
 TRADE_SELL = re.compile(
-    r"SendCommoditySellRequest>.*?shopName\[(?P<shop>[^\]]*)\].*?"
+    r"SendCommoditySellRequest>.*?shopName\[(?P<shop>[^\]]*)\].*?kioskId\[(?P<kiosk>\d+)\].*?"
     r"amount\[(?P<auec>[0-9.]+)\].*?resourceGUID\[(?P<guid>[0-9a-fA-F-]+)\]" + _BOX
 )
+# A trade line only carries the shop NAME ("SCShop_Admin_lt_base_g" -> "Admin", which
+# isn't a station); the kiosk ENTITY name carries the place ("…CommodityKiosk_kiosk_
+# cordys_2_a-015" -> "Cordys"). It's logged separately, tied to the trade by kioskId.
+KIOSK_BIND = re.compile(r"CommodityKiosk_(?P<ent>[A-Za-z0-9_-]+?)\s*\[(?P<kid>\d+)\]")
 
 # Shop names are entity codes ("SCShop_ht_delta_shubin_m_store"), not station names
 # (and on a different id namespace than mission zoneHostIds, so the station-name map
 # can't resolve them). Strip the SCShop_ wrapper + size/tech noise tokens to a
 # readable best-effort label ("Shubin", "Admin"); the raw code is kept alongside.
 _SHOP_NOISE = {"scshop", "ht", "lt", "mt", "m", "s", "g", "l", "delta", "alpha",
-               "beta", "gamma", "store", "shop", "base", "stand", "kiosk", "a", "b", "c"}
+               "beta", "gamma", "store", "shop", "base", "stand", "kiosk", "terminal",
+               "standard", "lowtech", "commoditykiosk", "softlock", "a", "b", "c"}
+
+
+def _clean_place(code: str, noise: set) -> list[str]:
+    """Split a shop/kiosk entity code into meaningful place tokens: drop the noise
+    words, single letters, and pure-digit segments ("kiosk_cordys_2_a-015" -> ["cordys"])."""
+    toks = [t for t in re.split(r"[_\s-]+", code or "") if t]
+    return [t for t in toks if t.lower() not in noise and len(t) > 1 and not t.isdigit()]
 
 
 def friendly_shop(shop: str) -> str:
     """Best-effort readable label for a commodity-shop entity code."""
-    toks = [t for t in re.split(r"[_\s]+", shop or "") if t]
-    keep = [t for t in toks if t.lower() not in _SHOP_NOISE and len(t) > 1]
-    keep = keep or [t for t in toks if t.lower() != "scshop"]  # fall back if over-stripped
+    keep = _clean_place(shop, _SHOP_NOISE)
+    keep = keep or [t for t in re.split(r"[_\s-]+", shop or "") if t and t.lower() != "scshop"]
     return " ".join(w.capitalize() for w in keep) or (shop or "Trade terminal")
+
+
+def friendly_kiosk(ent: str) -> str:
+    """Place name from a kiosk entity suffix ("kiosk_cordys_2_a-015" -> "Cordys"); ''
+    when nothing meaningful remains."""
+    return " ".join(w.capitalize() for w in _clean_place(ent, _SHOP_NOISE))
 
 # Login/logout boundary: gamerules SC_Frontend (menu) vs SC_Default (in the PU).
 SESSION = re.compile(r'eCVS_InGame.*?gamerules="(?P<gr>SC_\w+)"')
