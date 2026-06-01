@@ -311,8 +311,8 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .lt-title{color:var(--ink)}
 .lt-num{font-family:var(--mono);text-align:right;white-space:nowrap}
 .lt-shop{color:var(--ink-2);white-space:nowrap}
-.qt-leg{white-space:nowrap}
-.qt-dur{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-left:4px}
+.qt-leg{white-space:nowrap;color:var(--ink-3)}
+.qt-dur{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-left:3px}
 
 /* ---- alert note ---- */
 .note{position:relative;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#f3d79a;

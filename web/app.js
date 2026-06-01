@@ -1048,8 +1048,9 @@ function travelLogView(sessions) {
       : ` <span class="lt-tag" title="no arrival logged">⋯</span>`;
     const dur = fmtTravelTime(t.ts, t.arrived);
     if (t.arrived) totalSecs += Math.max(0, (new Date(t.arrived) - new Date(t.ts)) / 1000);
-    // travel time rides the arrow, between origin and destination
-    const leg = `<span class="qt-leg"><span class="sub">→</span>${dur ? `<span class="qt-dur">${dur}</span>` : ""}</span>`;
+    // travel time rides the arrow, between origin and destination (plain "→", NOT a
+    // .sub span — `td .sub{display:block}` would force it onto its own line).
+    const leg = `<span class="qt-leg">→${dur ? `<span class="qt-dur">${dur}</span>` : ""}</span>`;
     return `<tr>
       <td class="lt-when">${fmtWhen(t.ts)}</td>
       <td class="lt-title">${esc(t.from)} ${leg} ${esc(t.to)}${arr}</td>
