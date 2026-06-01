@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SC Cargo Ops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="scanlines" aria-hidden="true"></div>
+<header>
+  <div class="bar">
+    <div class="brand">
+      <span class="glyph">◆</span>
+      <h1>STAR&nbsp;CITIZEN <em>// Cargo Ops</em></h1>
+    </div>
+    <div class="scenario" id="scenario"></div>
+    <div class="controls">
+      <div class="status" id="status"></div>
+    </div>
+  </div>
+  <div class="readouts" id="stats"></div>
+  <div class="gauge" id="capacity"></div>
+  <nav id="nav">
+    <button data-tab="missions" class="active"><span>01</span> Contracts</button>
+    <button data-tab="loading"><span>02</span> Loading</button>
+    <button data-tab="grid"><span>03</span> Manifest</button>
+    <button data-tab="unloading"><span>04</span> Unloading</button>
+    <button data-tab="routes"><span>05</span> Routes</button>
+    <button data-tab="history"><span>06</span> Archive</button>
+  </nav>
+</header>
+<main>
+  <div id="missions" class="tab"></div>
+  <div id="loading" class="tab hide"></div>
+  <div id="unloading" class="tab hide"></div>
+  <div id="routes" class="tab hide"></div>
+  <div id="grid" class="tab hide"></div>
+  <div id="history" class="tab hide"></div>
+</main>
+<footer id="foot">establishing uplink…</footer>
+<div id="datalists" hidden></div>
+<script src="/cargogrid.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

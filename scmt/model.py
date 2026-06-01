@@ -1,0 +1,71 @@
+"""Mission / leg data model."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from . import patterns
+
+
+@dataclass
+class Leg:
+    objective_id: str
+    kind: str  # "pickup" | "dropoff"
+    cargo: str | None = None
+    qty: int | None = None  # required SCU
+    have: int = 0
+    location: str | None = None  # resolved name when known
+    zone_host_id: str | None = None
+    pos: tuple[float, float, float] | None = None
+    state: str = "pending"  # "pending" | "completed"
+
+
+@dataclass
+class Mission:
+    mission_id: str
+    title: str = ""
+    org: str = ""
+    contract: str = ""
+    contract_def_id: str = ""
+    status: str = "active"  # active | completed | failed | abandoned | expired
+    origin_name: str | None = None  # set by a manual override
+    accepted_at: str | None = None
+    ended_at: str | None = None
+    completion_type: str | None = None
+    reason: str | None = None
+    reward: int | None = None
+    legs: dict[str, Leg] = field(default_factory=dict)
+
+    @property
+    def decoded(self) -> dict:
+        return patterns.decode_contract(self.contract)
+
+    @property
+    def cargo_types(self) -> list[str]:
+        named: list[str] = []
+        for leg in self.legs.values():
+            if leg.cargo and leg.cargo not in named:
+                named.append(leg.cargo)
+        return named or patterns.decode_cargo_from_contract(self.contract)
+
+    @property
+    def origin_zone(self) -> str | None:
+        # The game sometimes drops a pickup marker on the *delivery* zone for
+        # deliver-only missions (you source the cargo yourself, no "Collect"
+        # objective). That isn't a real origin — it would render as
+        # "Station X -> Station X" — so skip a pickup that shares a dropoff's zone.
+        drop_zones = {l.zone_host_id for l in self.legs.values()
+                      if l.kind == "dropoff" and l.zone_host_id}
+        for leg in self.legs.values():
+            if leg.kind == "pickup" and leg.zone_host_id not in drop_zones:
+                return leg.zone_host_id
+        return None
+
+    @property
+    def is_trade(self) -> bool:
+        """Cargo-hauling/trade mission (vs combat, etc.)."""
+        return (
+            self.contract.lower().startswith("haulcargo")
+            or "hauling" in self.org.lower()
+            or "cargo haul" in self.title.lower()
+        )

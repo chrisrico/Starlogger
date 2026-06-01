@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SC Cargo Ops // Ship Grids</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="scanlines" aria-hidden="true"></div>
+<header>
+  <div class="bar">
+    <div class="brand">
+      <span class="glyph">◆</span>
+      <h1>STAR&nbsp;CITIZEN <em>// Ship Grids</em></h1>
+    </div>
+    <div class="controls">
+      <div class="status"><a href="/" style="color:var(--cyan);font-family:var(--mono);font-size:12px">← dashboard</a></div>
+    </div>
+  </div>
+</header>
+<main>
+  <div class="cg-page">
+    <div class="cg-toolbar">
+      <input id="q" class="cg-search" type="search" placeholder="Filter by ship or manufacturer…" autocomplete="off">
+      <select id="fill" class="tc-sel" title="Empty = wireframe cells; Full = packed to capacity"><option value="empty">Empty (cells)</option><option value="full">Full (packed)</option></select>
+      <span id="count" class="cg-count">loading…</span>
+    </div>
+    <div id="ships"></div>
+  </div>
+</main>
+<footer id="foot">loading cargo grid database…</footer>
+<script src="/cargogrid.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"]/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const num = (n) => (n == null ? "" : Number(n).toLocaleString());
+
+let SHIPS = [];  // [{name, manufacturer, scu, groups}], sorted
+// debug params: ?ship=<substr> pre-filters, ?fill=full|empty, ?scale=<px/SCU>
+const PARAMS = new URLSearchParams(location.search);
+let FILL = PARAMS.get("fill") === "full" ? "full" : "empty";
+const SCALE = Math.max(6, Math.min(40, +PARAMS.get("scale") || 13));
+const HUE_BY = {}; (window.CARGO_SIZES || []).forEach(c => { HUE_BY[c.scu] = c.hue; });
+
+// pack a ship to capacity (open floor-first) so its FULL layout is visible; boxes
+// coloured by size. Returns {packed, over}.
+function fullPacked(s) {
+  const boxes = synthBoxes(s.scu, 8).map(b => ({ dims: b.dims, scu: b.scu, hue: HUE_BY[b.scu] }));  // ≤8-SCU = realistic mix that fits small cells
+  const packed = packGroups(s.groups, [{ boxes, hue: 200, dest: "" }]);
+  return { packed, over: packed.overflow.reduce((a, b) => a + b.scu, 0) };
+}
+
+function shipHtml(s) {
+  const cells = (s.groups || []).reduce((a, g) => a + (g.grids || []).length, 0);
+  let inner;
+  if (FILL === "full") {
+    const { packed, over } = fullPacked(s);
+    inner = cargoGridHtml(s.groups, { scale: SCALE, packed, layout: s.layout })
+      + (over ? `<div class="note">⚠ ${num(over)} / ${num(s.scu)} SCU overflowed (packer couldn't place)</div>` : "");
+  } else {
+    inner = cargoGridHtml(s.groups, { scale: SCALE, layout: s.layout });
+  }
+  return `<div class="cg-ship" data-key="${esc((s.manufacturer + " " + s.name).toLowerCase())}">
+    <h3><span><span class="cg-mfr">${esc(s.manufacturer || "—")}</span> &nbsp;<b>${esc(s.name)}</b></span>
+      <span><span class="cg-cap">${num(s.scu)} SCU</span> <span class="cg-mfr">${cells} cell${cells !== 1 ? "s" : ""} · ${esc(s.layout || "?")}</span></span></h3>
+    ${inner}</div>`;
+}
+
+function render(filter) {
+  const f = (filter || "").trim().toLowerCase();
+  const shown = f ? SHIPS.filter(s => (s.manufacturer + " " + s.name).toLowerCase().includes(f)) : SHIPS;
+  $("ships").innerHTML = shown.map(shipHtml).join("") ||
+    `<div class="empty" style="padding:40px;text-align:center;color:var(--ink-3)">No ships match “${esc(f)}”.</div>`;
+  $("count").textContent = `${shown.length} / ${SHIPS.length} ships · ${FILL}`;
+}
+
+async function load() {
+  try {
+    const db = await (await fetch("/api/ships", { cache: "no-store" })).json();
+    SHIPS = Object.entries(db.ships || {})
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, b) => (a.manufacturer || "").localeCompare(b.manufacturer || "") ||
+                      a.name.localeCompare(b.name));
+    render($("q").value);
+    $("foot").textContent = `${SHIPS.length} ships · source ${db.source || "?"} · game ${db.game_version || "?"} · fetched ${db.fetched_at || "?"}`;
+  } catch (e) {
+    $("count").textContent = "load failed";
+    $("foot").textContent = "failed to load /api/ships (" + e + ")";
+  }
+}
+
+$("q").addEventListener("input", () => render($("q").value));
+$("fill").addEventListener("change", () => { FILL = $("fill").value; render($("q").value); });
+// apply ?ship= / ?fill= from the URL (debug deep-links)
+if (PARAMS.get("ship")) $("q").value = PARAMS.get("ship");
+$("fill").value = FILL;
+load();
+</script>
+</body>
+</html>
