@@ -374,11 +374,18 @@ function planView(plan) {
 }
 
 function routeCards(routes, d) {
-  const plan = planView(d.plan);
+  // Apply the user's manual drag order (if any) to both the trip plan and the rollup
+  // so every view — and the load order — agrees.
+  const planSorted = (d.plan && d.plan.stops)
+    ? { ...d.plan, stops: byRouteOrder(d.plan.stops, s => s.station) } : d.plan;
+  const plan = planView(planSorted);
   if (!routes.length) return plan || standby("No Routes Plotted",
     "Active contracts are bundled into <b>origin → destination</b> runs. Plot a haul to chart your routes.",
     "no active legs");
-  return plan + partialNote(d) + `<div class="route-rollup"><div class="archbar"><span class="arch-title">Route Rollup</span></div><div class="grid">` + routes.map(r => {
+  const ordered = byRouteOrder(routes, r => r.destination);
+  const reset = ROUTE_ORDER
+    ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
+  const cards = ordered.map(r => {
     // each cargo chip ticks off all its legs on this route at once
     const cargo = r.cargo.map(c => {
       const legs = (c.legs || []).map(l => ({ mission_id: l.mission_id, oid: l.oid }));
@@ -387,13 +394,64 @@ function routeCards(routes, d) {
             onclick='markDelivered(${JSON.stringify(legs)}, true)'>✓</button>` : "";
       return `<span class="chip">${esc(c.cargo)}${c.qty ? (" " + num(c.qty)) : ""}${tick}</span>`;
     }).join("");
-    return `<div class="card route"><h3>
-        <span class="ends">${esc(r.origin)}<span class="arrow">→</span>${esc(r.destination)}${r.has_partial ? ' <span class="warn">⚠</span>' : ""}</span>
+    // draggable: dropping reorders the visit/load sequence (persisted, drives load order)
+    return `<div class="card route" draggable="true" data-dest="${esc(r.destination)}"
+        ondragstart="routeDragStart(event)" ondragover="routeDragOver(event)"
+        ondragleave="routeDragLeave(event)" ondrop="routeDrop(event)" ondragend="routeDragEnd(event)"><h3>
+        <span class="ends"><span class="route-grip" title="Drag to reorder the run">⠿</span>${esc(r.origin)}<span class="arrow">→</span>${esc(r.destination)}${r.has_partial ? ' <span class="warn">⚠</span>' : ""}</span>
         <span class="scu">${SCU(r.total_scu, r.has_partial)}</span></h3>
       <div class="row"><div>${cargo}</div></div>
       <div class="row"><div class="sub">${r.mission_count} mission(s)</div></div>
       </div>`;
-  }).join("") + `</div></div>`;
+  }).join("");
+  return plan + partialNote(d)
+    + `<div class="route-rollup"><div class="archbar"><span class="arch-title">Route Rollup</span>`
+    + `<span class="sub">drag runs to set your visit &amp; load order</span>${reset}</div>`
+    + `<div class="grid" id="routegrid">${cards}</div></div>`;
+}
+
+// ---- drag-reorder of the route runs (sets the manual delivery/load order) ---- //
+let DRAG_DEST = null;
+function routeDragStart(ev) {
+  const card = ev.target.closest(".card.route");
+  DRAG_DEST = card && card.dataset.dest;
+  ev.dataTransfer.effectAllowed = "move";
+  if (card) card.classList.add("dragging");
+}
+function routeDragOver(ev) {
+  if (DRAG_DEST == null) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = "move";
+  const card = ev.target.closest(".card.route");
+  if (card && card.dataset.dest !== DRAG_DEST) card.classList.add("dragover");
+}
+function routeDragLeave(ev) {
+  const card = ev.target.closest(".card.route");
+  if (card) card.classList.remove("dragover");
+}
+function routeDragEnd() {
+  DRAG_DEST = null;
+  document.querySelectorAll(".card.route").forEach(c => c.classList.remove("dragover", "dragging"));
+}
+function routeDrop(ev) {
+  ev.preventDefault();
+  const target = ev.target.closest(".card.route");
+  if (!target || DRAG_DEST == null) return routeDragEnd();
+  const dropDest = target.dataset.dest;
+  // rebuild the full order from the current DOM, then move the dragged run before the drop target
+  let order = [...document.querySelectorAll("#routegrid .card.route")].map(c => c.dataset.dest);
+  if (dropDest === DRAG_DEST) return routeDragEnd();
+  order = order.filter(x => x !== DRAG_DEST);
+  order.splice(order.indexOf(dropDest), 0, DRAG_DEST);
+  ROUTE_ORDER = order;
+  localStorage.setItem("routeOrder", JSON.stringify(order));
+  routeDragEnd();
+  renderAll(curData());
+}
+function resetRouteOrder() {
+  ROUTE_ORDER = null;
+  localStorage.removeItem("routeOrder");
+  renderAll(curData());
 }
 
 // ---- all missions table + editor ---- //
@@ -705,15 +763,38 @@ function renderAll(d) {
     setHTML("loading", groupCards(d.loading, "loading", d));
     setHTML("unloading", groupCards(d.unloading, "unloading", d));
   }
-  setHTML("routes", routeCards(d.routes, d));
+  if (DRAG_DEST == null) setHTML("routes", routeCards(d.routes, d));  // don't yank the DOM mid-drag
   if (!GRID_HOVER) setHTML("grid", gridView(d));  // don't wipe the hold highlight mid-hover
   if (EDIT === null) setHTML("missions", missionsTable(d.missions));  // don't clobber an open editor
 }
 
 const loadOrder = (gs) => [...gs].sort((a, b) => b.routeIdx - a.routeIdx);
 
+// Manual delivery order: a persisted list of destination stations the user dragged
+// into their preferred visit sequence. When set it overrides the planner's order
+// everywhere (route cards, trip plan, and the load order via deliveryIndex). Unknown
+// destinations (new contracts) fall through to the server order until next reordered.
+let ROUTE_ORDER = (() => {
+  try { return JSON.parse(localStorage.getItem("routeOrder") || "null"); } catch (e) { return null; }
+})();
+const routeRank = (dest) => {
+  const i = ROUTE_ORDER ? ROUTE_ORDER.indexOf(dest) : -1;
+  return i >= 0 ? i : Infinity;
+};
+// Stable-sort items by the manual order, keeping the server order for ties/unknowns.
+function byRouteOrder(arr, destOf) {
+  if (!ROUTE_ORDER || !arr) return arr || [];
+  return arr.map((x, i) => [x, i])
+    .sort((a, b) => (routeRank(destOf(a[0])) - routeRank(destOf(b[0]))) || (a[1] - b[1]))
+    .map(p => p[0]);
+}
+
 // delivery position of a destination from the plotted route (0 = delivered first).
 function deliveryIndex(d, dest) {
+  if (ROUTE_ORDER) {           // user's manual drag order wins when set
+    const r = ROUTE_ORDER.indexOf(dest);
+    if (r >= 0) return r;
+  }
   const stops = (d.plan && d.plan.stops) || [];
   const i = stops.findIndex(s => s.station === dest);
   return i < 0 ? 1e8 : i;   // off-route → treat as earliest delivery (loads near the bottom)

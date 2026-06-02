@@ -265,6 +265,17 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .plan-stop{margin-bottom:10px}
 .plan-stop h3{font-size:13px}
 .route-rollup{margin-top:8px}
+/* ---- drag-reorderable route runs ---- */
+.card.route{cursor:grab}
+.card.route.dragging{opacity:.45;cursor:grabbing}
+.card.route.dragover{border-color:var(--cyan);box-shadow:inset 3px 0 0 var(--cyan)}
+.route-grip{cursor:grab;color:var(--ink-3);margin-right:6px;font-size:13px;line-height:1;
+  letter-spacing:-2px;user-select:none}
+.card.route:hover .route-grip{color:var(--cyan)}
+.route-reset{margin-left:10px;font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;
+  font-size:10px;padding:3px 9px;cursor:pointer;color:var(--ink-3);background:transparent;
+  border:1px solid var(--line-2);border-radius:2px}
+.route-reset:hover{color:var(--cyan);border-color:var(--cyan)}
 
 /* ---- archive: two flat logs (contract log + trade-load log) ---- */
 .pos{color:var(--green)}
