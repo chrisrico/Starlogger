@@ -23,26 +23,6 @@ let LAST = null;      // latest snapshot
 let EDIT = null;      // mission_id whose editor is open
 let EDIT_ZONE = null; // zoneHostId whose station-name editor is open
 let SESSIONS = null;  // archived sessions
-// Contract-log filters (live in the contract-log header as a compact "Hide …" bar).
-// Stored in hide-semantics; mapped to the API's show-flags in sessQ().
-let HIDE_NONTRADE = localStorage.getItem("hideNonTrade") === "1";   // default: show non-cargo too
-let HIDE_UNFINISHED = localStorage.getItem("hideUnfinished") !== "0";  // default: hide unfinished
-const sessQ = () => {
-  const p = [];
-  if (HIDE_NONTRADE) p.push("trade=1");          // trade-only = hide non-trade
-  if (!HIDE_UNFINISHED) p.push("unfinished=1");  // include unfinished = not hiding them
-  return p.length ? "?" + p.join("&") : "";
-};
-function toggleHideNonTrade() {
-  HIDE_NONTRADE = $("fNonTrade").checked;
-  localStorage.setItem("hideNonTrade", HIDE_NONTRADE ? "1" : "0");
-  loadSessions();
-}
-function toggleHideUnfinished() {
-  HIDE_UNFINISHED = $("fUnfinished").checked;
-  localStorage.setItem("hideUnfinished", HIDE_UNFINISHED ? "1" : "0");
-  loadSessions();
-}
 
 // Which Archive section is expanded (accordion — only one at a time).
 let ARCH_OPEN = localStorage.getItem("archOpen") || "traderoutes";
@@ -1090,25 +1070,16 @@ function travelLogView(sessions) {
                     `<span class="scu">${rows.length} jumps${tot}</span>`, inner);
 }
 
-// Compact "Hide …" filter bar (lives in the contract-log header). Inverts the API's
-// show-flags: checked = exclude. Both re-fetch (server-side filtering).
-function contractFilterBar() {
-  return `<div class="filtbar">
-    <span class="filt-lbl">Hide</span>
-    <label class="chk" title="Exclude non-cargo missions (couriers, combat, etc.)">
-      <input type="checkbox" id="fNonTrade" ${HIDE_NONTRADE ? "checked" : ""} onchange="toggleHideNonTrade()">Non-hauling</label>
-    <label class="chk" title="Exclude missions left unfinished when the session ended">
-      <input type="checkbox" id="fUnfinished" ${HIDE_UNFINISHED ? "checked" : ""} onchange="toggleHideUnfinished()">Unfinished</label>
-  </div>`;
-}
-
 // Flat, cross-session log of every mission contract, time-ordered (newest first) by
 // when it ended (else when accepted — both now carried per mission in the archive).
+// Unfinished contracts (active when the session ended) are always hidden here; they're
+// still kept in the sessions file, just not shown.
 function contractLogView(sessions) {
   const rows = [];
   for (const s of sessions || [])
     for (const m of s.missions || [])
-      rows.push({ when: m.ended_at || m.accepted_at || s.started_at, m });
+      if (m.status !== "unfinished")
+        rows.push({ when: m.ended_at || m.accepted_at || s.started_at, m });
   rows.sort((a, b) => (b.when || "").localeCompare(a.when || ""));
   const total = rows.reduce((a, r) => a + (r.m.reward || 0), 0);
   const body = rows.map(r => {
@@ -1119,9 +1090,9 @@ function contractLogView(sessions) {
       <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
       <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
   }).join("");
-  const inner = contractFilterBar() + (rows.length ? `<div class="logwrap"><table class="logtable">
+  const inner = rows.length ? `<div class="logwrap"><table class="logtable">
       <thead><tr><th>When</th><th>Status</th><th>Contract</th><th class="lt-num">Reward</th></tr></thead>
-      <tbody>${body}</tbody></table></div>` : `<div class="empty">No contracts in range.</div>`);
+      <tbody>${body}</tbody></table></div>` : `<div class="empty">No contracts in range.</div>`;
   return logSection("contracts", `Contract Log · ${rows.length}`,
                     `<span class="scu">${num(total)} aUEC</span>`, inner);
 }
@@ -1287,7 +1258,7 @@ function routeRecsView(sessions) {
 
 async function loadSessions() {
   try {
-    SESSIONS = await (await fetch("/api/sessions" + sessQ(), { cache: "no-store" })).json();
+    SESSIONS = await (await fetch("/api/sessions", { cache: "no-store" })).json();
   } catch (e) { SESSIONS = SESSIONS || []; }
   setHTML("history", sessionsView(SESSIONS));
 }
