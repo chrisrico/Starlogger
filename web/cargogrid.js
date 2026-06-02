@@ -42,14 +42,24 @@
     };
   }
 
+  // 180° yaw about the bay centre, applied for rear-hatch ships so the hatch/loading
+  // door faces the viewer (down-left) instead of the nose. Mirrors a normalized
+  // (widthStart, depthStart) corner; box sizes are unchanged (it's a rotation, not a
+  // reflection). `flip` off → identity. Every coord→screen path runs through this so
+  // the boxes, overlays and scene bbox all stay consistent.
+  function flipXZ(dx, dz, w, l, box, flip) {
+    return flip ? [box.w - dx - w, box.l - dz - l] : [dx, dz];
+  }
+
   // Scene element size + stage offset, from the screen bbox over every cell
   // corner (full volume), so both modes share one stable layout.
-  function sceneMetrics(cells, box, S) {
+  function sceneMetrics(cells, box, S, flip) {
     let mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity;
     for (const c of cells) {
-      for (const x of [c.x - box.minX, c.x - box.minX + c.width])
-        for (const y of [c.z - box.minZ, c.z - box.minZ + c.length])
+      for (const xx of [c.x - box.minX, c.x - box.minX + c.width])
+        for (const yy of [c.z - box.minZ, c.z - box.minZ + c.length])
           for (const z of [c.y || 0, (c.y || 0) + c.height]) {
+            const x = flip ? box.w - xx : xx, y = flip ? box.l - yy : yy;
             const [sx, sy] = project(x * S, y * S, z * S);
             if (sx < mnx) mnx = sx; if (sx > mxx) mxx = sx;
             if (sy < mny) mny = sy; if (sy > mxy) mxy = sy;
@@ -74,8 +84,9 @@
   }
 
   // ---- volume mode (catalog): one wireframe box per sub-grid ----
-  function volumeBoxHtml(c, box, S) {
-    const X = (c.x - box.minX) * S, Y = (c.z - box.minZ) * S, base = (c.y || 0) * S;
+  function volumeBoxHtml(c, box, S, flip) {
+    const [dx, dz] = flipXZ(c.x - box.minX, c.z - box.minZ, c.width, c.length, box, flip);
+    const X = dx * S, Y = dz * S, base = (c.y || 0) * S;
     const W = c.width * S, L = c.length * S, H = c.height * S;
     const bg = `background-size:${S}px ${S}px`;
     const horiz = c.preferHorizontal ? " cg-horiz" : "";
@@ -88,8 +99,9 @@
   }
 
   // ---- fill mode: floor per sub-grid + 1-SCU cubes ----
-  function floorHtml(c, box, S) {
-    const X = (c.x - box.minX) * S, Y = (c.z - box.minZ) * S, base = (c.y || 0) * S;
+  function floorHtml(c, box, S, flip) {
+    const [dx, dz] = flipXZ(c.x - box.minX, c.z - box.minZ, c.width, c.length, box, flip);
+    const X = dx * S, Y = dz * S, base = (c.y || 0) * S;
     return `<div class="cg-floor3d" style="transform:translate3d(${X}px,${Y}px,${base}px);width:${c.width * S}px;height:${c.length * S}px;background-size:${S}px ${S}px"></div>`;
   }
   // one 1×1×1 cube at normalized cell (x width, y depth, z level), tinted by hue.
@@ -390,7 +402,8 @@
   }
 
   // a sized, solid, color-tinted cargo box with 1-SCU grid lines on its faces.
-  function packedBoxHtml(b, S) {
+  function packedBoxHtml(b, S, box, flip) {
+    const [bx, by] = flipXZ(b.x, b.y, b.w, b.l, box, flip);
     const W = b.w * S, L = b.l * S, H = b.h * S;
     const top = `hsl(${b.hue},66%,57%)`, yw = `hsl(${b.hue},62%,44%)`, xw = `hsl(${b.hue},56%,32%)`;
     const lines = `background-image:linear-gradient(to right,rgba(0,0,0,.22) 1px,transparent 1px),`
@@ -403,7 +416,7 @@
       `<div class="cgc" style="${st(xw, H, L)};transform-origin:0 0;transform:rotateY(-90deg)"></div>`,
       `<div class="cgc" style="${st(xw, H, L)};transform-origin:0 0;transform:translateX(${W}px) rotateY(-90deg)"></div>`,
     ].join("");
-    return `<div class="cg-box" data-gid="${b.gid == null ? "" : b.gid}" title="${esc(b.label)}" style="transform:translate3d(${b.x * S}px,${b.y * S}px,${b.z * S}px)">${f}</div>`;
+    return `<div class="cg-box" data-gid="${b.gid == null ? "" : b.gid}" title="${esc(b.label)}" style="transform:translate3d(${bx * S}px,${by * S}px,${b.z * S}px)">${f}</div>`;
   }
 
   // Flat (non-rotated) overlays placed in cg-scene at the projected position of a
@@ -412,7 +425,7 @@
     const [sx, sy] = project(px * S, py * S, pz * S);
     return `<div class="${cls}" style="left:${(m.left + sx).toFixed(1)}px;top:${(m.top + sy).toFixed(1)}px">${text}</div>`;
   }
-  function bayTags(cells, box, S, m, opts) {
+  function bayTags(cells, box, S, m, opts, flip) {
     let out = "";
     // Label cells biggest-first and DROP any tag that would collide with one already
     // placed — keeps dense layouts (Caterpillar, Ironclad) legible instead of a pile of
@@ -421,24 +434,28 @@
     const named = cells.filter(c => c.name)
       .sort((a, b) => (b.width * b.length * b.height) - (a.width * a.length * a.height));
     for (const c of named) {
-      const [sx, sy] = project((c.x - box.minX + c.width / 2) * S,
-        (c.z - box.minZ + c.length / 2) * S, ((c.y || 0) + c.height) * S);
+      let cw = c.x - box.minX + c.width / 2, cd = c.z - box.minZ + c.length / 2;
+      if (flip) { cw = box.w - cw; cd = box.l - cd; }
+      const [sx, sy] = project(cw * S, cd * S, ((c.y || 0) + c.height) * S);
       if (placed.some(p => Math.abs(p[0] - sx) < 48 && Math.abs(p[1] - sy) < 14)) continue;
       placed.push([sx, sy]);
       out += `<div class="cg-baytag" style="left:${(m.left + sx).toFixed(1)}px;top:${(m.top + sy).toFixed(1)}px">${esc(c.name)}</div>`;
     }
     // forward = +z (we map the ship's +Y nose axis to depth); only meaningful when the
-    // layout is the real ship geometry, not the synthesised row-tiling.
+    // layout is the real ship geometry, not the synthesised row-tiling. The marker rides
+    // the flip too, so it points at the nose wherever the hull is facing.
     if (opts && opts.layout === "deck" && cells.length) {
       const maxZ = Math.max(...cells.map(c => c.z - box.minZ + c.length));
       const xs = cells.map(c => c.x - box.minX), xe = cells.map(c => c.x - box.minX + c.width);
       const midX = (Math.min(...xs) + Math.max(...xe)) / 2;
-      out += flatAt(midX, maxZ + 0.6, 0, S, m, "cg-fwd", "▲ FWD");
+      let fw = midX, fd = maxZ + 0.6;
+      if (flip) { fw = box.w - midX; fd = box.l - (maxZ + 0.6); }
+      out += flatAt(fw, fd, 0, S, m, "cg-fwd", "▲ FWD");
     }
     return out;
   }
-  function bayWrap(inner, label, box, scu, m, cells, S, opts) {
-    const tags = cells ? bayTags(cells, box, S, m, opts) : "";
+  function bayWrap(inner, label, box, scu, m, cells, S, opts, flip) {
+    const tags = cells ? bayTags(cells, box, S, m, opts, flip) : "";
     return `<div class="cg-bay">
       <div class="cg-scene" style="width:${m.w}px;height:${m.h}px">
         <div class="cg-stage" style="left:${m.left}px;top:${m.top}px;transform:${STAGE_TF}">${inner}</div>
@@ -456,6 +473,10 @@
     const S = opts.scale || 18;
     if (!grid || !grid.length) return opts.empty || "";
     const total = grid.length;
+    // Rear-hatch ships are shown yawed 180° so the hatch (loading door) faces the
+    // viewer — the end where cargo goes in/out, and where the first delivery sits.
+    const access = opts.access;
+    const flip = !!(access && access.axis === "depth" && access.near === "rear" && !access.both);
 
     if (opts.packed) {
       // floor per sub-grid + the packer's placed sized boxes, grouped by bay
@@ -465,10 +486,10 @@
         const cells = bay.grids || [];
         if (!cells.length) return "";
         const box = bayBox(cells);
-        const inner = cells.map(c => floorHtml(c, box, S)).join("")
-          + byBay[i].map(b => packedBoxHtml(b, S)).join("");
+        const inner = cells.map(c => floorHtml(c, box, S, flip)).join("")
+          + byBay[i].map(b => packedBoxHtml(b, S, box, flip)).join("");
         return bayWrap(inner, total > 1 ? `Bay ${i + 1}` : "Hold", box,
-          cells.reduce((a, c) => a + cellScu(c), 0), sceneMetrics(cells, box, S), cells, S, opts);
+          cells.reduce((a, c) => a + cellScu(c), 0), sceneMetrics(cells, box, S, flip), cells, S, opts, flip);
       }).join("");
       return `<div class="cg-wrap">${bays}</div>`;
     }
@@ -478,9 +499,9 @@
         const cells = bay.grids || [];
         if (!cells.length) return "";
         const box = bayBox(cells);
-        return bayWrap(cells.map(c => volumeBoxHtml(c, box, S)).join(""),
+        return bayWrap(cells.map(c => volumeBoxHtml(c, box, S, flip)).join(""),
           total > 1 ? `Bay ${i + 1}` : "Hold", box,
-          cells.reduce((a, c) => a + cellScu(c), 0), sceneMetrics(cells, box, S), cells, S, opts);
+          cells.reduce((a, c) => a + cellScu(c), 0), sceneMetrics(cells, box, S, flip), cells, S, opts, flip);
       }).join("");
       return `<div class="cg-wrap">${bays}</div>`;
     }
@@ -496,17 +517,18 @@
       const cells = bay.grids || [];
       if (!cells.length) return "";
       const box = bayBox(cells);
-      const floors = cells.map(c => floorHtml(c, box, S)).join("");
+      const floors = cells.map(c => floorHtml(c, box, S, flip)).join("");
       const order = fillOrder(cells, box);
       const cubes = [];
       for (const p of order) {
         if (gi >= colors.length) break;
-        cubes.push(cubeHtml(p.x, p.y, p.z, colors[gi].hue, S, colors[gi].label));
+        const cx = flip ? box.w - p.x - 1 : p.x, cy = flip ? box.l - p.y - 1 : p.y;
+        cubes.push(cubeHtml(cx, cy, p.z, colors[gi].hue, S, colors[gi].label));
         gi++;
       }
       return bayWrap(floors + cubes.join(""),
         total > 1 ? `Bay ${i + 1}` : "Hold", box,
-        cells.reduce((a, c) => a + cellScu(c), 0), sceneMetrics(cells, box, S), cells, S, opts);
+        cells.reduce((a, c) => a + cellScu(c), 0), sceneMetrics(cells, box, S, flip), cells, S, opts, flip);
     }).join("");
     return `<div class="cg-wrap">${bays}</div>`;
   }

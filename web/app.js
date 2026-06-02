@@ -871,7 +871,7 @@ function gridView(d) {
       ? "This scenario has no deliverable cargo."
       : "No cargo to load yet — accept hauling contracts and your picked-up cargo stages here by destination. Or pick a Test Scenario from the header.";
     return head + `<div class="sub" style="margin:6px 2px 14px">${msg}</div>`
-      + `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed: { placed: [] }, layout: d.ship_layout }) + `</div>`;
+      + `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed: { placed: [] }, layout: d.ship_layout, access }) + `</div>`;
   }
 
   // Banded ships pack front-to-back: order groups first-delivered-first so group 0
@@ -918,7 +918,7 @@ function gridView(d) {
   const shipLbl = `<div class="elev-lbl">Ship hold <span class="sub">— ${banded ? "packed front-to-back" : "packed in load order"} · hover a load-order row to highlight its boxes</span></div>`;
 
   return head + legend + over + ambig + seq + shipLbl
-    + `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed: shipPacked, layout: d.ship_layout }) + `</div>`;
+    + `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed: shipPacked, layout: d.ship_layout, access }) + `</div>`;
 }
 
 // ---- editor actions ---- //

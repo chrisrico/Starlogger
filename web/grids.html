@@ -59,12 +59,13 @@ function fullPacked(s) {
 function shipHtml(s) {
   const cells = (s.groups || []).reduce((a, g) => a + (g.grids || []).length, 0);
   let inner;
+  const access = (typeof accessFor === "function") ? accessFor(s.name) : null;
   if (FILL === "full") {
     const { packed, over } = fullPacked(s);
-    inner = cargoGridHtml(s.groups, { scale: SCALE, packed, layout: s.layout })
+    inner = cargoGridHtml(s.groups, { scale: SCALE, packed, layout: s.layout, access })
       + (over ? `<div class="note">⚠ ${num(over)} / ${num(s.scu)} SCU overflowed (packer couldn't place)</div>` : "");
   } else {
-    inner = cargoGridHtml(s.groups, { scale: SCALE, layout: s.layout });
+    inner = cargoGridHtml(s.groups, { scale: SCALE, layout: s.layout, access });
   }
   return `<div class="cg-ship" data-key="${esc((s.manufacturer + " " + s.name).toLowerCase())}">
     <h3><span><span class="cg-mfr">${esc(s.manufacturer || "—")}</span> &nbsp;<b>${esc(s.name)}</b></span>
