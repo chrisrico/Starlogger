@@ -1135,7 +1135,8 @@ function tradeLogView(sessions) {
     else if (!L.noBasis && sold < L.buyScu) act = `<button class="lt-act" title="Mark this haul lost (cargo destroyed/stolen)" onclick='markTradeLost(${JSON.stringify(L.id)}, true)'>✕</button>`;
     return `<tr class="${lost ? "lt-lost" : ""}">
       <td class="lt-when">${fmtWhen(L.ts)}</td>
-      <td class="lt-title">${esc(L.commodity)} ${tag}${act}</td>
+      <td class="lt-title">${esc(L.commodity)}</td>
+      <td class="lt-status">${tag}${act}</td>
       <td class="lt-shop">${esc(route)}</td>
       <td class="lt-num">${scu}</td>
       <td class="lt-num ${L.cost ? "neg" : ""}">${L.cost ? "−" + num(L.cost) : "—"}</td>
@@ -1143,7 +1144,7 @@ function tradeLogView(sessions) {
       <td class="lt-num ${!priced ? "" : profit >= 0 ? "pos" : "neg"}">${priced ? (profit >= 0 ? "+" : "−") + num(Math.abs(profit)) : "—"}</td></tr>`;
   }).join("");
   const inner = loads.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>When</th><th>Commodity</th><th>Route</th><th class="lt-num">SCU</th><th class="lt-num">Cost</th><th class="lt-num">Revenue</th><th class="lt-num">Profit</th></tr></thead>
+      <thead><tr><th>When</th><th>Commodity</th><th>Status</th><th>Route</th><th class="lt-num">SCU</th><th class="lt-num">Cost</th><th class="lt-num">Revenue</th><th class="lt-num">Profit</th></tr></thead>
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No manual trades in range.</div>`;
   return logSection("trades", `Trade Loads · ${loads.length}`,
                     `<span class="scu ${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span>`, inner);
