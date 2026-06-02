@@ -44,7 +44,7 @@ function logSection(key, title, headSpan, body) {
   const open = ARCH_OPEN === key;
   return `<div class="card logsec logcard${open ? " open" : ""}">
     <h3 class="logsec-h" onclick="toggleArch('${key}')">
-      <span class="logsec-chev">${open ? "▾" : "▸"}</span><span>${title}</span>${headSpan || ""}</h3>
+      <span class="logsec-t"><span class="logsec-chev">${open ? "▾" : "▸"}</span><span>${title}</span></span>${headSpan || ""}</h3>
     ${open ? body : ""}
   </div>`;
 }
