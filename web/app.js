@@ -20,8 +20,8 @@ function setHTML(id, html) {
 
 let TAB = "missions";   // Contracts is the first/default tab
 let LAST = null;      // latest snapshot
-let EDIT = null;      // mission_id whose editor is open
-let EDIT_ZONE = null; // zoneHostId whose station-name editor is open
+let EDIT = null;      // mission_id whose editor is open (Contracts tab)
+let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
 let SESSIONS = null;  // archived sessions
 
 // Which Archive section is expanded (accordion — only one at a time).
@@ -240,49 +240,91 @@ const partialNote = (d) => d.counts.partial
   ? `<div class="note">⚠ ${d.counts.partial} active mission(s) are missing cargo/quantity data — Star Citizen didn't log the delivery objectives (common when several missions are accepted quickly). Cargo <b>type</b> is recovered from the contract; quantities show <b>?</b>. Use <b>Edit</b> on the Contracts tab to fill them in.</div>`
   : "";
 
-// Station-name cell for a loading/unloading group header. When the group carries
-// a zoneHostId it can be (re)named inline; the name persists by zone and resolves
-// everywhere that zone is used (origins included).
-function groupTitle(g) {
-  const warn = g.has_partial ? ' <span class="warn" title="some quantities not logged">⚠</span>' : "";
-  if (!g.zone) return `<span>${esc(g.location)}${warn}</span>`;
-  if (EDIT_ZONE === g.zone) {
-    const unknown = /^Unknown station/.test(g.location);
-    return `<span class="zedit">
-      <input id="zn_input" class="zn-input" list="dl_station" placeholder="Station name" value="${esc(unknown ? "" : g.location)}"
-        onkeydown="if(event.key==='Enter')saveZoneName('${g.zone}');else if(event.key==='Escape')cancelZone()">
-      <button class="zn-ok" onclick="saveZoneName('${g.zone}')">Set</button>
-      <button class="zn-x" title="cancel" onclick="cancelZone()">✕</button></span>`;
+// ---- unified in-place editor for unknown values --------------------------- //
+// One mechanism for every cargo-ops screen (loading, unloading, routes, trip plan).
+// A `field` describes what to persist: {k, zone?, mid?, oid?} where k is:
+//   station — keyed by zoneHostId  -> /api/station-name (resolves everywhere)
+//   origin  — keyed by mission_id  -> /api/override (merged)
+//   cargo|qty — keyed by mission_id+objective id -> /api/leg-field
+// Click a value to edit it in place; Enter/blur commits, Escape cancels. The token
+// identifies which single cell is open so the 3s poll never yanks it mid-edit.
+const UNKNOWN_STATION = (s) => !s || /^Unknown station/.test(s);
+const cellTok = (f) => [f.k, f.zone || "", f.mid || "", f.oid || ""].join("|");
+const editPlaceholder = (k) => k === "qty" ? "SCU" : k === "cargo" ? "commodity" : "station name";
+const editList = (k) => k === "cargo" ? "dl_cargo" : (k === "station" || k === "origin") ? "dl_station" : "";
+
+function editable(value, f, opts) {
+  opts = opts || {};
+  const tok = cellTok(f);
+  const known = value != null && value !== "" && !opts.unknown;
+  if (EDIT_CELL === tok) {
+    const isnum = f.k === "qty";
+    const list = editList(f.k);
+    const cur = (opts.unknown || value == null) ? "" : value;
+    return `<span class="edc editing"><input id="edit_input" class="edc-in"
+      data-field='${esc(JSON.stringify(f))}'
+      ${isnum ? 'type="number" min="0" step="1"' : (list ? `list="${list}"` : "")}
+      value="${esc(cur)}" placeholder="${esc(opts.ph || editPlaceholder(f.k))}"
+      onkeydown="edKey(event)" onblur="edCommit(this)"></span>`;
   }
-  const cls = /^Unknown station/.test(g.location) ? "loc-unknown" : "";
-  return `<span class="${cls}">${esc(g.location)}${warn}
-    <button class="namebtn" title="Name this station — applies everywhere it's used" onclick="editZone('${g.zone}')">✎</button></span>`;
+  const inner = known ? esc(value)
+    : `<span class="edc-unkn">${esc(opts.label || (value != null && value !== "" ? value : editPlaceholder(f.k)))}</span>`;
+  return `<span class="edc${known ? "" : " is-unknown"}" data-field='${esc(JSON.stringify(f))}'
+    title="${known ? "Click to correct" : "Click to set"}" onclick="edOpen(this)">${inner}<span class="edc-pen">✎</span></span>`;
+}
+// convenience wrappers used across the screens; render plain text when not editable
+function stationCell(name, zone) {
+  return zone ? editable(name, { k: "station", zone }, { unknown: UNKNOWN_STATION(name) }) : esc(name);
+}
+function cargoCell(cargo, mid, oid) {
+  return (mid && oid) ? editable(cargo, { k: "cargo", mid, oid }, { unknown: !cargo || cargo === "Unknown cargo" })
+                      : esc(cargo || "Unknown cargo");
+}
+function qtyCell(qty, mid, oid) {
+  return (mid && oid) ? editable(qty, { k: "qty", mid, oid }, { unknown: qty == null, label: "?" })
+                      : QTY(qty);
 }
 
-function rerenderGroups() {
-  if (!LAST) return;
-  setHTML("loading", groupCards(LAST.loading, "loading", LAST));
-  setHTML("unloading", groupCards(LAST.unloading, "unloading", LAST));
+function edOpen(el) {
+  let f; try { f = JSON.parse(el.dataset.field); } catch (e) { return; }
+  EDIT_CELL = cellTok(f);
+  rerenderEdits();
+  const i = $("edit_input"); if (i) { i.focus(); if (i.select) i.select(); }
 }
-function editZone(zone) {
-  EDIT_ZONE = zone;
-  rerenderGroups();
-  setTimeout(() => { const i = $("zn_input"); if (i) { i.focus(); i.select(); } }, 0);
+function edCancel() { EDIT_CELL = null; rerenderEdits(); }
+function edKey(e) {
+  if (e.key === "Enter") { e.preventDefault(); edCommit(e.target); }
+  else if (e.key === "Escape") { e.preventDefault(); edCancel(); }
 }
-function cancelZone() { EDIT_ZONE = null; rerenderGroups(); }
-async function saveZoneName(zone) {
-  const input = $("zn_input");
-  const name = input ? input.value.trim() : "";
+let EDIT_BUSY = false;
+async function edCommit(el) {
+  if (!el || EDIT_BUSY) return;
+  let f; try { f = JSON.parse(el.dataset.field); } catch (e) { return; }
+  if (EDIT_CELL !== cellTok(f)) return;   // already cancelled/committed
+  const raw = (el.value || "").trim();
+  EDIT_BUSY = true; EDIT_CELL = null;
   try {
-    const r = await fetch("/api/station-name", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ zone, name }),
-    });
-    const j = await r.json();
-    if (!j.ok) { alert("Save failed: " + (j.error || r.status)); return; }
-  } catch (e) { alert("Save failed: " + e); return; }
-  EDIT_ZONE = null;
+    if (f.k === "station") await postJSON("/api/station-name", { zone: f.zone, name: raw });
+    else if (f.k === "origin") await postJSON("/api/override", { mission_id: f.mid, override: { ...rawOverride(f.mid), origin: raw || null } });
+    else await postJSON("/api/leg-field", { mission_id: f.mid, oid: f.oid, field: f.k, value: raw });
+  } catch (e) { alert("Save failed: " + e); }
+  EDIT_BUSY = false;
   refresh();
+}
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) throw new Error(j.error || r.status);
+  return j;
+}
+// Re-render only the edit-bearing containers from the current snapshot (used when
+// opening/cancelling an inline editor, without a network round-trip).
+function rerenderEdits() {
+  if (!LAST) return;
+  const d = curData(); if (!d) return;
+  setHTML("loading", groupCards(d.loading, "loading", d));
+  setHTML("unloading", groupCards(d.unloading, "unloading", d));
+  setHTML("routes", routeCards(d.routes, d));
 }
 
 function groupCards(groups, kind, d) {
@@ -302,10 +344,11 @@ function groupCards(groups, kind, d) {
       const check = (kind === "unloading" && it.oid)
         ? legCheck(it.mission_id, it.oid, it.done) : "";
       return `<div class="row ${it.done ? "done" : ""} ${it.partial ? "partial" : ""}">
-        ${check}<div class="rowmain"><span class="cargo">${esc(it.cargo)}</span>${tail}</div>
-        <div class="qty">${QTY(it.qty)}</div></div>`;
+        ${check}<div class="rowmain"><span class="cargo">${cargoCell(it.cargo, it.mission_id, it.oid)}</span>${tail}</div>
+        <div class="qty">${qtyCell(it.qty, it.mission_id, it.oid)}</div></div>`;
     }).join("");
-    return `<div class="card"><h3>${groupTitle(g)}
+    const warn = g.has_partial ? ' <span class="warn" title="some quantities not logged">⚠</span>' : "";
+    return `<div class="card"><h3><span>${stationCell(g.location, g.zone)}${warn}</span>
         <span class="scu">${SCU(g.total_scu, g.has_partial)}</span></h3>${rows}</div>`;
   }).join("") + `</div>`;
 }
@@ -359,9 +402,9 @@ function planView(plan) {
     lastKey = key;
     const rows = s.items.map(it =>
       `<div class="row">${legCheck(it.mission_id, it.oid, false)}<div class="rowmain">
-         <span class="cargo">${esc(it.cargo)}</span></div>
-         <div class="qty">${QTY(it.qty)}</div></div>`).join("");
-    return header + `<div class="card plan-stop"><h3><span>${esc(s.station)}</span>
+         <span class="cargo">${cargoCell(it.cargo, it.mission_id, it.oid)}</span></div>
+         <div class="qty">${qtyCell(it.qty, it.mission_id, it.oid)}</div></div>`).join("");
+    return header + `<div class="card plan-stop"><h3><span>${stationCell(s.station, s.zone)}</span>
         <span class="scu">${num(s.scu)} SCU</span></h3>${rows}</div>`;
   }).join("");
 
@@ -386,19 +429,25 @@ function routeCards(routes, d) {
   const reset = ROUTE_ORDER
     ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
   const cards = ordered.map(r => {
-    // each cargo chip ticks off all its legs on this route at once
+    // each cargo chip ticks off all its legs on this route at once; a single-leg chip
+    // is also inline-editable (commodity + qty), matching the other screens.
     const cargo = r.cargo.map(c => {
       const legs = (c.legs || []).map(l => ({ mission_id: l.mission_id, oid: l.oid }));
+      const one = legs.length === 1 ? legs[0] : null;
       const tick = legs.length
         ? `<button class="chiptick" title="Mark this cargo delivered on this route"
             onclick='markDelivered(${JSON.stringify(legs)}, true)'>✓</button>` : "";
-      return `<span class="chip">${esc(c.cargo)}${c.qty ? (" " + num(c.qty)) : ""}${tick}</span>`;
+      const cName = one ? cargoCell(c.cargo, one.mission_id, one.oid) : esc(c.cargo);
+      const cQty = c.qty ? " " + num(c.qty) : (one ? " " + qtyCell(null, one.mission_id, one.oid) : "");
+      return `<span class="chip">${cName}${cQty}${tick}</span>`;
     }).join("");
-    // draggable: dropping reorders the visit/load sequence (persisted, drives load order)
-    return `<div class="card route" draggable="true" data-dest="${esc(r.destination)}"
-        ondragstart="routeDragStart(event)" ondragover="routeDragOver(event)"
-        ondragleave="routeDragLeave(event)" ondrop="routeDrop(event)" ondragend="routeDragEnd(event)"><h3>
-        <span class="ends"><span class="route-grip" title="Drag to reorder the run">⠿</span>${esc(r.origin)}<span class="arrow">→</span>${esc(r.destination)}${r.has_partial ? ' <span class="warn">⚠</span>' : ""}</span>
+    // drag handle only (so clicking the station/cargo cells to edit never starts a drag);
+    // the card is the drop target.
+    return `<div class="card route" data-dest="${esc(r.destination)}"
+        ondragover="routeDragOver(event)" ondragleave="routeDragLeave(event)"
+        ondrop="routeDrop(event)" ondragend="routeDragEnd(event)"><h3>
+        <span class="ends"><span class="route-grip" draggable="true" title="Drag to reorder the run"
+          ondragstart="routeDragStart(event)">⠿</span>${stationCell(r.origin, r.origin_zone)}<span class="arrow">→</span>${stationCell(r.destination, r.dest_zone)}${r.has_partial ? ' <span class="warn">⚠</span>' : ""}</span>
         <span class="scu">${SCU(r.total_scu, r.has_partial)}</span></h3>
       <div class="row"><div>${cargo}</div></div>
       <div class="row"><div class="sub">${r.mission_count} mission(s)</div></div>
@@ -759,11 +808,13 @@ function renderAll(d) {
   if (!d) return;
   renderHeader(d);
   setHTML("datalists", datalistsHtml(d.catalog));
-  if (!EDIT_ZONE) {  // don't clobber an open station-name editor
+  // EDIT_CELL guards every cargo-ops screen so an open inline editor isn't clobbered
+  // by the 3s poll; DRAG_DEST guards a route drag in progress.
+  if (!EDIT_CELL) {
     setHTML("loading", groupCards(d.loading, "loading", d));
     setHTML("unloading", groupCards(d.unloading, "unloading", d));
   }
-  if (DRAG_DEST == null) setHTML("routes", routeCards(d.routes, d));  // don't yank the DOM mid-drag
+  if (!EDIT_CELL && DRAG_DEST == null) setHTML("routes", routeCards(d.routes, d));
   if (!GRID_HOVER) setHTML("grid", gridView(d));  // don't wipe the hold highlight mid-hover
   if (EDIT === null) setHTML("missions", missionsTable(d.missions));  // don't clobber an open editor
 }

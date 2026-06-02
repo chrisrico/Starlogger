@@ -189,24 +189,21 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .card h3 > span:first-child{display:inline-flex;align-items:center;gap:8px}
 .card h3 > span:first-child::before{content:"";width:3px;height:15px;background:var(--cyan);box-shadow:0 0 8px var(--cyan-deep)}
 .card h3 .scu{font-family:var(--mono);color:var(--cyan);font-weight:600;white-space:nowrap;font-size:13px}
-/* inline station rename in a group header */
-.card h3 .loc-unknown{color:var(--ink-3);font-style:italic}
-.card h3 .namebtn{opacity:0;background:transparent;border:0;color:var(--ink-3);cursor:pointer;
-  font-size:12px;padding:0 2px;line-height:1;transition:color .14s,opacity .14s}
-.card h3:hover .namebtn{opacity:1}
-.card h3 .namebtn:hover{color:var(--cyan)}
-.card h3 .loc-unknown .namebtn{opacity:1;color:var(--amber)}
-.card h3 .zedit{display:inline-flex;align-items:center;gap:6px;flex:1;min-width:0}
-.card h3 .zedit::before{display:none}
-.zn-input{background:#070d18;color:var(--ink);border:1px solid var(--cyan);border-radius:2px;
-  padding:4px 8px;font-family:var(--mono);font-size:12.5px;min-width:0;flex:1}
-.zn-input:focus{outline:none;box-shadow:0 0 0 2px rgba(79,220,255,.25)}
-.zn-ok,.zn-x{font-family:var(--display);font-size:11px;font-weight:600;text-transform:uppercase;
-  letter-spacing:.06em;border:1px solid var(--line-2);background:rgba(86,206,255,.06);color:var(--ink);
-  border-radius:2px;padding:4px 9px;cursor:pointer;transition:all .14s;flex:none}
-.zn-ok{border-color:var(--cyan);color:var(--cyan)}
-.zn-ok:hover{background:rgba(79,220,255,.18)}
-.zn-x:hover{border-color:var(--red);color:var(--red)}
+/* ---- unified in-place editor for unknown values (every cargo-ops screen) ---- */
+/* A click-to-edit cell. Known values reveal a ✎ on hover; unknowns are always
+   flagged (dashed underline + amber pen) to signal "fill me in". */
+.edc{cursor:pointer;border-radius:2px;transition:background .12s}
+.edc:hover{background:rgba(79,220,255,.10)}
+.edc .edc-pen{opacity:0;color:var(--ink-3);font-size:11px;margin-left:4px;transition:opacity .12s}
+.edc:hover .edc-pen{opacity:.9}
+.edc.is-unknown{text-decoration:underline dotted var(--amber);text-underline-offset:3px}
+.edc.is-unknown .edc-unkn{color:var(--amber);font-style:italic}
+.edc.is-unknown .edc-pen{opacity:.9;color:var(--amber)}
+.edc.editing{display:inline-flex}
+.edc-in{background:#070d18;color:var(--ink);border:1px solid var(--cyan);border-radius:2px;
+  padding:3px 7px;font-family:var(--mono);font-size:12.5px;min-width:0;max-width:18ch}
+.edc-in[type=number]{max-width:7ch;text-align:right}
+.edc-in:focus{outline:none;box-shadow:0 0 0 2px rgba(79,220,255,.25)}
 
 .row{display:flex;justify-content:space-between;gap:10px;padding:9px 16px;border-bottom:1px solid rgba(86,206,255,.07);align-items:baseline}
 .row:last-child{border-bottom:0}

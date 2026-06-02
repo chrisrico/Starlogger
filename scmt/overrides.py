@@ -108,6 +108,18 @@ def apply_override(mis: Mission, ov: dict) -> Mission:
     if "pickups" in ov:
         m.legs = {k: v for k, v in m.legs.items() if v.kind != "pickup"}
         m.legs.update(_legs(ov["pickups"], "pickup", "from"))
+    # per-leg field corrections (cargo / qty) overlaid by objective id, set by the
+    # unified inline editor on the cargo-ops screens. Applied to whatever legs exist
+    # (game legs, or the override's own drops/pickups), so a single unknown can be
+    # fixed in place without rebuilding the whole leg list.
+    for oid, f in (ov.get("leg_fields") or {}).items():
+        leg = m.legs.get(oid)
+        if not leg:
+            continue
+        if f.get("cargo"):
+            leg.cargo = f["cargo"]
+        if "qty" in f:
+            leg.qty = f["qty"]
     # per-leg "mark delivered" overlay, applied last so it references the final
     # (possibly overridden) leg ids. Only forces "completed"; never un-completes
     # a leg the game itself marked done.
@@ -145,6 +157,41 @@ def set_leg_states(items: list[dict], done: bool, path: str = OVERRIDES_PATH) ->
             data[mid] = entry
         else:
             data.pop(mid, None)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def set_leg_field(mission_id: str, oid: str, field: str, value, path: str = OVERRIDES_PATH) -> None:
+    """Merge one per-leg field correction (``cargo`` | ``qty``) into a mission's
+    override, keyed by objective id; a falsy/None value clears it. Read-modify-write,
+    pruning empty cells/entries so the file stays minimal."""
+    data: dict = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    entry = data.get(mission_id) or {}
+    fields = entry.get("leg_fields") or {}
+    cell = fields.get(oid) or {}
+    if value in (None, ""):
+        cell.pop(field, None)
+    else:
+        cell[field] = value
+    if cell:
+        fields[oid] = cell
+    else:
+        fields.pop(oid, None)
+    if fields:
+        entry["leg_fields"] = fields
+    else:
+        entry.pop("leg_fields", None)
+    if entry:
+        data[mission_id] = entry
+    else:
+        data.pop(mission_id, None)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, sort_keys=True)

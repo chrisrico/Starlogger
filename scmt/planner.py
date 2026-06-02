@@ -129,6 +129,8 @@ def plan_trip(active, origin_of, dleg_loc, current=None):
     anchor = current or origin
     origin_cluster = _group_key(*classify_station(anchor)) if anchor else None
 
+    from .snapshot import PENDING_DEST  # lazy: snapshot imports this module at load
+
     # collect outstanding (not delivered) dropoff legs, grouped by station
     by_station: dict[str, dict] = {}
     load_items: list[dict] = []
@@ -144,8 +146,11 @@ def plan_trip(active, origin_of, dleg_loc, current=None):
             }
             st = by_station.setdefault(dest, {
                 "station": dest, "items": [], "scu": 0,
-                "cls": classify_station(dest),
+                "cls": classify_station(dest), "zone": None,
             })
+            # zone backs the inline station editor; skip the pending-dropoff placeholder
+            if leg.zone_host_id and not st["zone"] and dest != PENDING_DEST:
+                st["zone"] = leg.zone_host_id
             st["items"].append(item)
             st["scu"] += leg.qty or 0
             load_items.append(item)
@@ -196,6 +201,7 @@ def plan_trip(active, origin_of, dleg_loc, current=None):
             stops.append({
                 "system": c["system"], "body": c["body"], "moon": c["moon"],
                 "station": st["station"], "scu": st["scu"], "items": st["items"],
+                "zone": st["zone"],
             })
 
     load_items.sort(key=lambda i: (-(i["qty"] or 0), i["cargo"]))

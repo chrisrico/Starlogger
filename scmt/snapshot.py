@@ -355,20 +355,25 @@ def _build_loading(active, origin_of, dleg_loc, mlabel) -> list:
                 g["items"].append({
                     "cargo": leg.cargo or ", ".join(mis.cargo_types) or "Unknown cargo",
                     "qty": leg.qty, "to": dests, "mission": mlabel(mis),
-                    "mission_id": mis.mission_id, "done": False,
+                    "mission_id": mis.mission_id, "oid": leg.objective_id, "done": False,
                     "partial": not (leg.cargo and leg.qty),
                 })
             continue
 
         g = grp(origin_of(mis), mis.origin_zone)
-        detailed = [l for l in drops if l.cargo and l.qty]
-        if detailed:
-            for leg in detailed:
-                g["total_scu"] += leg.qty
+        # one row per cargo-bearing drop leg (so each commodity + its qty is editable
+        # in place, even when the qty wasn't logged); fall back to the decoded cargo
+        # list only when no leg carries a commodity at all.
+        cargo_legs = [l for l in drops if l.cargo]
+        if cargo_legs:
+            for leg in cargo_legs:
+                g["total_scu"] += leg.qty or 0
+                g["has_partial"] = g["has_partial"] or not leg.qty
                 g["items"].append({
                     "cargo": leg.cargo, "qty": leg.qty, "to": dleg_loc(leg),
                     "mission": mlabel(mis), "mission_id": mis.mission_id,
-                    "done": leg.state == "completed", "partial": False,
+                    "oid": leg.objective_id,
+                    "done": leg.state == "completed", "partial": not leg.qty,
                 })
         else:
             g["has_partial"] = True
@@ -426,8 +431,15 @@ def _build_unloading_routes(active, origin_of, dleg_loc, mlabel):
             r = routes.setdefault(
                 (origin, dest),
                 {"origin": origin, "destination": dest, "total_scu": 0,
-                 "cargo": {}, "missions": set(), "has_partial": False},
+                 "cargo": {}, "missions": set(), "has_partial": False,
+                 "origin_zone": None, "dest_zone": None},
             )
+            # zones back the inline station editor; suppress the acceptance-host zone
+            # of a still-pending dropoff so it can't be mis-named.
+            if mis.origin_zone and not r["origin_zone"]:
+                r["origin_zone"] = mis.origin_zone
+            if leg.zone_host_id and not r["dest_zone"] and dest != PENDING_DEST:
+                r["dest_zone"] = leg.zone_host_id
             r["total_scu"] += qty or 0
             r["has_partial"] = r["has_partial"] or not detailed
             c = r["cargo"].setdefault(cargo, {"qty": 0, "legs": []})
@@ -438,6 +450,7 @@ def _build_unloading_routes(active, origin_of, dleg_loc, mlabel):
     route_list = [
         {
             "origin": r["origin"], "destination": r["destination"],
+            "origin_zone": r["origin_zone"], "dest_zone": r["dest_zone"],
             "total_scu": r["total_scu"], "has_partial": r["has_partial"],
             "cargo": [{"cargo": c, "qty": v["qty"], "legs": v["legs"]}
                       for c, v in sorted(r["cargo"].items())],

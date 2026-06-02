@@ -8,7 +8,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from .archive import filter_sessions, load_sessions
 from .config import WEB_DIR
-from .overrides import get_overrides, set_leg_states, write_override
+from .overrides import get_overrides, set_leg_field, set_leg_states, write_override
 from .settings import set_setting
 from .shipcargo import load_ship_cargo
 from .tradeflags import set_lost
@@ -196,6 +196,38 @@ def create_app(state: State) -> Flask:
         done = bool(payload.get("done", True))
         try:
             set_leg_states(legs, done)
+        except Exception as e:  # pragma: no cover
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": True})
+
+    @app.post("/api/leg-field")
+    def api_leg_field():
+        # Inline-edit one leg's commodity or quantity (the unified editor on the
+        # cargo-ops screens). Keyed by mission_id + objective id; stored as a leg_fields
+        # override overlaid by oid, so a single unknown is fixed without rebuilding legs.
+        payload = request.get_json(force=True, silent=True) or {}
+        mid, oid = payload.get("mission_id"), payload.get("oid")
+        field = payload.get("field")
+        if not isinstance(mid, str) or not mid or not isinstance(oid, str) or not oid:
+            return jsonify({"ok": False, "error": "mission_id and oid required"}), 400
+        if field not in ("cargo", "qty"):
+            return jsonify({"ok": False, "error": "field must be 'cargo' or 'qty'"}), 400
+        value = payload.get("value")
+        if field == "qty":
+            if value in (None, ""):
+                value = None
+            else:
+                try:
+                    value = int(float(value))
+                except (TypeError, ValueError):
+                    return jsonify({"ok": False, "error": "qty must be a number"}), 400
+                if value < 0:
+                    value = None
+        else:
+            value = value.strip() if isinstance(value, str) else None
+            value = value or None
+        try:
+            set_leg_field(mid, oid, field, value)
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
         return jsonify({"ok": True})
