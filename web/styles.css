@@ -313,6 +313,9 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .logtable thead th{position:sticky;top:0;background:var(--panel);z-index:1;text-align:left;
   font-family:var(--display);text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;
   color:var(--ink-3);padding:8px 12px;border-bottom:1px solid var(--line)}
+/* numeric columns: right-align the HEADER to match its right-aligned values
+   (this beats the rule above, which otherwise left-aligns every header) */
+.logtable thead th.lt-num{text-align:right}
 .logtable td{padding:6px 12px;border-bottom:1px solid rgba(86,206,255,.06);vertical-align:top}
 .logtable tbody tr:hover{background:rgba(86,206,255,.04)}
 .lt-when{font-family:var(--mono);color:var(--ink-3);font-size:11px;white-space:nowrap}
