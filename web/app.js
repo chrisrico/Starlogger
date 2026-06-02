@@ -24,16 +24,17 @@ let EDIT = null;      // mission_id whose editor is open (Contracts tab)
 let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
 let SESSIONS = null;  // archived sessions
 
-// Which Archive section is expanded (accordion — only one at a time).
-let ARCH_OPEN = localStorage.getItem("archOpen") || "traderoutes";
+// Which Archive section is expanded (accordion — only one at a time). Empty = all
+// collapsed. Persists the user's explicit choice; no built-in default (see archDefaultSection).
+let ARCH_OPEN = localStorage.getItem("archOpen") || "";
 function toggleArch(key) {
   ARCH_OPEN = ARCH_OPEN === key ? "" : key;   // click the open one to collapse all
   localStorage.setItem("archOpen", ARCH_OPEN);
   setHTML("history", sessionsView(SESSIONS));
 }
-// Each time the Archive opens, default to whichever of the Contract Log / Trade Loads
-// reflects the most recent activity (set once per tab open; manual toggles then stick
-// for the session). Compared on the same data each view shows.
+// When the Archive opens with NOTHING expanded, auto-open whichever of the Contract Log /
+// Trade Loads reflects the most recent activity. If a section is already open (a previous
+// selection), it's left as-is. Compared on the same data each view shows.
 let ARCH_PICK = false;
 function archDefaultSection() {
   let cT = "", tT = "";
@@ -1230,7 +1231,7 @@ async function loadSessions() {
   try {
     SESSIONS = await (await fetch("/api/sessions", { cache: "no-store" })).json();
   } catch (e) { SESSIONS = SESSIONS || []; }
-  if (ARCH_PICK) { ARCH_OPEN = archDefaultSection(); ARCH_PICK = false; }  // recency default, once per open
+  if (ARCH_PICK) { if (!ARCH_OPEN) ARCH_OPEN = archDefaultSection(); ARCH_PICK = false; }  // only when none open
   setHTML("history", sessionsView(SESSIONS));
 }
 
