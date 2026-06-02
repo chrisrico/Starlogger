@@ -72,7 +72,7 @@ async function loadShipList() {
   try {
     const db = await (await fetch("/api/ships", { cache: "no-store" })).json();
     SHIP_DB = db.ships || {};
-    if (LAST) { syncScenarios(); renderAll(curData()); }  // repaint now that we have the catalog
+    if (LAST) renderAll(curData());  // repaint now that we have the catalog
   } catch (e) { /* leave null; the box still shows the current ship */ }
 }
 
@@ -146,7 +146,6 @@ async function selectShip(name) {
     const j = await r.json();
     if (!j.ok) { alert("Couldn't set ship: " + (j.error || r.status)); return; }
   } catch (e) { alert("Couldn't set ship: " + e); return; }
-  TEST_CASE = null;   // new ship → back to live data
   refresh();
 }
 
@@ -205,11 +204,9 @@ function gaugeHtml(d) {
 
 function renderHeader(d) {
   // don't repaint the status bar while the ship search box is focused or its popup
-  // is open — a poll landing mid-interaction would tear it down. (The scenario
-  // picker is independent, and setHTML no-ops when its markup is unchanged.)
+  // is open — a poll landing mid-interaction would tear it down.
   const busy = SHIP_MENU_OPEN || (document.activeElement && document.activeElement.id === "shipSel");
   if (!busy) setHTML("status", statusHtml(d));
-  setHTML("scenario", d.ship_detected ? "" : testControls());  // scenarios are manual-mode only
   setHTML("stats", readoutsHtml(d));
   setHTML("capacity", gaugeHtml(d));
 }
@@ -644,166 +641,10 @@ function renderMissions() { const d = curData(); if (d) setHTML("missions", miss
 const destHue = (i) => Math.round((i * 137.508) % 360);
 
 // ---- cargo groups, elevator staging + load-order packing ---- //
-// Test scenarios for visualizing the loader without live missions. They're
-// GENERATED for the currently selected ship (its grid + capacity come straight
-// from the live snapshot), scaled to fill ≥50% of the hold, and each contract's
-// size tier / container cap falls out of its quantity via the real rules (see
-// [[hauling-contract-taxonomy]]). Real cargo types / stations from the logs.
-const TEST_CARGO = ["Aluminum", "Titanium", "Scrap", "Stims", "Corundum", "Processed Food",
-  "Tungsten", "Quartz", "Silicon", "Pressurized Ice", "Agricultural Supplies", "Carbon", "Waste"];
-const TEST_STATIONS = ["Everus Harbor", "Seraphim Station", "Port Tressler", "Baijini Point",
-  "August Dunlow Spaceport", "HUR-L1 Green Glade Station", "CRU-L1 Ambitious Dream Station"];
+// The snapshot every tab renders from (live session only).
+const curData = () => LAST;
 
-let SCENARIOS = [];      // generated for the current ship; recomputed each render
-let TEST_CASE = null;    // index into SCENARIOS, or null for live data
-let SCENARIO_VIEW = null; // server-built FULL snapshot for the active scenario (drives every tab)
-let SCENARIO_KEY = null;  // ship+index the SCENARIO_VIEW was built for (avoids refetch)
-
-// The snapshot every tab renders from: the active scenario's full snapshot, else live.
-const curData = () => (TEST_CASE != null && SCENARIO_VIEW) ? SCENARIO_VIEW : LAST;
-// optional ?scenario=<index> deep-link: auto-preview a test scenario once it's ready
-let PENDING_SCENARIO = (m => m ? +m[1] : null)(/[?&]scenario=(\d+)/.exec(location.search));
-
-// Contract size tier (rank + size word) implied by a delivery quantity, per the
-// SCU bands. The synthesizer's box cap then follows from the title via tierMaxBox.
-function sizeLabel(qty) {
-  if (qty <= 10) return { rank: "Rookie", size: "Extra Small" };   // 1-SCU boxes
-  if (qty <= 24) return { rank: "Rookie", size: "Small" };         // 4-SCU
-  if (qty <= 126) return { rank: "Member", size: "Medium" };       // 8-SCU (≤Member)
-  if (qty <= 600) return { rank: "Experienced", size: "Medium" };  // 16-SCU (Experienced+)
-  return { rank: "Senior", size: "Large" };                        // 32-SCU
-}
-const titleFor = (qty) => { const s = sizeLabel(qty); return `${s.rank} Rank - Direct ${s.size} Cargo Haul`; };
-
-// Round a target SCU to a tidy multiple of its tier's container size, so deliveries
-// pack into whole boxes. `floor` keeps the result ≤ the target (used where a qty
-// must not exceed the hold).
-function niceQty(target, floor) {
-  target = Math.max(1, target);
-  const step = target <= 10 ? 1 : target <= 24 ? 4 : target <= 126 ? 8 : target <= 600 ? 16 : 32;
-  const n = (floor ? Math.floor : Math.round)(target / step) * step;
-  return Math.max(step, n);
-}
-
-// Generate the scenario list scaled to a ship of `cap` SCU. Each scenario loads
-// ≥50% of the hold (except the deliberate over-capacity one, which exceeds it).
-function genScenarios(shipName, cap) {
-  const C = TEST_CARGO, ST = TEST_STATIONS, ship = shipName;
-  const HUB = ST[6];   // common pickup origin (never used as a destination below)
-  const mk = (cargo, qty, dest) => ({ title: titleFor(qty), cargo, qty, dest, origin: HUB });
-  const q = (f) => niceQty(cap * f);               // fraction of capacity → tidy SCU
-  const list = [];
-
-  // 1. single delivery (~60%)
-  const sg = q(0.6);
-  list.push({ name: `Single delivery · ${num(sg)} SCU`, ship,
-    route: [ST[0]], missions: [mk(C[0], sg, ST[0])] });
-
-  // 2. three stops, distinct cargo (~62%)
-  list.push({ name: "Three stops · no conflicts", ship,
-    route: [ST[0], ST[1], ST[2]],
-    missions: [mk(C[1], q(0.24), ST[1]), mk(C[5], q(0.22), ST[0]), mk(C[3], q(0.16), ST[2])] });
-
-  // 3. shared cargo type → forces per-mission isolation (~74%)
-  list.push({ name: `⚠ Shared cargo · ${C[0]} to two stops`, ship,
-    route: [ST[1], ST[0], ST[3]],
-    missions: [mk(C[0], q(0.30), ST[1]), mk(C[0], q(0.26), ST[0]), mk(C[2], q(0.18), ST[3])] });
-
-  // 4. mixed tiers — one token mission per container size that fits, then top up
-  //    with extra contracts of the LARGEST fitting tier until the load is ≥50%.
-  //    Each tier index → its box size, SCU-band ceiling, and a min qty that still
-  //    reads as that tier (so a filler contract keeps the largest box size).
-  const demoQ = [8, 16, 96, 240, 640];             // token qty per box size 1,4,8,16,32
-  const boxStep = [1, 4, 8, 16, 32];
-  const bandMax = [10, 24, 126, 600, 1e12];        // tier SCU ceiling
-  const tierMin = [1, 12, 32, 128, 640];           // min qty that still reads as this tier
-  const inc = [];
-  let baseSum = 0;
-  demoQ.forEach((dq, i) => { if (baseSum + dq <= cap) { inc.push(i); baseSum += dq; } });
-  if (inc.length) {
-    const qtys = inc.map(i => demoQ[i]);
-    const li = inc[inc.length - 1], box = boxStep[li];
-    const tierCap = Math.min(Math.floor(bandMax[li] / box) * box, Math.floor(cap / box) * box);
-    const target = Math.ceil(cap * 0.5);
-    let total = baseSum;
-    while (total < target && total + tierMin[li] <= cap && qtys.length < 24) {
-      let add = Math.max(tierMin[li], Math.ceil((target - total) / box) * box);  // whole boxes, in-tier
-      add = Math.min(add, tierCap, Math.floor((cap - total) / box) * box);       // ≤ band, ≤ hold room
-      if (add < tierMin[li]) break;
-      qtys.push(add); total += add;
-    }
-    const mixed = qtys.map((qy, k) => mk(C[k % C.length], qy, ST[k % ST.length]));
-    list.push({ name: `Mixed tiers · ${inc.length} box size${inc.length > 1 ? "s" : ""}`, ship,
-      route: mixed.map(m => m.dest), missions: mixed });
-  }
-
-  // 5. fill the hold (~92%, largest tier that fits)
-  const fq = niceQty(cap * 0.92, true);
-  list.push({ name: `Fill the hold · ${num(fq)} SCU`, ship, route: [ST[0]], missions: [mk(C[2], fq, ST[0])] });
-
-  // 6. over capacity (~130%)
-  const o1 = q(0.7), o2 = q(0.6);
-  list.push({ name: `Heavy load · ${num(o1 + o2)} SCU vs ${num(cap)}`, ship,
-    route: [ST[1], ST[0]], missions: [mk(C[7], o1, ST[1]), mk(C[8], o2, ST[0])] });
-
-  // 7. rep grind — many contracts split across 2 stops, totaling ≥50%. Mission
-  //    count scales gently with hull size; per-mission SCU then fills to target.
-  const repTarget = Math.ceil(cap * 0.5);
-  const repCount0 = Math.min(14, Math.max(5, Math.round(cap / 90)));
-  const repEach = niceQty(repTarget / repCount0);
-  const repN = Math.min(20, Math.max(repCount0, Math.ceil(repTarget / repEach)));
-  list.push({ name: `Rep grind · ${repN} missions`, ship,
-    route: [ST[0], ST[1]],
-    missions: Array.from({ length: repN }, (_, i) => mk(C[(i + 2) % C.length], repEach, ST[i % 2])) });
-
-  // 8. multi-drop — one contract, same cargo to two stops (~60%)
-  const dq = q(0.3);
-  list.push({ name: "⚠ Multi-drop · one contract, two stops", ship,
-    route: [ST[5], ST[1]],
-    missions: [{ title: titleFor(dq * 2), origin: HUB,
-      drops: [{ cargo: C[5], qty: dq, dest: ST[5] }, { cargo: C[5], qty: dq, dest: ST[1] }] }] });
-
-  return list;
-}
-
-// The current ship to build scenarios for: whatever the live snapshot is showing
-// (detected or manually selected), with its real grid geometry + capacity.
-function currentShipInfo() {
-  if (!LAST || !LAST.ship || !LAST.ship_grid || !LAST.ship_grid.length) return null;
-  return { name: LAST.ship, grid: LAST.ship_grid, scu: LAST.ship_scu || 0 };
-}
-
-// Recompute the scenario list for the live ship; drop a stale selection. Test
-// scenarios are a manual-mode aid only — when the game has DETECTED a ship there are
-// no scenarios and any active one reverts to live data (the picker is hidden too).
-function syncScenarios() {
-  const info = currentShipInfo();
-  const detected = !!(LAST && LAST.ship_detected);
-  SCENARIOS = (info && !detected) ? genScenarios(info.name, info.scu) : [];
-  if (TEST_CASE != null && (detected || TEST_CASE >= SCENARIOS.length)) {
-    TEST_CASE = null; SCENARIO_VIEW = null; SCENARIO_KEY = null;
-  }
-}
-
-// Fetch the FULL snapshot for the active scenario from the server, which runs the
-// synthetic missions through the live pipeline (loading/unloading/routes/counts) so
-// the whole dashboard previews it — not just the grid. Cached by ship+selection.
-async function loadScenario() {
-  const info = currentShipInfo();
-  const tc = (TEST_CASE != null && SCENARIOS[TEST_CASE]) || null;
-  if (!tc || !info) { SCENARIO_VIEW = null; SCENARIO_KEY = null; return; }
-  const key = `${info.name}·${info.scu}·${TEST_CASE}`;
-  if (SCENARIO_KEY === key && SCENARIO_VIEW) return;
-  try {
-    SCENARIO_VIEW = await (await fetch("/api/test-snapshot", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ missions: tc.missions }),
-    })).json();
-    SCENARIO_KEY = key;
-  } catch (e) { SCENARIO_VIEW = null; SCENARIO_KEY = null; }
-}
-
-// Render every tab from one snapshot `d` (the active scenario's, or live).
+// Render every tab from one snapshot `d` (the live snapshot).
 function renderAll(d) {
   if (!d) return;
   renderHeader(d);
@@ -942,24 +783,6 @@ function cargoGroups(d) {
   }));
 }
 
-// ---- test scenario picker (header, middle slot) — a selected scenario drives
-// every tab via curData(); "— live data —" returns to the real session ---- //
-function testControls() {
-  const opts = SCENARIOS.map((tc, i) =>
-    `<option value="${i}"${TEST_CASE === i ? " selected" : ""}>${esc(tc.name)}</option>`).join("");
-  const note = SCENARIOS.length ? "Sample hauls scaled to the selected ship" : "Select a ship to enable";
-  return `<div class="scenpick" title="${note}">
-    <label class="sp-lbl" for="tcSel">Test Scenario</label>
-    <select id="tcSel" class="tc-sel" onchange="pickTestCase(this.value)"${SCENARIOS.length ? "" : " disabled"}>
-      <option value=""${TEST_CASE == null ? " selected" : ""}>— live data —</option>
-      ${opts}</select></div>`;
-}
-function pickTestCase(v) {
-  TEST_CASE = v === "" ? null : +v;
-  if (TEST_CASE == null) { SCENARIO_VIEW = null; SCENARIO_KEY = null; renderAll(curData()); }
-  else loadScenario().then(() => renderAll(curData()));   // fetch full scenario, then repaint every tab
-}
-
 // Highlight one elevator's boxes in the ship hold (dim the rest). gid===null clears.
 function hlElev(gid) {
   GRID_HOVER = gid != null;   // freeze the grid repaint while the highlight is active
@@ -972,7 +795,7 @@ function hlElev(gid) {
 
 function gridView(d) {
   if (!d.ship) return standby("No Ship Detected",
-    "Board a ship in-game — or pick one from the SHIP box — and its cargo grid appears here. Or choose a Test Scenario from the header.",
+    "Board a ship in-game — or pick one from the SHIP box — and its cargo grid appears here.",
     "awaiting ship");
   if (!d.ship_grid || !d.ship_grid.length) return standby("No Grid Data",
     `<b>${esc(d.ship)}</b> isn't in the cargo-grid database, or carries no cargo grid.`,
@@ -996,12 +819,10 @@ function gridView(d) {
 
   const head = `<div class="archbar">
     <span class="arch-title">${esc(d.ship)} · ${num(totalScu)} / ${num(cap)} SCU</span>
-    <span class="sub">${accessLabel} · ${banded ? "loaded front-to-back" : "load order doesn't matter"} · <a href="/grids.html" target="_blank" style="color:var(--cyan)">all ships ↗</a></span></div>`;
+    <span class="sub">${accessLabel} · ${banded ? "loaded front-to-back" : "load order doesn't matter"}</span></div>`;
 
   if (!groups.length) {
-    const msg = TEST_CASE != null
-      ? "This scenario has no deliverable cargo."
-      : "No cargo to load yet — accept hauling contracts and your picked-up cargo stages here by destination. Or pick a Test Scenario from the header.";
+    const msg = "No cargo to load yet — accept hauling contracts and your picked-up cargo stages here by destination.";
     return head + `<div class="sub" style="margin:6px 2px 14px">${msg}</div>`
       + `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed: { placed: [] }, layout: d.ship_layout, access }) + `</div>`;
   }
@@ -1417,12 +1238,7 @@ async function refresh() {
   try {
     const d = await (await fetch("/api/state", { cache: "no-store" })).json();
     LAST = d;
-    syncScenarios();                       // keep the scenario list scaled to the live ship
-    if (PENDING_SCENARIO != null && PENDING_SCENARIO < SCENARIOS.length) {
-      TEST_CASE = PENDING_SCENARIO; PENDING_SCENARIO = null;  // honor ?scenario= once
-    }
-    if (TEST_CASE != null) await loadScenario();  // rebuild the preview if the ship changed
-    renderAll(curData());                  // scenario active → every tab previews it; else live
+    renderAll(curData());                  // render every tab from the live snapshot
     if (TAB === "history") loadSessions();  // keep archive fresh while viewing
     const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
     const sess = d.logged_in ? ("session since " + (d.session_started_at || "?")) : "at main menu (logged out)";

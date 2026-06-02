@@ -102,45 +102,6 @@ def _sorted_groups(groups: dict) -> list:
     return out
 
 
-def build_test_snapshot(live_state: State, scenario_missions: list) -> dict:
-    """Build a FULL snapshot from synthetic scenario missions, reusing the live
-    state's ship/location context, so a test scenario previews the *entire* dashboard
-    (loading, unloading, routes, missions, counts) and not just the cargo grid.
-
-    Each scenario mission is ``{title, origin, cargo, qty, dest}`` (or with a ``drops``
-    list of ``{cargo, qty, dest}`` for multi-drop). Missions become real ``Mission``
-    objects with a pickup leg at ``origin`` and a dropoff leg per drop, run through the
-    same pipeline as live data."""
-    temp = State()
-    with live_state.lock:
-        for attr in ("player", "location", "game_version", "game_build", "ship",
-                     "ship_internal", "ship_ts", "in_seat", "session_started_at",
-                     "session_gamerules", "last_event_ts"):
-            setattr(temp, attr, getattr(live_state, attr, None))
-        temp.zone_names = dict(live_state.zone_names)
-    temp.logged_in = True   # a preview behaves as "in verse" so the whole UI lights up
-
-    for i, sm in enumerate(scenario_missions or []):
-        mid = f"tc{i}"
-        m = Mission(
-            mission_id=mid, title=sm.get("title") or "Direct Cargo Haul",
-            contract="HaulCargo", status="active", origin_name=sm.get("origin"),
-            reward=sm.get("reward") or (i + 1) * 1000,  # unique → distinct group labels
-            accepted_at=f"{i:04d}",
-        )
-        if sm.get("origin"):
-            m.legs["p"] = Leg(objective_id="p", kind="pickup", cargo=sm.get("cargo"),
-                              qty=sm.get("qty"), location=sm.get("origin"))
-        drops = sm.get("drops") or [{"cargo": sm.get("cargo"), "qty": sm.get("qty"),
-                                     "dest": sm.get("dest")}]
-        for j, dp in enumerate(drops):
-            m.legs[f"d{j}"] = Leg(objective_id=f"d{j}", kind="dropoff",
-                                  cargo=dp.get("cargo"), qty=dp.get("qty"),
-                                  location=dp.get("dest"))
-        temp.missions[mid] = m
-    return build_snapshot(temp)
-
-
 def build_snapshot(state: State, trade_only: bool = False) -> dict:
     overrides = get_overrides()
     cargo_db = load_ship_cargo()

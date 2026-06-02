@@ -12,7 +12,7 @@ from .overrides import get_overrides, set_leg_field, set_leg_states, write_overr
 from .settings import set_setting
 from .shipcargo import load_ship_cargo
 from .tradeflags import set_lost
-from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot, build_test_snapshot
+from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot
 from .state import State
 from .stations import get_station_names, set_station_name
 
@@ -67,16 +67,6 @@ def create_app(state: State) -> Flask:
     @app.get("/api/state")
     def api_state():
         return jsonify(build_snapshot(state, trade_only=request.args.get("trade") == "1"))
-
-    @app.post("/api/test-snapshot")
-    def api_test_snapshot():
-        # Preview a generated test scenario across the WHOLE dashboard: synthetic
-        # missions run through the live pipeline, reusing the current ship/location.
-        payload = request.get_json(force=True, silent=True) or {}
-        missions = payload.get("missions")
-        if not isinstance(missions, list):
-            return jsonify({"error": "missions must be a list"}), 400
-        return jsonify(build_test_snapshot(state, missions))
 
     @app.get("/api/ships")
     def api_ships():

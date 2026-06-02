@@ -509,11 +509,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .cg-leg b{color:var(--ink);font-weight:600}
 .cg-sw{width:12px;height:12px;border-radius:2px;border:1px solid rgba(0,0,0,.4);flex:none}
 .cg-sw-free{background:transparent;border:1px dashed rgba(86,206,255,.4)}
-/* test scenario picker — header middle slot, fills the gap left of the status */
-#scenario{flex:1 1 auto;display:flex;justify-content:center;align-items:center;min-width:150px}
-.scenpick{display:flex;align-items:center;gap:9px;min-width:0}
-.sp-lbl{font-family:var(--display);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--ink-3);white-space:nowrap}
+/* select control — used by the ship-grids page (/grids.html) toolbar */
 .tc-sel{background:rgba(0,0,0,.4);border:1px solid var(--line-2);color:var(--ink);
   font-family:var(--mono);font-size:12px;padding:5px 9px;border-radius:3px;cursor:pointer;
   min-width:130px;max-width:340px}

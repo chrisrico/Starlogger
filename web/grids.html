@@ -26,7 +26,7 @@
   <div class="cg-page">
     <div class="cg-toolbar">
       <input id="q" class="cg-search" type="search" placeholder="Filter by ship or manufacturer…" autocomplete="off">
-      <select id="fill" class="tc-sel" title="Empty = wireframe cells; Full = packed to capacity"><option value="empty">Empty (cells)</option><option value="full">Full (packed)</option></select>
+      <select id="fill" class="tc-sel" title="Empty = floor plan; Full = packed to capacity"><option value="empty">Empty (floor plan)</option><option value="full">Full (packed)</option></select>
       <span id="count" class="cg-count">loading…</span>
     </div>
     <div id="ships"></div>
@@ -60,12 +60,15 @@ function shipHtml(s) {
   const cells = (s.groups || []).reduce((a, g) => a + (g.grids || []).length, 0);
   let inner;
   const access = (typeof accessFor === "function") ? accessFor(s.name) : null;
+  // render exactly like the Manifest screen: a flat floor plan (packed with no boxes)
+  // when empty, the same packer's solid boxes when full — with the FWD marker, bay
+  // tags and rear-hatch flip from cargoGridHtml.
   if (FILL === "full") {
     const { packed, over } = fullPacked(s);
     inner = cargoGridHtml(s.groups, { scale: SCALE, packed, layout: s.layout, access })
       + (over ? `<div class="note">⚠ ${num(over)} / ${num(s.scu)} SCU overflowed (packer couldn't place)</div>` : "");
   } else {
-    inner = cargoGridHtml(s.groups, { scale: SCALE, layout: s.layout, access });
+    inner = cargoGridHtml(s.groups, { scale: SCALE, packed: { placed: [] }, layout: s.layout, access });
   }
   return `<div class="cg-ship" data-key="${esc((s.manufacturer + " " + s.name).toLowerCase())}">
     <h3><span><span class="cg-mfr">${esc(s.manufacturer || "—")}</span> &nbsp;<b>${esc(s.name)}</b></span>
