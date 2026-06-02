@@ -31,6 +31,22 @@ function toggleArch(key) {
   localStorage.setItem("archOpen", ARCH_OPEN);
   setHTML("history", sessionsView(SESSIONS));
 }
+// Each time the Archive opens, default to whichever of the Contract Log / Trade Loads
+// reflects the most recent activity (set once per tab open; manual toggles then stick
+// for the session). Compared on the same data each view shows.
+let ARCH_PICK = false;
+function archDefaultSection() {
+  let cT = "", tT = "";
+  for (const s of SESSIONS || []) {
+    for (const m of s.missions || []) {
+      const t = m.ended_at || m.accepted_at || s.started_at || "";
+      if (t > cT) cT = t;
+    }
+    for (const t of s.trades || []) if ((t.ts || "") > tT) tT = t.ts || "";
+  }
+  for (const t of (LAST && LAST.trades) || []) if ((t.ts || "") > tT) tT = t.ts || "";
+  return tT > cT ? "trades" : "contracts";
+}
 // How the Trade Routes recommendations are ranked: total aUEC, % return, or aUEC/SCU.
 let ROUTE_SORT = localStorage.getItem("routeSort") || "profit";
 function setRouteSort(key) {
@@ -57,7 +73,7 @@ function activateTab(name) {
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
-  if (name === "history") loadSessions();
+  if (name === "history") { ARCH_PICK = true; loadSessions(); }
 }
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
 if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
@@ -1213,6 +1229,7 @@ async function loadSessions() {
   try {
     SESSIONS = await (await fetch("/api/sessions", { cache: "no-store" })).json();
   } catch (e) { SESSIONS = SESSIONS || []; }
+  if (ARCH_PICK) { ARCH_OPEN = archDefaultSection(); ARCH_PICK = false; }  // recency default, once per open
   setHTML("history", sessionsView(SESSIONS));
 }
 
