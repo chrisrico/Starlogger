@@ -299,7 +299,7 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .logsec-h:hover{background:rgba(86,206,255,.04)}
 .logsec-chev{display:inline-block;width:15px;color:var(--cyan);font-size:10px}
 .logcard{margin:0;display:flex;flex-direction:column;min-height:0}
-.logcard > h3,.logcard > .filtbar{flex:0 0 auto}
+.logcard > h3,.logcard > .filtbar,.logcard > .recs{flex:0 0 auto}
 .logwrap{flex:1 1 auto;min-height:0;overflow:auto}
 .logtable{width:100%;border-collapse:collapse;font-size:12px}
 .logtable thead th{position:sticky;top:0;background:var(--panel);z-index:1;text-align:left;
@@ -317,6 +317,22 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .qt-sys.s-pyro{color:var(--amber);border-color:rgba(245,184,92,.4)}
 .qt-sys.s-stanton{color:var(--cyan);border-color:rgba(79,220,255,.4)}
 .qt-sys.s-jumppoint{color:var(--green);border-color:rgba(92,227,154,.4);background:rgba(92,227,154,.06)}
+/* Trade-route recommendations: two highlighted callouts + a rank-by segmented bar. */
+.recs{display:flex;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line)}
+.rec{flex:1 1 240px;display:flex;align-items:center;gap:8px;padding:8px 12px;
+  border:1px solid var(--line-2);border-radius:3px;background:rgba(86,206,255,.03)}
+.rec-lbl{font-family:var(--display);text-transform:uppercase;letter-spacing:.12em;font-size:9px;
+  color:var(--ink-3);white-space:nowrap}
+.rec-cmd{color:var(--ink);font-weight:600;white-space:nowrap}
+.rec-route{color:var(--ink-2);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rec-val{margin-left:auto;font-family:var(--mono);font-weight:600;white-space:nowrap}
+.seg{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;font-size:10px;
+  padding:3px 9px;cursor:pointer;color:var(--ink-3);background:transparent;
+  border:1px solid var(--line-2);border-radius:2px}
+.seg:hover{color:var(--ink-2)}
+.seg.on{color:var(--bg);background:var(--cyan);border-color:var(--cyan)}
+.rt-best td{background:rgba(92,227,154,.05)}
+.rt-star{color:var(--amber)}
 .qt-none{color:var(--ink-3)}
 
 /* ---- alert note ---- */

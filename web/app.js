@@ -45,10 +45,17 @@ function toggleHideUnfinished() {
 }
 
 // Which Archive section is expanded (accordion — only one at a time).
-let ARCH_OPEN = localStorage.getItem("archOpen") || "trades";
+let ARCH_OPEN = localStorage.getItem("archOpen") || "traderoutes";
 function toggleArch(key) {
   ARCH_OPEN = ARCH_OPEN === key ? "" : key;   // click the open one to collapse all
   localStorage.setItem("archOpen", ARCH_OPEN);
+  setHTML("history", sessionsView(SESSIONS));
+}
+// How the Trade Routes recommendations are ranked: total aUEC, % return, or aUEC/SCU.
+let ROUTE_SORT = localStorage.getItem("routeSort") || "profit";
+function setRouteSort(key) {
+  ROUTE_SORT = key;
+  localStorage.setItem("routeSort", key);
   setHTML("history", sessionsView(SESSIONS));
 }
 // One collapsible Archive section: a clickable header (always shown) + a body that
@@ -1017,7 +1024,7 @@ function sessionsView(sessions) {
   if (!sessions.length) return `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
   // Accordion of three pooled logs (only one expanded at a time so the open one can
   // own the screen): contracts (with its Hide-* filter bar), trade loads, travel jumps.
-  return `<div class="arch-acc">${contractLogView(sessions)}${tradeLogView(sessions)}${travelLogView(sessions)}</div>`;
+  return `<div class="arch-acc">${routeRecsView(sessions)}${contractLogView(sessions)}${tradeLogView(sessions)}${travelLogView(sessions)}</div>`;
 }
 
 // Departed → arrived elapsed, seconds-aware (jumps run seconds to minutes). "" if no arrival.
@@ -1200,6 +1207,82 @@ function tradeLogView(sessions) {
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No manual trades in range.</div>`;
   return logSection("trades", `Trade Loads · ${loads.length}`,
                     `<span class="scu ${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span>`, inner);
+}
+
+// Aggregate completed/partly-sold loads into trade ROUTES keyed by
+// commodity + buy station → sell station(s). Each route rolls up every trip's sold
+// SCU, realised cost (cost of the sold portion only, so open loads count fairly),
+// revenue and profit, plus weighted % return and aUEC/SCU. Lost & no-basis loads are
+// excluded — a route recommendation should reflect deliveries that actually completed.
+function tradeRoutes(loads, lostSet) {
+  const agg = {};
+  for (const L of loads) {
+    if (L.noBasis || !L.buyPlace || L.soldScu <= 0) continue;
+    if (L.id && lostSet && lostSet.has(L.id)) continue;
+    const to = (L.sellPlaces || []).join(" / ");
+    if (!to) continue;
+    const realisedCost = L.buyScu ? L.cost * (L.soldScu / L.buyScu) : 0;
+    const key = `${L.commodity}|${L.buyPlace}|${to}`;
+    const a = agg[key] || (agg[key] = {
+      commodity: L.commodity, from: L.buyPlace, to, scu: 0, cost: 0, revenue: 0, trips: 0,
+    });
+    a.scu += L.soldScu; a.cost += realisedCost; a.revenue += L.revenue; a.trips += 1;
+  }
+  return Object.values(agg).map(a => ({
+    ...a,
+    profit: a.revenue - a.cost,
+    pct: a.cost ? (a.revenue - a.cost) / a.cost : 0,
+    perScu: a.scu ? (a.revenue - a.cost) / a.scu : 0,
+  }));
+}
+
+const ROUTE_SORTS = { profit: "Total aUEC", pct: "% return", perScu: "aUEC / SCU" };
+const pctFmt = n => (n >= 0 ? "+" : "−") + (Math.abs(n) * 100).toFixed(Math.abs(n) < 0.1 ? 1 : 0) + "%";
+const signed = n => (n >= 0 ? "+" : "−") + num(Math.abs(Math.round(n)));
+
+// Trade-route recommendations: rank the player's own buy→sell routes by the chosen
+// metric (total profit / % return / per-SCU) and call out the single best of each.
+// Built entirely from the pooled trade loads — your history is the data source.
+function routeRecsView(sessions) {
+  const trades = pooledTrades(sessions);
+  const LOST = new Set((LAST && LAST.lost_trades) || []);
+  const routes = tradeRoutes(buildLoads(trades), LOST);
+  if (!routes.length)
+    return logSection("traderoutes", "Trade Routes · 0", "",
+      `<div class="empty">No completed trade routes yet. Buy a commodity at one station and sell it at another — your most profitable routes will surface here.</div>`);
+
+  const sortKey = ROUTE_SORTS[ROUTE_SORT] ? ROUTE_SORT : "profit";
+  const ranked = [...routes].sort((a, b) => b[sortKey] - a[sortKey]);
+  const bestProfit = [...routes].sort((a, b) => b.profit - a.profit)[0];
+  const bestPct = [...routes].sort((a, b) => b.pct - a.pct)[0];
+  const callout = (lbl, r, val) => `<div class="rec">
+      <span class="rec-lbl">${lbl}</span>
+      <span class="rec-cmd">${esc(r.commodity)}</span>
+      <span class="rec-route">${esc(r.from)} <span class="qt-leg">→</span> ${esc(r.to)}</span>
+      <span class="rec-val pos">${val}</span></div>`;
+  const recs = `<div class="recs">
+    ${callout("Top earner", bestProfit, `${signed(bestProfit.profit)} aUEC`)}
+    ${callout("Best margin", bestPct, pctFmt(bestPct.pct))}</div>`;
+
+  const bar = `<div class="filtbar">
+    <span class="filt-lbl">Rank by</span>
+    ${Object.entries(ROUTE_SORTS).map(([k, lbl]) =>
+      `<button class="seg${sortKey === k ? " on" : ""}" onclick="setRouteSort('${k}')">${lbl}</button>`).join("")}</div>`;
+
+  const body = ranked.map((r, i) => `<tr class="${i === 0 ? "rt-best" : ""}">
+      <td class="lt-title">${i === 0 ? '<span class="rt-star" title="top route by the selected metric">★</span> ' : ""}${esc(r.commodity)}</td>
+      <td class="lt-shop">${esc(r.from)} <span class="qt-leg">→</span> ${esc(r.to)}</td>
+      <td class="lt-num">${r.trips}</td>
+      <td class="lt-num">${num(Math.round(r.scu))}</td>
+      <td class="lt-num ${r.profit >= 0 ? "pos" : "neg"}">${signed(r.profit)}</td>
+      <td class="lt-num ${r.pct >= 0 ? "pos" : "neg"}">${pctFmt(r.pct)}</td>
+      <td class="lt-num ${r.perScu >= 0 ? "pos" : "neg"}">${signed(r.perScu)}</td></tr>`).join("");
+  const inner = recs + bar + `<div class="logwrap"><table class="logtable">
+      <thead><tr><th>Commodity</th><th>Route</th><th class="lt-num">Trips</th><th class="lt-num">SCU</th>
+        <th class="lt-num">Profit</th><th class="lt-num">%</th><th class="lt-num">/SCU</th></tr></thead>
+      <tbody>${body}</tbody></table></div>`;
+  return logSection("traderoutes", `Trade Routes · ${routes.length}`,
+    `<span class="scu pos">best ${signed(bestProfit.profit)} aUEC</span>`, inner);
 }
 
 async function loadSessions() {
