@@ -398,7 +398,10 @@ def _build_unloading_routes(active, origin_of, dleg_loc, mlabel):
             done = leg.state == "completed"
             dest = dleg_loc(leg)
             detailed = bool(leg.cargo and leg.qty)
-            cargo = leg.cargo if detailed else mis_cargo
+            # Prefer the leg's own commodity (multi-commodity contracts split into one
+            # leg per commodity, some with qty still unknown); only fall back to the
+            # whole-mission cargo list for a truly bare leg with no commodity at all.
+            cargo = leg.cargo or mis_cargo
             qty = leg.qty if detailed else None
 
             g = unload.setdefault(

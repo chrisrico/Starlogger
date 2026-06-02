@@ -350,14 +350,44 @@ class State:
             mis.accepted_at = ts
         oid = m.group("oid")
         kind = "pickup" if oid.startswith("pickup") else "dropoff"
+        zone = m.group("zone")
+        pos = (float(m.group("x")), float(m.group("y")), float(m.group("z")))
+        self._note_epoch(zone)
+
+        # A single-destination contract carrying several commodities (e.g.
+        # HaulCargo_AToB_RefinedOre_Mixed_AluminiumTungstenCorundum_...) delivers each
+        # commodity as its own objective -- dropoff_<phase>_0 / _1 / _2 -- to the SAME
+        # station. When the game logs the per-commodity "Deliver" text those become
+        # distinct legs naturally (each line carries its own ObjectiveId). But it often
+        # drops that text (notification-queue overflow) and logs a CreateMarker for only
+        # _0, leaving one combined leg. Expand that lone dropoff marker into one leg per
+        # decoded commodity, keyed by the real per-commodity objective ids (so completion
+        # events and any later Deliver text map straight in), all sharing this zone.
+        # Multi-DESTINATION contracts (SingleToMulti*) have a distinct zone per drop, so
+        # they're excluded -- their per-oid markers/text already split correctly.
+        cargos = patterns.decode_cargo_from_contract(mis.contract)
+        if kind == "dropoff" and len(cargos) > 1 and "SingleToMulti" not in mis.contract:
+            base = oid.rsplit("_", 1)[0]
+            for i, cargo in enumerate(cargos):
+                key = f"{base}_{i}"
+                leg = mis.legs.get(key) or Leg(objective_id=key, kind="dropoff")
+                leg.kind = "dropoff"
+                leg.zone_host_id = zone
+                leg.pos = pos
+                if not leg.cargo:  # placeholder until/unless Deliver text confirms it
+                    leg.cargo = cargo
+                mis.legs[key] = leg
+                if zone and leg.location:
+                    self.zone_names[zone] = leg.location
+            return
+
         leg = mis.legs.get(oid) or Leg(objective_id=oid, kind=kind)
         leg.kind = kind
-        leg.zone_host_id = m.group("zone")
-        leg.pos = (float(m.group("x")), float(m.group("y")), float(m.group("z")))
+        leg.zone_host_id = zone
+        leg.pos = pos
         mis.legs[oid] = leg
-        self._note_epoch(leg.zone_host_id)
-        if leg.zone_host_id and leg.location:  # text already seen -> learn now
-            self.zone_names[leg.zone_host_id] = leg.location
+        if zone and leg.location:  # text already seen -> learn now
+            self.zone_names[zone] = leg.location
 
     def _note_epoch(self, zone_id: str | None) -> None:
         """Track the server-build epoch (zoneHostId high bits) and fire
