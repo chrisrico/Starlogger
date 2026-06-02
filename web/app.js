@@ -28,7 +28,8 @@ let SESSIONS = null;  // archived sessions
 // collapsed. Persists the user's explicit choice; no built-in default (see archDefaultSection).
 let ARCH_OPEN = localStorage.getItem("archOpen") || "";
 function toggleArch(key) {
-  ARCH_OPEN = ARCH_OPEN === key ? "" : key;   // click the open one to collapse all
+  if (ARCH_OPEN === key) return;   // the open section stays open — only selecting another switches
+  ARCH_OPEN = key;
   localStorage.setItem("archOpen", ARCH_OPEN);
   setHTML("history", sessionsView(SESSIONS));
 }
