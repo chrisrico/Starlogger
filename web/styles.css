@@ -294,20 +294,24 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .lt-act:hover{color:var(--red);border-color:rgba(255,94,116,.5)}
 .lt-lost td{opacity:.6}
 .lt-lost .lt-act{opacity:.8}
-/* Archive accordion: contract / trade / travel sections, only one expanded at a time.
-   The stack fills the viewport (--header-h/--footer-h measured by app.js; 46px = main
-   padding + safety); collapsed sections are just their header, the open one fills the
-   rest and scrolls its table internally so the page never scrolls. */
+/* Archive: horizontal tabs along the top; the selected panel fills the viewport and
+   scrolls its table internally so the page never scrolls. (--header-h/--footer-h
+   measured by app.js; 46px = main padding + safety) */
 .arch-acc{display:flex;flex-direction:column;gap:10px;
   height:calc(100vh - var(--header-h, 240px) - var(--footer-h, 60px) - 46px);min-height:360px}
-.logsec{display:flex;flex-direction:column;min-height:0}
-.logsec:not(.open){flex:0 0 auto}
-.logsec.open{flex:1 1 auto;min-height:0}
-.logsec-h{cursor:pointer;user-select:none}
-.logsec-h:hover{background:rgba(86,206,255,.04)}
-.logsec-chev{display:inline-block;width:15px;color:var(--cyan);font-size:10px}
+.arch-tabs{display:flex;align-items:stretch;flex:0 0 auto;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.arch-tab{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;font-size:11px;
+  color:var(--ink-3);background:transparent;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;
+  padding:9px 16px;cursor:pointer;white-space:nowrap;transition:color .14s}
+.arch-tab:hover{color:var(--ink-2)}
+.arch-tab.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+.arch-sum{margin-left:auto;display:flex;align-items:center;padding:0 6px 0 12px}
+.arch-sum .scu{font-family:var(--mono);font-weight:600;font-size:12px;white-space:nowrap;color:var(--cyan)}
+.arch-sum .scu.pos{color:var(--green)}
+.arch-sum .scu.neg{color:var(--red)}
+.arch-panel{flex:1 1 auto;min-height:0}
 .logcard{margin:0;display:flex;flex-direction:column;min-height:0}
-.logcard > h3,.logcard > .filtbar,.logcard > .recs{flex:0 0 auto}
+.logcard > .filtbar,.logcard > .recs{flex:0 0 auto}
 .logwrap{flex:1 1 auto;min-height:0;overflow:auto}
 .logtable{width:100%;border-collapse:collapse;font-size:12px}
 .logtable thead th{position:sticky;top:0;background:var(--panel);z-index:1;text-align:left;

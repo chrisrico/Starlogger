@@ -56,15 +56,10 @@ function setRouteSort(key) {
   localStorage.setItem("routeSort", key);
   setHTML("history", sessionsView(SESSIONS));
 }
-// One collapsible Archive section: a clickable header (always shown) + a body that
-// renders only when expanded, so the open section can fill the viewport on its own.
+// One Archive section as a tab descriptor; sessionsView() renders the tab bar and the
+// selected section's body (only the active body is built into the DOM).
 function logSection(key, title, headSpan, body) {
-  const open = ARCH_OPEN === key;
-  return `<div class="card logsec logcard${open ? " open" : ""}">
-    <h3 class="logsec-h" onclick="toggleArch('${key}')">
-      <span class="logsec-t"><span class="logsec-chev">${open ? "▾" : "▸"}</span><span>${title}</span></span>${headSpan || ""}</h3>
-    ${open ? body : ""}
-  </div>`;
+  return { key, title, headSpan: headSpan || "", body };
 }
 
 // ---- tabs (with URL-hash deep-linking) ---- //
@@ -973,9 +968,18 @@ function fmtDuration(a, b) {
 function sessionsView(sessions) {
   if (!sessions) return `<div class="empty">loading archive…</div>`;
   if (!sessions.length) return `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
-  // Accordion of three pooled logs (only one expanded at a time so the open one can
-  // own the screen): contracts (with its Hide-* filter bar), trade loads, travel jumps.
-  return `<div class="arch-acc">${routeRecsView(sessions)}${contractLogView(sessions)}${tradeLogView(sessions)}${travelLogView(sessions)}</div>`;
+  // Four pooled logs as horizontal tabs (Trade Routes, Contract Log, Trade Loads,
+  // Travel Log); the selected tab's body fills the viewport. ARCH_OPEN is the active
+  // tab — defaulted by recency (archDefaultSection) when none is set.
+  const secs = [routeRecsView(sessions), contractLogView(sessions), tradeLogView(sessions), travelLogView(sessions)];
+  if (!secs.some(s => s.key === ARCH_OPEN)) ARCH_OPEN = secs[0].key;
+  const active = secs.find(s => s.key === ARCH_OPEN) || secs[0];
+  const tabs = secs.map(s =>
+    `<button class="arch-tab${s.key === ARCH_OPEN ? " active" : ""}" onclick="toggleArch('${s.key}')">${s.title}</button>`).join("");
+  return `<div class="arch-acc">
+    <div class="arch-tabs">${tabs}<span class="arch-sum">${active.headSpan}</span></div>
+    <div class="card logcard arch-panel">${active.body}</div>
+  </div>`;
 }
 
 // Departed → arrived elapsed, seconds-aware (jumps run seconds to minutes). "" if no arrival.
