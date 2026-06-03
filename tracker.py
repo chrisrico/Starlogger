@@ -82,9 +82,11 @@ def backfill_archive(log_path: str, stop: threading.Event) -> None:
     re-parsed once to backfill it, so a deploy that adds a field heals existing
     history without a manual --rebuild."""
     # only treat a session as "done" once its archived entry carries the current
-    # schema (the latest-added `travels` key); older entries lack it and re-parse once.
+    # schema: the `travels` key AND a per-mission `type` (added later). Older entries
+    # lack one or the other and re-parse once to backfill it.
     def archived_keys() -> set:
-        return {s.get("key") for s in load_sessions() if "travels" in s}
+        return {s.get("key") for s in load_sessions()
+                if "travels" in s and all("type" in m for m in s.get("missions", []))}
 
     archived = archived_keys()
     before = len(archived)

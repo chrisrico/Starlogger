@@ -15,7 +15,13 @@ import time
 from .commodities import load_commodities, resolve_commodity
 from .config import SESSIONS_KEEP, SESSIONS_PATH
 from .overrides import apply_override, get_overrides
-from .patterns import canonical_ship_name, decode_qt_dest, friendly_ship, qt_system
+from .patterns import (
+    canonical_ship_name,
+    classify_contract,
+    decode_qt_dest,
+    friendly_ship,
+    qt_system,
+)
 from .state import State
 
 _cache = {"mtime": None, "data": []}
@@ -47,6 +53,7 @@ def build_summary(state: State) -> dict:
         missions.append({
             "title": m.title or m.contract,
             "status": status,
+            "type": classify_contract(m.contract, m.org, m.title, m.is_trade),
             "reward": m.reward,
             "cargo": m.cargo_types,
             "is_trade": m.is_trade,

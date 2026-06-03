@@ -301,6 +301,36 @@ _STRUCTURE = {
 }
 
 
+# High-level contract "kind" for the Archive's Contract Log filter. Cargo hauls are
+# their own bucket (the bulk of the data); everything else is split by keyword over the
+# org/title/contract strings. Order matters: hauling wins, then the more specific
+# bounty/combat keywords, then delivery, else Other. Keep the JS mirror in app.js
+# (contractType) in sync — sessions whose logbackup is gone fall back to it.
+_COMBAT_WORDS = (
+    "bounty", "bounties", "eliminate", "kill", "destroy", "defeat", "mercenary",
+    "merc ", "security", "defend", "defence", "defense", "assault", "attack",
+    "combat", "pirate", "raid", "ambush", "score", "wanted", "hostile", "strike",
+)
+_DELIVERY_WORDS = (
+    "deliver", "delivery", "courier", "transport", "package", "parcel", "dossier",
+    "retrieve", "recover", "fetch", "files", "data heist", "investigate", "smuggl",
+)
+
+
+def classify_contract(contract: str = "", org: str = "", title: str = "",
+                      is_trade: bool = False) -> str:
+    """A mission's high-level kind: 'Hauling' (cargo haul), 'Bounty / Combat',
+    'Delivery', or 'Other'. Keyword scan over org+title+contract; hauling wins."""
+    if is_trade:
+        return "Hauling"
+    hay = f"{org} {title} {contract}".lower()
+    if any(w in hay for w in _COMBAT_WORDS):
+        return "Bounty / Combat"
+    if any(w in hay for w in _DELIVERY_WORDS):
+        return "Delivery"
+    return "Other"
+
+
 def decode_contract(raw: str) -> dict:
     out: dict = {"structure": None, "category": None, "grade": None}
     for k, v in _STRUCTURE.items():
