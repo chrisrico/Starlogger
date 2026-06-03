@@ -70,6 +70,20 @@ function logSection(key, title, headSpan, body) {
   return { key, title, headSpan: headSpan || "", body };
 }
 
+// ---- small render helpers (DRY the repeated archive markup) ---- //
+// A scrolling log table, or an empty-state note when there are no body rows.
+// `headRow` is the inner HTML of the <thead> row (the <th> cells); `bodyRows` the
+// concatenated <tr>s ("" / falsy → the empty note). Callers keep full control of cells.
+function logTable(headRow, bodyRows, emptyMsg) {
+  return bodyRows
+    ? `<div class="logwrap"><table class="logtable"><thead><tr>${headRow}</tr></thead><tbody>${bodyRows}</tbody></table></div>`
+    : `<div class="empty">${emptyMsg}</div>`;
+}
+// A header cell; `num` right-aligns it to match a numeric column's values.
+const th = (label, num) => `<th${num ? ' class="lt-num"' : ""}>${label}</th>`;
+// A small uppercased status/category pill (the .lt-tag family).
+const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
+
 // ---- tabs (with URL-hash deep-linking) ---- //
 const TABS = ["loading", "unloading", "routes", "missions", "grid", "history"];
 function activateTab(name) {
@@ -1055,11 +1069,11 @@ function travelLogView(sessions) {
       <td class="lt-num" title="QT fuel estimate">${fuelShort(t.fuel)}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
-  const th = Math.floor(totalSecs / 3600), tm = Math.round((totalSecs % 3600) / 60);
-  const tot = totalSecs ? ` · ${th ? th + "h " + tm + "m" : tm + "m"} in QT` : "";
-  const inner = rows.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>Departed</th><th>Status</th><th>Route</th><th class="lt-num">Time</th><th>System</th><th class="lt-num">QT fuel</th><th>Ship</th></tr></thead>
-      <tbody>${body}</tbody></table></div>` : `<div class="empty">No quantum travel in range.</div>`;
+  const hrs = Math.floor(totalSecs / 3600), tmin = Math.round((totalSecs % 3600) / 60);
+  const tot = totalSecs ? ` · ${hrs ? hrs + "h " + tmin + "m" : tmin + "m"} in QT` : "";
+  const inner = logTable(
+    `<th>Departed</th><th>Status</th><th>Route</th><th class="lt-num">Time</th><th>System</th><th class="lt-num">QT fuel</th><th>Ship</th>`,
+    body, "No quantum travel in range.");
   return logSection("travel", `Travel Log · ${rows.length}`,
                     `<span class="scu">${rows.length} jumps${tot}</span>`, inner);
 }
@@ -1124,22 +1138,23 @@ function contractLogView(sessions) {
     return `<tr>
       <td class="lt-when">${fmtWhen(r.when)}</td>
       <td><span class="badge b-${r.m.status}">${esc(r.m.status)}</span></td>
-      <td><span class="lt-tag ct-${ctSlug(r.type)}">${esc(r.type)}</span></td>
+      <td>${tag(r.type, "ct-" + ctSlug(r.type))}</td>
       <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
       <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
   }).join("") || `<tr><td colspan="5" class="lt-empty">No contracts match the selected types.</td></tr>`;
   const hidden = CT_PRESENT.filter(t => CONTRACT_TYPE_HIDDEN.has(t)).length;
   const opts = CT_PRESENT.map(t =>
     `<label class="th-opt"><input type="checkbox" ${CONTRACT_TYPE_HIDDEN.has(t) ? "" : "checked"}
-       onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')"><span class="lt-tag ct-${ctSlug(t)}">${esc(t)}</span></label>`).join("");
+       onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')">${tag(t, "ct-" + ctSlug(t))}</label>`).join("");
   const menu = `<span class="th-menu-wrap">
     <button class="th-menu-btn${hidden ? " on" : ""}" onclick="toggleTypeMenu()">Type ▾</button>${
       TYPE_MENU_OPEN ? `<span class="th-menu">
         <span class="th-menu-act"><button onclick="setAllTypeFilters(true)">All</button><button onclick="setAllTypeFilters(false)">None</button></span>
         ${opts}</span>` : ""}</span>`;
-  const inner = all.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>When</th><th>Status</th><th class="th-type">${menu}</th><th>Contract</th><th class="lt-num">Reward</th></tr></thead>
-      <tbody>${body}</tbody></table></div>` : `<div class="empty">No contracts in range.</div>`;
+  const inner = all.length
+    ? logTable(`<th>When</th><th>Status</th><th class="th-type">${menu}</th><th>Contract</th>${th("Reward", 1)}`,
+               body, "")
+    : `<div class="empty">No contracts in range.</div>`;
   const typeNote = hidden ? ` · ${CT_PRESENT.length - hidden}/${CT_PRESENT.length} types` : "";
   return logSection("contracts", `Contract Log · ${rows.length}`,
                     `<span class="scu">${num(total)} aUEC${typeNote}</span>`, inner);
@@ -1225,7 +1240,7 @@ function tradeLogView(sessions) {
       <td class="lt-num ${!priced ? "" : profit >= 0 ? "pos" : "neg"}">${priced ? (profit >= 0 ? "+" : "−") + num(Math.abs(profit)) : "—"}</td></tr>`;
   }).join("");
   const loadsTable = loads.length ? `<table class="logtable">
-      <thead><tr><th>When</th><th>Commodity</th><th>Status</th><th>Route</th><th class="lt-num">SCU</th><th class="lt-num">Cost</th><th class="lt-num">Revenue</th><th class="lt-num">Profit</th></tr></thead>
+      <thead><tr><th>When</th><th>Commodity</th><th>Status</th><th>Route</th>${th("SCU", 1)}${th("Cost", 1)}${th("Revenue", 1)}${th("Profit", 1)}</tr></thead>
       <tbody>${body}</tbody></table>` : `<div class="empty">No manual trades in range.</div>`;
   // both tables share one scroll region (the recs/rank bar scroll with them)
   const inner = `<div class="logwrap">${routesBlock}`
@@ -1304,8 +1319,7 @@ function tradeRoutesBlock(loads, lostSet) {
       <td class="lt-num ${r.perScu >= 0 ? "pos" : "neg"}">${signed(r.perScu)}</td></tr>`).join("");
   return `<div class="arch-sub">Top routes · ${routes.length}</div>` + recs + bar
     + `<table class="logtable">
-      <thead><tr><th>Commodity</th><th>Route</th><th class="lt-num">Trips</th><th class="lt-num">SCU</th>
-        <th class="lt-num">Profit</th><th class="lt-num">%</th><th class="lt-num">/SCU</th></tr></thead>
+      <thead><tr><th>Commodity</th><th>Route</th>${th("Trips", 1)}${th("SCU", 1)}${th("Profit", 1)}${th("%", 1)}${th("/SCU", 1)}</tr></thead>
       <tbody>${body}</tbody></table>`;
 }
 
@@ -1359,10 +1373,9 @@ function sessionListView(sessions) {
       <td class="lt-num">${trades || "—"}</td>
       <td class="lt-replay">${act}</td></tr>`;
   }).join("");
-  const inner = list.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>Session</th><th>Player</th><th>Ship(s)</th><th class="lt-num">Earned</th>
-        <th class="lt-num">Done</th><th class="lt-num">Trades</th><th>Replay</th></tr></thead>
-      <tbody>${body}</tbody></table></div>` : `<div class="empty">No archived sessions yet.</div>`;
+  const inner = logTable(
+    `<th>Session</th><th>Player</th><th>Ship(s)</th>${th("Earned", 1)}${th("Done", 1)}${th("Trades", 1)}<th>Replay</th>`,
+    body, "No archived sessions yet.");
   return logSection("sessions", `Sessions · ${list.length}`,
                     `<span class="scu">${list.length} archived</span>`, inner);
 }
@@ -1457,8 +1470,13 @@ async function refresh() {
     if (TAB === "history") loadSessions();  // keep archive fresh while viewing
     const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
     const sess = d.logged_in ? ("session since " + (d.session_started_at || "?")) : "at main menu (logged out)";
-    const ver = d.game_version ? (" · game " + d.game_version) : "";
-    $("foot").textContent = `synced ${new Date().toLocaleTimeString()} · ${sess}${ver} · ${last} · cargo db @ ${d.ship_cargo_version || "?"}`;
+    // RSI's patch-notes page is what the launcher links to pre-update (then hides) —
+    // make the parsed game version a link back to it. Index URL always lists the
+    // current LIVE build first, so it needs no per-patch upkeep.
+    const ver = d.game_version
+      ? ` · game <a class="pn-link" href="https://robertsspaceindustries.com/en/patch-notes" target="_blank" rel="noopener">${esc(d.game_version)} ↗</a>`
+      : "";
+    $("foot").innerHTML = `synced ${esc(new Date().toLocaleTimeString())} · ${esc(sess)}${ver} · ${esc(last)} · cargo db @ ${esc(d.ship_cargo_version || "?")}`;
   } catch (e) { $("foot").textContent = "waiting for tracker… (" + e + ")"; }
 }
 refresh();
