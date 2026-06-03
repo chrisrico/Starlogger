@@ -239,7 +239,7 @@ def main() -> None:
     print(f"  dashboard: http://{args.host}:{args.port}")
     print("  Ctrl-C to stop")
     try:
-        create_app(state).run(host=args.host, port=args.port, threaded=True)
+        create_app(state, log_path).run(host=args.host, port=args.port, threaded=True)
     finally:
         stop.set()
 

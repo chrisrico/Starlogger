@@ -9,6 +9,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from .archive import filter_sessions, load_sessions
 from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_field, set_leg_states, write_override
+from .replay import build_timeline, snapshot_at
 from .settings import set_setting
 from .shipcargo import load_ship_cargo
 from .tradeflags import set_lost
@@ -55,8 +56,10 @@ def _dests_of(mis, zone_names) -> tuple:
                          for l in mis.legs.values() if l.kind == "dropoff"}))
 
 
-def create_app(state: State) -> Flask:
+def create_app(state: State, log_path: str | None = None) -> Flask:
     # static_url_path="" serves web/ assets at the root (/styles.css, /app.js).
+    # log_path (when known) backs the Archive's session-replay feature, which
+    # reconstructs a past session's dashboard by re-feeding its source log.
     app = Flask(__name__, static_folder=WEB_DIR, static_url_path="")
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
@@ -95,6 +98,34 @@ def create_app(state: State) -> Flask:
             trade_only=request.args.get("trade") == "1",
             show_unfinished=request.args.get("unfinished") == "1",
         ))
+
+    @app.get("/api/replay/timeline")
+    def api_replay_timeline():
+        # Ordered scrub checkpoints (index, ts, label) for a session, reconstructed
+        # from its source log. {available:false} when that log is no longer present.
+        key = request.args.get("key") or ""
+        if not key:
+            return jsonify({"ok": False, "error": "key required"}), 400
+        tl = build_timeline(key, log_path)
+        if tl is None:
+            return jsonify({"available": False})
+        return jsonify({"available": True, **tl})
+
+    @app.get("/api/replay/state")
+    def api_replay_state():
+        # The full dashboard snapshot at one checkpoint — drives the whole UI in
+        # replay mode, same shape as /api/state.
+        key = request.args.get("key") or ""
+        try:
+            at = int(request.args.get("at", 0))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "at must be an integer"}), 400
+        if not key:
+            return jsonify({"ok": False, "error": "key required"}), 400
+        snap = snapshot_at(key, log_path, at)
+        if snap is None:
+            return jsonify({"available": False}), 404
+        return jsonify(snap)
 
     @app.post("/api/override")
     def api_override():

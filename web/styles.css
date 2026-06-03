@@ -311,6 +311,32 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .th-opt:hover{background:var(--panel)}
 .th-opt input{cursor:pointer;margin:0}
 .lt-empty{padding:18px 12px;text-align:center;color:var(--ink-3);font-size:12px}
+/* Sessions sub-tab + replay */
+.lt-replay{white-space:nowrap}
+.lt-replay .lt-act{opacity:.9}                       /* always show the replay control */
+tr:hover .lt-replay .lt-act{opacity:1}
+.lt-act.on{opacity:1;color:var(--cyan);border-color:var(--cyan);background:rgba(79,220,255,.1)}
+.sess-replaying{background:rgba(79,220,255,.07)}
+/* whole-dashboard replay banner (between header and main) */
+#replaybar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:12px;
+  padding:8px 22px;font-family:var(--mono);font-size:12px;
+  background:linear-gradient(180deg,rgba(18,38,58,.97),rgba(12,19,34,.97));
+  border-bottom:1px solid var(--cyan);box-shadow:0 6px 20px rgba(0,0,0,.4)}
+#replaybar.hide{display:none}
+#replaybar.rb-busy{opacity:.8}
+.rb-tag{font-family:var(--display);letter-spacing:.12em;font-size:10.5px;font-weight:700;
+  color:#06101e;background:var(--cyan);padding:2px 8px;border-radius:3px}
+.rb-sess{color:var(--ink-1);font-weight:600;white-space:nowrap}
+.rb-step{background:var(--panel);border:1px solid var(--line);color:var(--ink-1);
+  border-radius:4px;cursor:pointer;padding:1px 9px;font-size:12px;line-height:1.5}
+.rb-step:hover{border-color:var(--cyan);color:var(--cyan)}
+.rb-scrub{flex:1 1 auto;min-width:140px;accent-color:var(--cyan);cursor:pointer}
+.rb-pos{color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.rb-when{color:var(--ink-2);white-space:nowrap}
+.rb-label{color:var(--cyan);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:36ch}
+.rb-exit{margin-left:auto;background:transparent;border:1px solid var(--red);color:var(--red);
+  border-radius:4px;cursor:pointer;padding:3px 12px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em}
+.rb-exit:hover{background:rgba(255,94,116,.12)}
 .lt-act{margin-left:6px;padding:0 5px;font-size:11px;line-height:1.4;cursor:pointer;color:var(--ink-3);
   background:transparent;border:1px solid var(--line-2);border-radius:2px;opacity:0;transition:opacity .12s}
 .logtable tr:hover .lt-act{opacity:1}
@@ -321,7 +347,7 @@ main{padding:22px;max-width:1280px;margin:0 auto}
    scrolls its table internally so the page never scrolls. (--header-h/--footer-h
    measured by app.js; 46px = main padding + safety) */
 .arch-acc{display:flex;flex-direction:column;gap:10px;
-  height:calc(100vh - var(--header-h, 240px) - var(--footer-h, 60px) - 46px);min-height:360px}
+  height:calc(100vh - var(--header-h, 240px) - var(--footer-h, 60px) - var(--replay-h, 0px) - 46px);min-height:360px}
 .arch-tabs{display:flex;align-items:stretch;flex:0 0 auto;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .arch-tab{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;font-size:11px;
   color:var(--ink-3);background:transparent;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;

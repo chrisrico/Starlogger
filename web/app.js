@@ -24,6 +24,14 @@ let EDIT = null;      // mission_id whose editor is open (Contracts tab)
 let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
 let SESSIONS = null;  // archived sessions
 
+// ---- session replay ---- //
+// When a session is replayed, the WHOLE dashboard renders a reconstructed past
+// snapshot instead of live data: curData() returns REPLAY_SNAPSHOT and the poll pauses.
+// REPLAY_POINTS is the scrub timeline (index/ts/label); REPLAY_I the current checkpoint.
+let REPLAY_MODE = false, REPLAY_KEY = null, REPLAY_POINTS = [], REPLAY_I = 0, REPLAY_SNAPSHOT = null;
+let REPLAY_UNAVAILABLE = new Set();  // session keys whose source log is gone
+let _scrubTimer = null;
+
 // Which Archive section is expanded (accordion — only one at a time). Empty = all
 // collapsed. Persists the user's explicit choice; no built-in default (see archDefaultSection).
 let ARCH_OPEN = localStorage.getItem("archOpen") || "";
@@ -157,6 +165,7 @@ function pickShip(ev, name) {
 }
 
 async function selectShip(name) {
+  if (REPLAY_MODE) return;
   try {
     const r = await fetch("/api/select-ship", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -302,6 +311,7 @@ function qtyCell(qty, mid, oid) {
 }
 
 function edOpen(el) {
+  if (REPLAY_MODE) return;   // replay is read-only — past state can't be edited
   let f; try { f = JSON.parse(el.dataset.field); } catch (e) { return; }
   EDIT_CELL = cellTok(f);
   rerenderEdits();
@@ -378,6 +388,7 @@ function legCheck(mid, oid, done, legsJson) {
 }
 
 async function markDelivered(legs, done) {
+  if (REPLAY_MODE) return;
   if (typeof legs === "string") legs = JSON.parse(legs);
   try {
     const r = await fetch("/api/leg-state", {
@@ -661,7 +672,7 @@ const destHue = (i) => Math.round((i * 137.508) % 360);
 
 // ---- cargo groups, elevator staging + load-order packing ---- //
 // The snapshot every tab renders from (live session only).
-const curData = () => LAST;
+const curData = () => (REPLAY_MODE ? REPLAY_SNAPSHOT : LAST);
 
 // Render every tab from one snapshot `d` (the live snapshot).
 function renderAll(d) {
@@ -897,6 +908,7 @@ function gridView(d) {
 const rawOverride = (mid) => ((LAST && LAST.missions.find(m => m.mission_id === mid) || {}).raw_override) || {};
 
 function editMission(mid) {
+  if (REPLAY_MODE) return;   // replay is read-only
   EDIT = mid; renderMissions();
   // jump straight to the first field that needs filling (e.g. an unknown origin
   // or a missing cargo/qty), so you can start typing without hunting for it.
@@ -944,6 +956,7 @@ function buildOverride() {
 }
 
 async function postOverride(mid, override) {
+  if (REPLAY_MODE) return;   // belt-and-suspenders: no live writes during replay
   try {
     const r = await fetch("/api/override", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -977,7 +990,7 @@ function sessionsView(sessions) {
   // Pooled logs as horizontal tabs (Contract Log, Trade Loads — which now also carries
   // the trade-route recommendations — and Travel Log); the selected tab's body fills the
   // viewport. ARCH_OPEN is the active tab — defaulted by recency (archDefaultSection).
-  const secs = [contractLogView(sessions), tradeLogView(sessions), travelLogView(sessions)];
+  const secs = [contractLogView(sessions), tradeLogView(sessions), travelLogView(sessions), sessionListView(sessions)];
   if (!secs.some(s => s.key === ARCH_OPEN)) ARCH_OPEN = secs[0].key;
   const active = secs.find(s => s.key === ARCH_OPEN) || secs[0];
   const tabs = secs.map(s =>
@@ -1321,8 +1334,122 @@ async function markTradeLost(id, lost) {
   } catch (e) { /* next poll reconciles from the server */ }
 }
 
+// Every archived session as a row, newest first: when (+ duration) · player · ship(s) ·
+// earned · contracts (completed/total) · trades · a Replay control. Replaying a session
+// drives the WHOLE dashboard into its reconstructed past state (see enterReplay).
+function sessionListView(sessions) {
+  const list = [...(sessions || [])].sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
+  const body = list.map(s => {
+    const dur = fmtDuration(s.started_at, s.ended_at);
+    const c = s.counts || {};
+    const ships = (s.ships || []).join(", ");
+    const trades = (s.trades || []).length;
+    const replaying = REPLAY_MODE && REPLAY_KEY === s.key;
+    const act = replaying
+      ? `<button class="lt-act on" onclick="exitReplay()" title="Stop replaying this session">■ exit replay</button>`
+      : REPLAY_UNAVAILABLE.has(s.key)
+        ? `<span class="lt-tag" title="The source log for this session is no longer on disk">log gone</span>`
+        : `<button class="lt-act" onclick='enterReplay(${JSON.stringify(s.key)})' title="Replay this session — scrub the whole dashboard through it">▶ replay</button>`;
+    return `<tr class="${replaying ? "sess-replaying" : ""}">
+      <td class="lt-when">${fmtWhen(s.started_at)}${dur ? ` <span class="sub">· ${dur}</span>` : ""}</td>
+      <td class="lt-shop">${esc(s.player || "—")}</td>
+      <td class="lt-shop">${esc(ships || "—")}</td>
+      <td class="lt-num">${s.earned ? num(s.earned) : "—"}</td>
+      <td class="lt-num">${c.completed || 0}/${c.total || 0}</td>
+      <td class="lt-num">${trades || "—"}</td>
+      <td class="lt-replay">${act}</td></tr>`;
+  }).join("");
+  const inner = list.length ? `<div class="logwrap"><table class="logtable">
+      <thead><tr><th>Session</th><th>Player</th><th>Ship(s)</th><th class="lt-num">Earned</th>
+        <th class="lt-num">Done</th><th class="lt-num">Trades</th><th>Replay</th></tr></thead>
+      <tbody>${body}</tbody></table></div>` : `<div class="empty">No archived sessions yet.</div>`;
+  return logSection("sessions", `Sessions · ${list.length}`,
+                    `<span class="scu">${list.length} archived</span>`, inner);
+}
+
+// ---- replay controls ---- //
+// Enable a session for replay: fetch its scrub timeline, default to the final state,
+// then drive the whole dashboard from the reconstructed snapshot. Live polling pauses.
+async function enterReplay(key) {
+  try {
+    const tl = await (await fetch(`/api/replay/timeline?key=${encodeURIComponent(key)}`, { cache: "no-store" })).json();
+    if (!tl.available || !tl.count) {
+      REPLAY_UNAVAILABLE.add(key);
+      setHTML("history", sessionsView(SESSIONS));
+      return;
+    }
+    REPLAY_KEY = key; REPLAY_POINTS = tl.points; REPLAY_I = tl.count - 1; REPLAY_MODE = true;
+    await loadReplayState();                       // sets REPLAY_SNAPSHOT + renders all tabs
+    renderReplayBar();
+    setHTML("history", sessionsView(SESSIONS));     // reflect the active-replay row state
+  } catch (e) {
+    REPLAY_UNAVAILABLE.add(key);
+    setHTML("history", sessionsView(SESSIONS));
+  }
+}
+
+// Fetch the snapshot for the current checkpoint and repaint every tab from it.
+async function loadReplayState() {
+  const bar = $("replaybar"); if (bar) bar.classList.add("rb-busy");
+  try {
+    const snap = await (await fetch(
+      `/api/replay/state?key=${encodeURIComponent(REPLAY_KEY)}&at=${REPLAY_I}`, { cache: "no-store" })).json();
+    if (snap && snap.available !== false) { REPLAY_SNAPSHOT = snap; renderAll(curData()); }
+  } catch (e) { /* leave the prior frame up */ }
+  if (bar) bar.classList.remove("rb-busy");
+}
+
+// Scrub: move to checkpoint i. Update the bar text immediately (so dragging feels live);
+// debounce the snapshot fetch so a fast drag doesn't fire a request per pixel.
+function scrubTo(i) {
+  REPLAY_I = Math.max(0, Math.min(+i, REPLAY_POINTS.length - 1));
+  updateReplayBar();
+  clearTimeout(_scrubTimer);
+  _scrubTimer = setTimeout(loadReplayState, 110);
+}
+function scrubStep(d) { scrubTo(REPLAY_I + d); }
+
+function exitReplay() {
+  REPLAY_MODE = false; REPLAY_KEY = null; REPLAY_SNAPSHOT = null; REPLAY_POINTS = []; REPLAY_I = 0;
+  renderReplayBar();
+  if (LAST) renderAll(curData());                 // back to the live snapshot
+  setHTML("history", sessionsView(SESSIONS));
+  refresh();                                       // resume live polling now
+}
+
+// Build the replay banner once (on enter/exit) so the range element stays stable while
+// dragging; updateReplayBar() refreshes only the position/time/label text on each scrub.
+function renderReplayBar() {
+  const bar = $("replaybar"); if (!bar) return;
+  const root = document.documentElement.style;
+  if (!REPLAY_MODE) { bar.classList.add("hide"); bar.innerHTML = ""; root.setProperty("--replay-h", "0px"); return; }
+  const n = REPLAY_POINTS.length, sess = (REPLAY_KEY || "").split("|")[0];
+  bar.classList.remove("hide");
+  bar.innerHTML = `<span class="rb-tag">▶ REPLAY</span>
+    <span class="rb-sess">${esc(fmtWhen(sess))}</span>
+    <button class="rb-step" onclick="scrubStep(-1)" title="previous checkpoint">◀</button>
+    <input id="rb-scrub" class="rb-scrub" type="range" min="0" max="${Math.max(0, n - 1)}"
+      value="${REPLAY_I}" oninput="scrubTo(this.value)">
+    <button class="rb-step" onclick="scrubStep(1)" title="next checkpoint">▶</button>
+    <span id="rb-pos" class="rb-pos"></span>
+    <span id="rb-when" class="rb-when"></span>
+    <span id="rb-label" class="rb-label"></span>
+    <button class="rb-exit" onclick="exitReplay()">Exit replay</button>`;
+  root.setProperty("--replay-h", bar.offsetHeight + "px");  // archive panel subtracts this
+  updateReplayBar();
+}
+function updateReplayBar() {
+  const n = REPLAY_POINTS.length, p = REPLAY_POINTS[REPLAY_I] || {};
+  const pos = $("rb-pos"), when = $("rb-when"), label = $("rb-label"), scrub = $("rb-scrub");
+  if (pos) pos.textContent = `${REPLAY_I + 1}/${n}`;
+  if (when) when.textContent = p.ts ? fmtWhen(p.ts) : "";
+  if (label) label.textContent = p.label || "";
+  if (scrub && +scrub.value !== REPLAY_I) scrub.value = REPLAY_I;  // keep slider synced for ◀/▶
+}
+
 // ---- poll loop ---- //
 async function refresh() {
+  if (REPLAY_MODE) return;   // replay pauses live polling; exitReplay() resumes it
   try {
     const d = await (await fetch("/api/state", { cache: "no-store" })).json();
     LAST = d;
