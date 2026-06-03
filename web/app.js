@@ -968,10 +968,10 @@ function fmtDuration(a, b) {
 function sessionsView(sessions) {
   if (!sessions) return `<div class="empty">loading archive…</div>`;
   if (!sessions.length) return `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
-  // Four pooled logs as horizontal tabs (Trade Routes, Contract Log, Trade Loads,
-  // Travel Log); the selected tab's body fills the viewport. ARCH_OPEN is the active
-  // tab — defaulted by recency (archDefaultSection) when none is set.
-  const secs = [routeRecsView(sessions), contractLogView(sessions), tradeLogView(sessions), travelLogView(sessions)];
+  // Pooled logs as horizontal tabs (Contract Log, Trade Loads — which now also carries
+  // the trade-route recommendations — and Travel Log); the selected tab's body fills the
+  // viewport. ARCH_OPEN is the active tab — defaulted by recency (archDefaultSection).
+  const secs = [contractLogView(sessions), tradeLogView(sessions), travelLogView(sessions)];
   if (!secs.some(s => s.key === ARCH_OPEN)) ARCH_OPEN = secs[0].key;
   const active = secs.find(s => s.key === ARCH_OPEN) || secs[0];
   const tabs = secs.map(s =>
@@ -1111,14 +1111,16 @@ function buildLoads(trades) {
   return loads;
 }
 
-// Cross-session manual-trade LOAD log: each row is a buy + its sells, with realised
-// profit (revenue − the cost of the sold portion). Newest load first.
+// Cross-session manual-trade LOAD log: the trade-route recommendations (folded in from
+// the former Trade Routes tab) on top, then each load as a row (buy + its sells with
+// realised profit = revenue − the cost of the sold portion). Newest load first.
 function tradeLogView(sessions) {
   // Pool archived trades with the CURRENT (un-archived) session's so a just-made trade
   // shows immediately (not only after logout); pooledTrades dedups both feeds.
   const trades = pooledTrades(sessions);
   const loads = buildLoads(trades).sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
   const LOST = new Set((LAST && LAST.lost_trades) || []);
+  const routesBlock = tradeRoutesBlock(loads, LOST);
   let totalProfit = 0;
   const body = loads.map(L => {
     const sold = L.soldScu, lost = L.id && LOST.has(L.id);
@@ -1149,9 +1151,12 @@ function tradeLogView(sessions) {
       <td class="lt-num ${L.revenue ? "pos" : ""}">${L.revenue ? "+" + num(Math.round(L.revenue)) : "—"}</td>
       <td class="lt-num ${!priced ? "" : profit >= 0 ? "pos" : "neg"}">${priced ? (profit >= 0 ? "+" : "−") + num(Math.abs(profit)) : "—"}</td></tr>`;
   }).join("");
-  const inner = loads.length ? `<div class="logwrap"><table class="logtable">
+  const loadsTable = loads.length ? `<table class="logtable">
       <thead><tr><th>When</th><th>Commodity</th><th>Status</th><th>Route</th><th class="lt-num">SCU</th><th class="lt-num">Cost</th><th class="lt-num">Revenue</th><th class="lt-num">Profit</th></tr></thead>
-      <tbody>${body}</tbody></table></div>` : `<div class="empty">No manual trades in range.</div>`;
+      <tbody>${body}</tbody></table>` : `<div class="empty">No manual trades in range.</div>`;
+  // both tables share one scroll region (the recs/rank bar scroll with them)
+  const inner = `<div class="logwrap">${routesBlock}`
+    + `<div class="arch-sub">Loads · ${loads.length}</div>${loadsTable}</div>`;
   return logSection("trades", `Trade Loads · ${loads.length}`,
                     `<span class="scu ${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span>`, inner);
 }
@@ -1187,16 +1192,16 @@ const ROUTE_SORTS = { profit: "Total aUEC", pct: "% return", perScu: "aUEC / SCU
 const pctFmt = n => (n >= 0 ? "+" : "−") + (Math.abs(n) * 100).toFixed(Math.abs(n) < 0.1 ? 1 : 0) + "%";
 const signed = n => (n >= 0 ? "+" : "−") + num(Math.abs(Math.round(n)));
 
-// Trade-route recommendations: rank the player's own buy→sell routes by the chosen
-// metric (total profit / % return / per-SCU) and call out the single best of each.
-// Built entirely from the pooled trade loads — your history is the data source.
-function routeRecsView(sessions) {
-  const trades = pooledTrades(sessions);
-  const LOST = new Set((LAST && LAST.lost_trades) || []);
-  const routes = tradeRoutes(buildLoads(trades), LOST);
+// Trade-route recommendations block (folded into the Trade Loads tab): rank the
+// player's own buy→sell routes by the chosen metric (total profit / % return / per-SCU)
+// and call out the single best of each. Built from the same trade loads as the ledger
+// below it, so the caller passes the already-computed loads + lost set. Returns HTML
+// (a "Top routes" subheader + recs + table); "" when there are no completed routes yet.
+function tradeRoutesBlock(loads, lostSet) {
+  const routes = tradeRoutes(loads, lostSet);
   if (!routes.length)
-    return logSection("traderoutes", "Trade Routes · 0", "",
-      `<div class="empty">No completed trade routes yet. Buy a commodity at one station and sell it at another — your most profitable routes will surface here.</div>`);
+    return `<div class="arch-sub">Top routes</div>`
+      + `<div class="empty">No completed trade routes yet. Buy a commodity at one station and sell it at another — your most profitable routes will surface here.</div>`;
 
   const sortKey = ROUTE_SORTS[ROUTE_SORT] ? ROUTE_SORT : "profit";
   const ranked = [...routes].sort((a, b) => b[sortKey] - a[sortKey]);
@@ -1224,12 +1229,11 @@ function routeRecsView(sessions) {
       <td class="lt-num ${r.profit >= 0 ? "pos" : "neg"}">${signed(r.profit)}</td>
       <td class="lt-num ${r.pct >= 0 ? "pos" : "neg"}">${pctFmt(r.pct)}</td>
       <td class="lt-num ${r.perScu >= 0 ? "pos" : "neg"}">${signed(r.perScu)}</td></tr>`).join("");
-  const inner = recs + bar + `<div class="logwrap"><table class="logtable">
+  return `<div class="arch-sub">Top routes · ${routes.length}</div>` + recs + bar
+    + `<table class="logtable">
       <thead><tr><th>Commodity</th><th>Route</th><th class="lt-num">Trips</th><th class="lt-num">SCU</th>
         <th class="lt-num">Profit</th><th class="lt-num">%</th><th class="lt-num">/SCU</th></tr></thead>
-      <tbody>${body}</tbody></table></div>`;
-  return logSection("traderoutes", `Trade Routes · ${routes.length}`,
-    `<span class="scu pos">best ${signed(bestProfit.profit)} aUEC</span>`, inner);
+      <tbody>${body}</tbody></table>`;
 }
 
 async function loadSessions() {
