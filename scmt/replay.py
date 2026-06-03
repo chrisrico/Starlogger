@@ -182,13 +182,20 @@ def _build(key: str, path: str) -> tuple[list, list]:
                     continue
                 label = _label(prev_facts, facts, st)
                 snap = build_snapshot(st)
+                # how "populated" the cargo-ops dashboard is at this checkpoint — the UI
+                # defaults the scrubber here (its busiest moment) so replay lands on a
+                # visibly-filled dashboard rather than the usually-empty session end.
+                fill = (len(snap.get("missions") or []) + len(snap.get("loading") or [])
+                        + len(snap.get("unloading") or []))
                 # Collapse a burst of same-ts, same-label checkpoints into one (the
                 # login establisher flaps the session in/out, re-emitting "Session
                 # start"): keep the latest snapshot for that instant.
                 if points and points[-1]["ts"] == st.last_event_ts and points[-1]["label"] == label:
                     snapshots[-1] = snap
+                    points[-1]["fill"] = fill
                 else:
-                    points.append({"i": len(points), "ts": st.last_event_ts, "label": label})
+                    points.append({"i": len(points), "ts": st.last_event_ts,
+                                   "label": label, "fill": fill})
                     snapshots.append(snap)
                 prev_facts, prev_sig = facts, sig
     except OSError:

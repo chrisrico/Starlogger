@@ -1391,7 +1391,14 @@ async function enterReplay(key) {
       setHTML("history", sessionsView(SESSIONS));
       return;
     }
-    REPLAY_KEY = key; REPLAY_POINTS = tl.points; REPLAY_I = tl.count - 1; REPLAY_MODE = true;
+    REPLAY_KEY = key; REPLAY_POINTS = tl.points; REPLAY_MODE = true;
+    // Land on the session's busiest checkpoint (most contracts/cargo on the dashboard)
+    // rather than the last one — session-end usually has empty holds and finished
+    // contracts, so defaulting there makes replay look like it did nothing. Falls back
+    // to the last checkpoint when the session had no cargo activity (e.g. combat-only).
+    let best = tl.count - 1, bestFill = 0;
+    for (const p of tl.points) { const f = p.fill || 0; if (f >= bestFill) { bestFill = f; best = p.i; } }
+    REPLAY_I = bestFill > 0 ? best : tl.count - 1;
     await loadReplayState();                       // sets REPLAY_SNAPSHOT + renders all tabs
     renderReplayBar();
     setHTML("history", sessionsView(SESSIONS));     // reflect the active-replay row state
