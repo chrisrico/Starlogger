@@ -288,6 +288,29 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .lt-tag.good{color:var(--green);border-color:rgba(92,227,154,.4)}
 .lt-tag.warn{color:var(--amber);border-color:rgba(245,184,92,.4)}
 .lt-tag.lost{color:var(--red);border-color:rgba(255,94,116,.45);background:rgba(255,94,116,.08)}
+/* contract-type tags (Contract Log Type column + filter dropdown) */
+.lt-tag.ct-haul{color:var(--cyan);border-color:rgba(79,220,255,.4)}
+.lt-tag.ct-bounty{color:var(--red);border-color:rgba(255,94,116,.4)}
+.lt-tag.ct-deliver{color:var(--amber);border-color:rgba(245,184,92,.4)}
+.lt-tag.ct-other{color:var(--ink-3);border-color:var(--line-2)}
+/* Type-column multiselect dropdown (header) */
+.th-type{overflow:visible}
+.th-menu-wrap{position:relative;display:inline-block}
+.th-menu-btn{font-family:var(--display);text-transform:uppercase;letter-spacing:.1em;
+  font-size:9.5px;color:var(--ink-3);background:none;border:0;padding:0;cursor:pointer}
+.th-menu-btn:hover{color:var(--ink-2)}
+.th-menu-btn.on{color:var(--cyan)}
+.th-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:6;min-width:172px;display:block;
+  background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:6px;
+  box-shadow:0 10px 28px rgba(0,0,0,.55);text-transform:none;letter-spacing:normal}
+.th-menu-act{display:flex;gap:6px;padding:2px 2px 6px;margin-bottom:4px;border-bottom:1px solid var(--line)}
+.th-menu-act button{flex:1;font-family:var(--mono);font-size:10px;color:var(--ink-2);
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:3px 0;cursor:pointer}
+.th-menu-act button:hover{color:var(--cyan);border-color:var(--cyan)}
+.th-opt{display:flex;align-items:center;gap:7px;padding:4px 5px;border-radius:4px;cursor:pointer}
+.th-opt:hover{background:var(--panel)}
+.th-opt input{cursor:pointer;margin:0}
+.lt-empty{padding:18px 12px;text-align:center;color:var(--ink-3);font-size:12px}
 .lt-act{margin-left:6px;padding:0 5px;font-size:11px;line-height:1.4;cursor:pointer;color:var(--ink-3);
   background:transparent;border:1px solid var(--line-2);border-radius:2px;opacity:0;transition:opacity .12s}
 .logtable tr:hover .lt-act{opacity:1}

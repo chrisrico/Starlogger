@@ -75,6 +75,12 @@ function activateTab(name) {
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
 if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
 
+// Close the Contract Log's Type-filter dropdown on any click outside it (the toggle
+// button and the menu itself live inside .th-menu-wrap, so those are ignored).
+document.addEventListener("click", (e) => {
+  if (TYPE_MENU_OPEN && !e.target.closest(".th-menu-wrap")) { TYPE_MENU_OPEN = false; _archRepaint(); }
+});
+
 // ---- header: status pill, ship selector, telemetry readouts, capacity gauge ---- //
 
 // Ship catalog for the manual selector, fetched once. name -> {manufacturer,scu,groups}.
@@ -1045,31 +1051,85 @@ function travelLogView(sessions) {
                     `<span class="scu">${rows.length} jumps${tot}</span>`, inner);
 }
 
+// High-level contract kind, mirroring backend patterns.classify_contract for archived
+// sessions that predate the stored `type` (logbackup gone, never re-archived). Falls
+// back to title/is_trade only (org/contract aren't kept in the summary).
+const _CT_COMBAT = ["bounty", "bounties", "eliminate", "kill", "destroy", "defeat",
+  "mercenary", "security", "defend", "defence", "defense", "assault", "attack",
+  "combat", "pirate", "raid", "ambush", "wanted", "hostile", "strike"];
+const _CT_DELIVERY = ["deliver", "courier", "transport", "package", "parcel", "dossier",
+  "retrieve", "recover", "fetch", "files", "investigate", "smuggl"];
+function contractType(m) {
+  if (m.type) return m.type;
+  if (m.is_trade) return "Hauling";
+  const hay = (m.title || "").toLowerCase();
+  if (_CT_COMBAT.some(w => hay.includes(w))) return "Bounty / Combat";
+  if (_CT_DELIVERY.some(w => hay.includes(w))) return "Delivery";
+  return "Other";
+}
+const CT_ORDER = ["Hauling", "Bounty / Combat", "Delivery", "Other"];
+const ctSlug = t => ({ "Hauling": "haul", "Bounty / Combat": "bounty",
+  "Delivery": "deliver", "Other": "other" }[t] || "other");
+
+// Contract Log type filter — a set of EXCLUDED types (empty = show all), persisted.
+// The open/closed dropdown state lives in globals so the 3s poll's re-render preserves
+// it; CT_PRESENT caches the types the current data offers (for the All/None buttons).
+let CONTRACT_TYPE_HIDDEN = new Set(JSON.parse(localStorage.getItem("ctHidden") || "[]"));
+let TYPE_MENU_OPEN = false;
+let CT_PRESENT = [];
+function _saveCtHidden() { localStorage.setItem("ctHidden", JSON.stringify([...CONTRACT_TYPE_HIDDEN])); }
+function _archRepaint() { setHTML("history", sessionsView(SESSIONS)); }
+function toggleTypeMenu() { TYPE_MENU_OPEN = !TYPE_MENU_OPEN; _archRepaint(); }
+function toggleTypeFilter(t) {
+  CONTRACT_TYPE_HIDDEN.has(t) ? CONTRACT_TYPE_HIDDEN.delete(t) : CONTRACT_TYPE_HIDDEN.add(t);
+  _saveCtHidden(); _archRepaint();
+}
+function setAllTypeFilters(showAll) {
+  CONTRACT_TYPE_HIDDEN = showAll ? new Set() : new Set(CT_PRESENT);
+  _saveCtHidden(); _archRepaint();
+}
+
 // Flat, cross-session log of every mission contract, time-ordered (newest first) by
 // when it ended (else when accepted — both now carried per mission in the archive).
 // Unfinished contracts (active when the session ended) are always hidden here; they're
-// still kept in the sessions file, just not shown.
+// still kept in the sessions file, just not shown. The Type column header carries a
+// multiselect dropdown that filters rows by high-level contract kind.
 function contractLogView(sessions) {
-  const rows = [];
+  const all = [];
   for (const s of sessions || [])
     for (const m of s.missions || [])
       if (m.status !== "unfinished")
-        rows.push({ when: m.ended_at || m.accepted_at || s.started_at, m });
-  rows.sort((a, b) => (b.when || "").localeCompare(a.when || ""));
+        all.push({ when: m.ended_at || m.accepted_at || s.started_at, m, type: contractType(m) });
+  // distinct types present, canonical order first then any extras
+  CT_PRESENT = [...new Set(all.map(r => r.type))]
+    .sort((a, b) => ((CT_ORDER.indexOf(a) + 1) || 99) - ((CT_ORDER.indexOf(b) + 1) || 99));
+  const rows = all.filter(r => !CONTRACT_TYPE_HIDDEN.has(r.type))
+    .sort((a, b) => (b.when || "").localeCompare(a.when || ""));
   const total = rows.reduce((a, r) => a + (r.m.reward || 0), 0);
   const body = rows.map(r => {
     const dest = (r.m.destinations || []).filter(Boolean);
     return `<tr>
       <td class="lt-when">${fmtWhen(r.when)}</td>
       <td><span class="badge b-${r.m.status}">${esc(r.m.status)}</span></td>
+      <td><span class="lt-tag ct-${ctSlug(r.type)}">${esc(r.type)}</span></td>
       <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
       <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
-  }).join("");
-  const inner = rows.length ? `<div class="logwrap"><table class="logtable">
-      <thead><tr><th>When</th><th>Status</th><th>Contract</th><th class="lt-num">Reward</th></tr></thead>
+  }).join("") || `<tr><td colspan="5" class="lt-empty">No contracts match the selected types.</td></tr>`;
+  const hidden = CT_PRESENT.filter(t => CONTRACT_TYPE_HIDDEN.has(t)).length;
+  const opts = CT_PRESENT.map(t =>
+    `<label class="th-opt"><input type="checkbox" ${CONTRACT_TYPE_HIDDEN.has(t) ? "" : "checked"}
+       onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')"><span class="lt-tag ct-${ctSlug(t)}">${esc(t)}</span></label>`).join("");
+  const menu = `<span class="th-menu-wrap">
+    <button class="th-menu-btn${hidden ? " on" : ""}" onclick="toggleTypeMenu()">Type ▾</button>${
+      TYPE_MENU_OPEN ? `<span class="th-menu">
+        <span class="th-menu-act"><button onclick="setAllTypeFilters(true)">All</button><button onclick="setAllTypeFilters(false)">None</button></span>
+        ${opts}</span>` : ""}</span>`;
+  const inner = all.length ? `<div class="logwrap"><table class="logtable">
+      <thead><tr><th>When</th><th>Status</th><th class="th-type">${menu}</th><th>Contract</th><th class="lt-num">Reward</th></tr></thead>
       <tbody>${body}</tbody></table></div>` : `<div class="empty">No contracts in range.</div>`;
+  const typeNote = hidden ? ` · ${CT_PRESENT.length - hidden}/${CT_PRESENT.length} types` : "";
   return logSection("contracts", `Contract Log · ${rows.length}`,
-                    `<span class="scu">${num(total)} aUEC</span>`, inner);
+                    `<span class="scu">${num(total)} aUEC${typeNote}</span>`, inner);
 }
 
 // Group manual trades into "loads": a buy paired (FIFO, per commodity) with the
