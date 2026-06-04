@@ -127,12 +127,17 @@ if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
 document.addEventListener("click", (e) => {
   if (TYPE_MENU_OPEN && !e.target.closest(".th-menu-wrap")) { TYPE_MENU_OPEN = false; _archRepaint(); }
 });
+// Escape closes the Type-filter dropdown (matches the ship combobox / inline editors).
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && TYPE_MENU_OPEN) { TYPE_MENU_OPEN = false; _archRepaint(); }
+});
 
 // ---- header: status pill, ship selector, telemetry readouts, capacity gauge ---- //
 
 // Ship catalog for the manual selector, fetched once. name -> {manufacturer,scu,groups}.
 let SHIP_DB = null;
 let SHIP_MENU_OPEN = false;   // combobox popup state — guards the poll from clobbering it
+let SHIP_ACTIVE = -1;         // index of the keyboard-highlighted option (-1 = none)
 let GRID_HOVER = false;       // hovering a load-order row — guards the poll from wiping the hold highlight
 async function loadShipList() {
   try {
@@ -157,47 +162,82 @@ function shipMatches(filter) {
     .sort((a, b) => a.mfr.localeCompare(b.mfr) || a.name.localeCompare(b.name));
 }
 
+// The popup's options as a flat list: a "clear" sentinel first, then the matches.
+// SHIP_ACTIVE indexes into this list so Arrow keys + Enter can pick one.
+function shipEntries(filter) {
+  return [{ clear: true }].concat(shipMatches(filter));
+}
 function shipMenuHtml(filter) {
-  const items = shipMatches(filter);
-  let html = `<div class="shipopt clear" onmousedown="pickShip(event,'')">— clear (use detected) —</div>`;
-  if (!items.length) return html + `<div class="shipopt empty">no match</div>`;
-  // data-name carries the value safely (names have parens etc.); the handler reads it
-  return html + items.map(it =>
-    `<div class="shipopt" data-name="${esc(it.name)}" onmousedown="pickShip(event, this.dataset.name)">
-       <span class="sn">${esc(it.name)}</span><span class="om">${esc(it.mfr)}</span></div>`).join("");
+  const ents = shipEntries(filter);
+  const matched = ents.length - 1;
+  const rows = ents.map((e, i) => {
+    const act = i === SHIP_ACTIVE ? " active" : "";
+    const aria = `role="option" id="shipopt-${i}" aria-selected="${i === SHIP_ACTIVE}"`;
+    if (e.clear)
+      return `<div class="shipopt clear${act}" ${aria} onmousedown="pickShip(event,'')">— clear (use detected) —</div>`;
+    // data-name carries the value safely (names have parens etc.); the handler reads it
+    return `<div class="shipopt${act}" ${aria} data-name="${esc(e.name)}" onmousedown="pickShip(event, this.dataset.name)">
+       <span class="sn">${esc(e.name)}</span><span class="om">${esc(e.mfr)}</span></div>`;
+  }).join("");
+  return matched ? rows : rows + `<div class="shipopt empty">no match</div>`;
+}
+// Paint the popup for `filter`, sync the open/active ARIA state, and keep the
+// highlighted option scrolled into view.
+function renderShipMenu(filter) {
+  const inp = $("shipSel"), menu = $("shipMenu");
+  if (!inp || !menu) return;
+  SHIP_MENU_OPEN = true;
+  menu.innerHTML = shipMenuHtml(filter);
+  menu.classList.add("open");
+  inp.setAttribute("aria-expanded", "true");
+  inp.setAttribute("aria-activedescendant", SHIP_ACTIVE >= 0 ? "shipopt-" + SHIP_ACTIVE : "");
+  const a = menu.querySelector(".shipopt.active");
+  if (a && a.scrollIntoView) a.scrollIntoView({ block: "nearest" });
 }
 
 function openShipMenu() {
-  const inp = $("shipSel"), menu = $("shipMenu");
-  if (!inp || !menu) return;
-  inp.select();
-  SHIP_MENU_OPEN = true;
-  menu.innerHTML = shipMenuHtml("");   // focus shows the full list
-  menu.classList.add("open");
+  const inp = $("shipSel"); if (inp) inp.select();
+  SHIP_ACTIVE = -1;
+  renderShipMenu("");   // focus shows the full list
 }
 function filterShipMenu() {
-  const inp = $("shipSel"), menu = $("shipMenu");
-  if (!inp || !menu) return;
-  SHIP_MENU_OPEN = true;
-  menu.innerHTML = shipMenuHtml(inp.value);
-  menu.classList.add("open");
+  SHIP_ACTIVE = -1;     // typing resets the highlight
+  renderShipMenu(($("shipSel") || {}).value || "");
 }
 function onShipBlur() {
   SHIP_MENU_OPEN = false;
   const menu = $("shipMenu"); if (menu) menu.classList.remove("open");
-  const inp = $("shipSel"); if (inp && LAST) inp.value = LAST.ship || "";  // drop unselected typing
+  const inp = $("shipSel");
+  if (inp) { inp.setAttribute("aria-expanded", "false"); inp.setAttribute("aria-activedescendant", ""); }
+  if (inp && LAST) inp.value = LAST.ship || "";  // drop unselected typing
 }
+// Arrow Up/Down move the highlight, Enter selects it (else the first match),
+// Escape closes. Mirrors how a native <select>/combobox behaves.
 function shipKeydown(ev) {
-  if (ev.key === "Escape") { ev.target.blur(); }
-  else if (ev.key === "Enter") {
+  if (ev.key === "Escape") { ev.target.blur(); return; }
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
     ev.preventDefault();
-    const m = shipMatches(ev.target.value);
-    if (m.length) pickShip(ev, m[0].name);
+    const n = shipEntries(ev.target.value).length;
+    if (!n) return;
+    SHIP_ACTIVE = ev.key === "ArrowDown"
+      ? Math.min(n - 1, SHIP_ACTIVE + 1)
+      : Math.max(0, SHIP_ACTIVE - 1);
+    renderShipMenu(ev.target.value);
+  } else if (ev.key === "Enter") {
+    ev.preventDefault();
+    const ents = shipEntries(ev.target.value);
+    if (SHIP_ACTIVE >= 0 && SHIP_ACTIVE < ents.length) {
+      const e = ents[SHIP_ACTIVE];
+      pickShip(ev, e.clear ? "" : e.name);
+    } else {
+      const m = shipMatches(ev.target.value);
+      if (m.length) pickShip(ev, m[0].name);
+    }
   }
 }
 function pickShip(ev, name) {
   ev.preventDefault();              // (mousedown) keep focus until we act
-  SHIP_MENU_OPEN = false;
+  SHIP_MENU_OPEN = false; SHIP_ACTIVE = -1;
   const inp = $("shipSel");
   if (inp) { inp.value = name; inp.blur(); }   // blur releases the repaint guard
   selectShip(name);
@@ -227,9 +267,10 @@ function statusHtml(d) {
   }
   const box = `<span class="shipbox">
     <input id="shipSel" class="shipsel" type="text" autocomplete="off" aria-label="Ship"
+      role="combobox" aria-expanded="false" aria-controls="shipMenu" aria-autocomplete="list" aria-activedescendant=""
       placeholder="search ship…" value="${esc(d.ship || "")}"
       onfocus="openShipMenu()" oninput="filterShipMenu()" onkeydown="shipKeydown(event)" onblur="onShipBlur()">
-    <div id="shipMenu" class="shipmenu"></div></span>`;
+    <div id="shipMenu" class="shipmenu" role="listbox" aria-label="Ships"></div></span>`;
   return pill + `<span class="ship">SHIP ${box}${scu}</span>`;
 }
 
@@ -512,8 +553,9 @@ function routeCards(routes, d) {
     return `<div class="card route" data-dest="${esc(r.destination)}"
         ondragover="routeDragOver(event)" ondragleave="routeDragLeave(event)"
         ondrop="routeDrop(event)" ondragend="routeDragEnd(event)"><h3>
-        <span class="ends"><span class="route-grip" draggable="true" title="Drag to reorder the run"
-          ondragstart="routeDragStart(event)">⠿</span>${stationCell(r.origin, r.origin_zone)}<span class="arrow">→</span>${stationCell(r.destination, r.dest_zone)}${r.has_partial ? ' <span class="warn">⚠</span>' : ""}</span>
+        <span class="ends"><button type="button" class="route-grip" draggable="true"
+          title="Drag, or focus and use ↑/↓, to reorder the run" aria-label="Reorder this run — use arrow up or down"
+          ondragstart="routeDragStart(event)" onkeydown="routeGripKey(event)">⠿</button>${stationCell(r.origin, r.origin_zone)}<span class="arrow">→</span>${stationCell(r.destination, r.dest_zone)}${r.has_partial ? ' <span class="warn">⚠</span>' : ""}</span>
         <span class="scu">${SCU(r.total_scu, r.has_partial)}</span></h3>
       <div class="row"><div>${cargo}</div></div>
       <div class="row"><div class="sub">${r.mission_count} mission(s)</div></div>
@@ -568,6 +610,28 @@ function resetRouteOrder() {
   localStorage.removeItem("routeOrder");
   renderAll(curData());
 }
+// Keyboard reorder (a no-mouse alternative to dragging the ⠿ grip): move the run
+// one slot earlier/later, persist, re-render, and keep focus on the moved grip.
+function moveRoute(dest, dir) {
+  let order = [...document.querySelectorAll("#routegrid .card.route")].map(c => c.dataset.dest);
+  const i = order.indexOf(dest), j = i + dir;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  order.splice(i, 1); order.splice(j, 0, dest);
+  ROUTE_ORDER = order;
+  localStorage.setItem("routeOrder", JSON.stringify(order));
+  renderAll(curData());
+  setTimeout(() => {   // restore focus to the grip in its new position
+    const card = [...document.querySelectorAll("#routegrid .card.route")].find(c => c.dataset.dest === dest);
+    const grip = card && card.querySelector(".route-grip");
+    if (grip) grip.focus();
+  }, 0);
+}
+function routeGripKey(e) {
+  const card = e.currentTarget.closest(".card.route");
+  if (!card) return;
+  if (e.key === "ArrowUp") { e.preventDefault(); moveRoute(card.dataset.dest, -1); }
+  else if (e.key === "ArrowDown") { e.preventDefault(); moveRoute(card.dataset.dest, 1); }
+}
 
 // ---- all missions table + editor ---- //
 function legRowHtml(leg, guessCargo) {
@@ -578,10 +642,10 @@ function legRowHtml(leg, guessCargo) {
   const loc = leg.location || leg.name || "";
   const hint = (!loc && leg.zone_host_id) ? `Unknown station (zone ${leg.zone_host_id})` : "station";
   return `<tr>
-    <td><input class="lc" list="dl_cargo" placeholder="cargo" value="${esc(cargo)}"></td>
-    <td><input class="lq" type="number" placeholder="?" value="${leg.qty == null ? "" : leg.qty}"></td>
-    <td><input class="ll" list="dl_station" placeholder="${esc(hint)}" value="${esc(loc)}"></td>
-    <td><button type="button" class="rm" title="remove row" onclick="this.closest('tr').remove()">✕</button></td>
+    <td><input class="lc" list="dl_cargo" aria-label="Cargo" placeholder="cargo" value="${esc(cargo)}"></td>
+    <td><input class="lq" type="number" aria-label="Quantity in SCU" placeholder="?" value="${leg.qty == null ? "" : leg.qty}"></td>
+    <td><input class="ll" list="dl_station" aria-label="Location" placeholder="${esc(hint)}" value="${esc(loc)}"></td>
+    <td><button type="button" class="rm" title="remove row" aria-label="Remove row" onclick="this.closest('tr').remove()">✕</button></td>
   </tr>`;
 }
 
@@ -654,11 +718,11 @@ function editorRow(m) {
   // show it as the placeholder and leave the field empty so typing overwrites it.
   const unknownOrigin = !m.origin || /^Unknown station/.test(m.origin);
   return `<tr class="editrow"><td colspan="6"><div class="editor"
-    onkeydown="if(event.key==='Enter'&&event.target.tagName==='INPUT'){event.preventDefault();saveMission('${m.mission_id}')}">
-    <div class="ef"><label>Title</label><input id="ed_title" value="${esc(m.title || "")}"></div>
-    <div class="ef"><label>Origin</label><input id="ed_origin" list="dl_station" value="${esc(unknownOrigin ? "" : m.origin)}" placeholder="${esc(unknownOrigin ? (m.origin || "origin") : "origin")}"></div>
-    <div class="ef"><label>Reward <span class="sub">(aUEC · type 12k or 1.5m)</span></label><input id="ed_reward" type="text" inputmode="decimal" value="${m.reward || ""}"></div>
-    <div class="ef"><label>Status</label><select id="ed_status">
+    onkeydown="edFormKey(event,'${m.mission_id}')">
+    <div class="ef"><label for="ed_title">Title</label><input id="ed_title" value="${esc(m.title || "")}"></div>
+    <div class="ef"><label for="ed_origin">Origin</label><input id="ed_origin" list="dl_station" value="${esc(unknownOrigin ? "" : m.origin)}" placeholder="${esc(unknownOrigin ? (m.origin || "origin") : "origin")}"></div>
+    <div class="ef"><label for="ed_reward">Reward <span class="sub">(aUEC · type 12k or 1.5m)</span></label><input id="ed_reward" type="text" inputmode="decimal" value="${m.reward || ""}"></div>
+    <div class="ef"><label for="ed_status">Status</label><select id="ed_status">
         ${opt("", "(from log)", true)}${statuses.map(s => opt(s, s, false)).join("")}</select></div>
     <div class="ef wide"><label>Drop-offs</label>${legTable(m.legs, "dropoff", "ed_drops", "Destination", m)}</div>
     <div class="ef wide"><label>Pickups <span class="sub">(collect missions only — leave empty for normal hauls)</span></label>${legTable(m.legs, "pickup", "ed_pickups", "From", m)}</div>
@@ -699,7 +763,7 @@ function missionsTable(ms) {
     </tr>`;
     return tr + (EDIT === m.mission_id && !m.hidden ? editorRow(m) : "");
   }).join("");
-  return `<table><thead><tr><th>Status</th><th>Mission</th><th>Origin</th><th>Cargo → Destination</th><th>Reward</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<div class="tscroll"><table><thead><tr><th>Status</th><th>Mission</th><th>Origin</th><th>Cargo → Destination</th><th>Reward</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderMissions() { const d = curData(); if (d) setHTML("missions", missionsTable(d.missions)); }
@@ -932,7 +996,7 @@ function gridView(d) {
     : `every box is reachable here, so order doesn't matter · hover to locate in the hold`;
   const seq = `<div class="loadseq"><span class="ls-lbl">Load order <span class="sub">(${seqNote})</span></span>
     <ol>${seqRows.map(({ g, gid }) =>
-      `<li onmouseenter="hlElev(${gid})" onmouseleave="hlElev(null)"><span class="cg-sw" style="background:hsl(${g.hue},64%,52%)"></span>
+      `<li tabindex="0" onmouseenter="hlElev(${gid})" onmouseleave="hlElev(null)" onfocus="hlElev(${gid})" onblur="hlElev(null)"><span class="cg-sw" style="background:hsl(${g.hue},64%,52%)"></span>
         <span class="ls-dest">${esc(g.dest)}</span> <span class="ls-cargo sub">${esc(g.cargo)}</span>
         ${g.shared ? '<span class="ls-alone" title="carries a cargo type split across elevators — load this one fully before the next">⚠ shared</span>' : ""}
         <span class="ls-scu sub">${num(g.scu)} SCU</span></li>`).join("")}</ol></div>`;
@@ -949,17 +1013,29 @@ const rawOverride = (mid) => ((LAST && LAST.missions.find(m => m.mission_id === 
 function editMission(mid) {
   if (REPLAY_MODE) return;   // replay is read-only
   EDIT = mid; renderMissions();
-  // jump straight to the first field that needs filling (e.g. an unknown origin
-  // or a missing cargo/qty), so you can start typing without hunting for it.
+  // Critical fields a sparse mission usually needs filled: origin, plus each leg's
+  // cargo / quantity / destination. The EMPTY ones get a low positive tabindex (in
+  // visual order) so Tab walks through them FIRST — fill the gaps, then Tab drops into
+  // the rest of the form. Also focus the first gap so you can start typing immediately.
   setTimeout(() => {
     const row = document.querySelector("tr.editrow");
     if (!row) return;
-    const inputs = [...row.querySelectorAll("input")];
-    const target = inputs.find(i => !i.value.trim()) || inputs[0];
-    if (target) { target.focus(); target.select(); }
+    const critical = [...row.querySelectorAll(
+      "#ed_origin, #ed_drops .lc, #ed_drops .lq, #ed_drops .ll, #ed_pickups .lc, #ed_pickups .lq, #ed_pickups .ll")];
+    let ti = 1;
+    const empties = [];
+    for (const el of critical) if (!el.value.trim()) { el.tabIndex = ti++; empties.push(el); }
+    const target = empties[0] || row.querySelector("input");
+    if (target) { target.focus(); if (target.select) target.select(); }
   }, 0);
 }
 function cancelEdit() { EDIT = null; renderMissions(); }
+// Editor keybindings: Enter (in a text field) saves, Escape cancels — matching the
+// inline cell editor so the whole form is keyboard-dismissable.
+function edFormKey(e, mid) {
+  if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); saveMission(mid); }
+  else if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+}
 function saveMission(mid) { postOverride(mid, buildOverride()); }
 function resetMission(mid) { postOverride(mid, null); }       // clear entirely
 function restoreMission(mid) {                                // un-hide, keep edits
@@ -1172,7 +1248,7 @@ function contractLogView(sessions) {
     `<label class="th-opt"><input type="checkbox" ${CONTRACT_TYPE_HIDDEN.has(t) ? "" : "checked"}
        onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')">${tag(t, "ct-" + ctSlug(t))}</label>`).join("");
   const menu = `<span class="th-menu-wrap">
-    <button class="th-menu-btn${hidden ? " on" : ""}" onclick="toggleTypeMenu()">Type ▾</button>${
+    <button class="th-menu-btn${hidden ? " on" : ""}" aria-haspopup="true" aria-expanded="${TYPE_MENU_OPEN}" onclick="toggleTypeMenu()">Type ▾</button>${
       TYPE_MENU_OPEN ? `<span class="th-menu">
         <span class="th-menu-act"><button onclick="setAllTypeFilters(true)">All</button><button onclick="setAllTypeFilters(false)">None</button></span>
         ${opts}</span>` : ""}</span>`;

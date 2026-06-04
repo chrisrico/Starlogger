@@ -1,5 +1,5 @@
 /* ============================================================================
-   SC Cargo Ops — mobiGlas logistics HUD
+   Starlogger — mobiGlas logistics HUD
    Refined-industrial sci-fi terminal: dark void, cyan telemetry, cut-corner
    panels with corner brackets, condensed display type + mono data.
    ========================================================================== */
@@ -12,6 +12,7 @@
   --line:rgba(86,206,255,.14);
   --line-2:rgba(86,206,255,.32);
   --ink:#cfe2f5;
+  --ink-1:#aebfd6;  /* between --ink and --ink-2 */
   --ink-2:#7d96b4;
   --ink-3:#516583;
   --cyan:#4fdcff;
@@ -103,7 +104,7 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
 .shipmenu.open{display:block}
 .shipopt{display:flex;justify-content:space-between;align-items:baseline;gap:18px;
   padding:6px 11px;cursor:pointer;color:var(--ink);border-left:2px solid transparent}
-.shipopt:hover{background:rgba(79,220,255,.14);border-left-color:var(--cyan)}
+.shipopt:hover,.shipopt.active{background:rgba(79,220,255,.14);border-left-color:var(--cyan)}
 .shipopt .sn{white-space:nowrap;flex-shrink:0}
 .shipopt .om{color:var(--ink-3);font-size:10px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
 .shipopt.clear{color:var(--ink-3);font-style:italic;border-bottom:1px solid var(--line)}
@@ -112,18 +113,6 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
 .status .ship-auto{color:var(--cyan);font-size:10.5px;letter-spacing:.08em;white-space:nowrap}
 
 .controls{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-.switch{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
-  font-family:var(--display);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2)}
-.switch input{position:absolute;opacity:0;width:0;height:0}
-.switch .sw{position:relative;width:38px;height:20px;border-radius:11px;background:rgba(0,0,0,.45);
-  border:1px solid var(--line-2);transition:all .18s;flex:none}
-.switch .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
-  background:var(--ink-3);transition:all .18s}
-.switch input:checked + .sw{background:rgba(79,220,255,.22);border-color:var(--cyan);box-shadow:0 0 10px rgba(79,220,255,.3)}
-.switch input:checked + .sw::after{transform:translateX(18px);background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
-.switch input:checked ~ .sw-lbl{color:var(--cyan)}
-.switch:hover .sw{border-color:var(--cyan)}
-.switch input:focus-visible + .sw{box-shadow:0 0 0 2px rgba(79,220,255,.4)}
 
 /* ---- telemetry readouts ---- */
 .readouts{display:flex;flex-wrap:wrap;gap:1px;margin:14px 0 0;
@@ -310,8 +299,9 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .card.route.dragging{opacity:.45;cursor:grabbing}
 .card.route.dragover{border-color:var(--cyan);box-shadow:inset 3px 0 0 var(--cyan)}
 .route-grip{cursor:grab;color:var(--ink-3);margin-right:6px;font-size:13px;line-height:1;
-  letter-spacing:-2px;user-select:none}
+  letter-spacing:-2px;user-select:none;background:none;border:0;padding:0 2px;font-family:inherit}
 .card.route:hover .route-grip{color:var(--cyan)}
+.route-grip:focus-visible{outline:none;color:var(--cyan);box-shadow:0 0 0 2px rgba(79,220,255,.5);border-radius:2px}
 .route-reset{margin-left:10px;font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;
   font-size:10px;padding:3px 9px;cursor:pointer;color:var(--ink-3);background:transparent;
   border:1px solid var(--line-2);border-radius:2px}
@@ -325,7 +315,6 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 /* label pinned to the left (out of flow) so the checkboxes center in the full bar */
 .filt-lbl{position:absolute;left:16px;top:50%;transform:translateY(-50%);
   font-family:var(--display);text-transform:uppercase;letter-spacing:.14em;font-size:10px;color:var(--ink-3)}
-.filtbar .chk{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);cursor:pointer}
 .lt-tag{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;
   padding:1px 6px;border:1px solid var(--line-2);border-radius:2px;color:var(--ink-3);white-space:nowrap}
 .lt-tag.good{color:var(--green);border-color:rgba(92,227,154,.4)}
@@ -558,7 +547,20 @@ footer{color:var(--ink-3);text-align:center;padding:22px;font-size:11px;font-fam
   header{padding:10px 12px 0}
   main{padding:12px}
   footer{padding:9px 12px;font-size:10px;line-height:1.35;letter-spacing:.03em}
+  /* keep wide tables + the cargo grid from pushing the whole page sideways: scroll
+     them within their own tab instead of overflowing the viewport. */
+  #grid{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  /* replay banner: trim the redundant bits (the checkpoint time + label already show
+     on the info line below) and let the slider shrink so it never runs off-screen */
+  #replaybar{padding:8px 10px;gap:8px}
+  .rb-top{gap:8px}
+  .rb-scrub{min-width:40px}
+  .rb-sess,.rb-pos{display:none}
+  .rb-exit{padding:6px 9px;letter-spacing:.06em}
 }
+/* the Contracts/Manifest tables are wider than a phone; scroll them horizontally
+   inside the tab rather than overflowing the page. Harmless on desktop (they fit). */
+.tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 
 /* ---- buttons / editor ---- */
 td button,.editor button{font-family:var(--display);font-weight:600;letter-spacing:.06em;text-transform:uppercase;
@@ -659,7 +661,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .ls-lbl{font-family:var(--display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-2)}
 .loadseq ol{margin:7px 0 0;padding:0;list-style:none;counter-reset:ls}
 .loadseq li{counter-increment:ls;display:flex;align-items:center;gap:9px;padding:3px 4px;color:var(--ink);border-radius:3px;cursor:default}
-.loadseq li:hover{background:rgba(0,224,255,.08)}
+.loadseq li:hover,.loadseq li:focus-visible{background:rgba(0,224,255,.08);outline:none}
 .loadseq li::before{content:counter(ls);color:var(--cyan);min-width:18px;text-align:right;font-weight:600}
 .ls-dest{color:var(--ink)}
 .ls-scu{margin-left:auto}
