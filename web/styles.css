@@ -400,6 +400,15 @@ tr:hover .lt-replay .lt-act{opacity:1}
 .arch-sum .scu{font-family:var(--mono);font-weight:600;font-size:12px;white-space:nowrap;color:var(--cyan)}
 .arch-sum .scu.pos{color:var(--green)}
 .arch-sum .scu.neg{color:var(--red)}
+/* mobile: scroll the Archive sub-tab bar sideways instead of wrapping (placed after the
+   base .arch-tabs rule above so this override wins on source order). */
+@media (max-width:680px){
+  .arch-tabs{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none}
+  .arch-tabs::-webkit-scrollbar{display:none}
+  .arch-tab{flex:0 0 auto}
+  .arch-sum{flex:0 0 auto}   /* summary follows the last tab (auto-margin collapses when overflowing) */
+}
 .arch-panel{flex:1 1 auto;min-height:0}
 .logcard{margin:0;display:flex;flex-direction:column;min-height:0}
 .logcard > .filtbar,.logcard > .recs{flex:0 0 auto}
