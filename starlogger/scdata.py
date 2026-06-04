@@ -668,6 +668,181 @@ def build_reference_data(p4k: str, sb: str | None = None) -> dict:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+# --------------------------------------------------------------------------- #
+# Mineable rocks: RS (radar signature) + composition
+# --------------------------------------------------------------------------- #
+# Each mineable rock is an EntityClassDefinition under entities/mineable/. Its RS
+# base value (the number the in-game radar shows for one rock; a cluster reads
+# base x count) lives on the SSCSignatureSystemParams component; its mineral makeup
+# is a file ref on the MineableParams component to a MineableComposition preset
+# (a list of elements with min/max % and spawn probability). All three record
+# kinds come out of the one full `dcb extract` -- the values can't be pulled via
+# the cheap `dcb query` path (querying EntityClassDefinition components materialises
+# all ~28k entities, ballooning to multi-GB), so this rides the ship-cargo extract.
+
+def _component(rv: dict, type_name: str) -> dict | None:
+    """First component of the given ``_Type_`` in an entity record value."""
+    for c in (rv.get("Components") or []):
+        if isinstance(c, dict) and c.get("_Type_") == type_name:
+            return c
+    return None
+
+
+def _rs_signature(rv: dict) -> float:
+    """The rock's base RS value: the single non-zero entry of the signature vector
+    (index 4 in practice, but taken as max-nonzero to be robust to slot shuffles)."""
+    sig = _component(rv, "SSCSignatureSystemParams") or {}
+    bsp = (sig.get("radarProperties") or {}).get("baseSignatureParams") or {}
+    sigs = bsp.get("signatures") or []
+    return max((s for s in sigs if isinstance(s, (int, float))), default=0.0)
+
+
+def _ref_basename(ref: str | None) -> str | None:
+    """``file://.../foo.json`` (or ``foo.json?query``) -> ``foo.json`` (lower)."""
+    if not isinstance(ref, str) or not ref:
+        return None
+    return os.path.basename(ref.split("?")[0]).lower()
+
+
+def _index_by_basename(records_root: str, *subdirs: str) -> dict:
+    """{file basename(lower) -> full path} for json anywhere under each
+    ``records_root/**/<subdir>/`` (recursing into nested subfolders, e.g. presets
+    split into ``rockcompositionpresets/asteroidshipmining/``)."""
+    idx: dict[str, str] = {}
+    for sub in subdirs:
+        for p in glob.glob(os.path.join(records_root, "**", sub, "**", "*.json"), recursive=True):
+            idx[os.path.basename(p).lower()] = p
+    return idx
+
+
+def _record_token_name(path: str) -> str:
+    """Friendly name from a record's ``_RecordName_`` token (``MineableElement.Iron_Ore``
+    -> "Iron Ore"); falls back to the filename stem. CamelCase + underscores split."""
+    try:
+        rn = json.load(open(path)).get("_RecordName_", "")
+    except (OSError, ValueError):
+        rn = ""
+    tok = rn.split(".", 1)[1] if "." in rn else (rn or os.path.basename(path)[:-5])
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", tok.replace("_", " ")).strip().title()
+
+
+# Class-name family tokens stripped to get a readable rock label when localisation
+# has no depositName (or for the per-mineral suffix). Order-independent token drop.
+_MINEABLE_NOISE = {"mineablerock", "mineable", "rock", "fps", "groundvehicle", "ground",
+                   "vehicle", "deposit", "felsic", "minable", "asteroid", "legendary",
+                   "epic", "rare", "uncommon", "common", "pure", "small", "large",
+                   "ore", "raw"}
+# Placeholder / dev entities that aren't real mineables -- skip them.
+_MINEABLE_SKIP = re.compile(r"(test|template|dummy|placeholder|abandon|angular_smooth)", re.I)
+
+
+def _mineable_label(cls: str, deposit_name: str) -> str:
+    """Readable rock name. Prefers the localised deposit name (e.g. "Asteroid (C-Type)",
+    "Granite Deposit"), appending the per-mineral suffix from the class only when it adds
+    information the deposit name doesn't already carry (``AsteroidCTypeMineableRock_Iron``
+    -> "Asteroid (C-Type) — Iron"; ``GraniteMineableRock_Granite`` -> "Granite Deposit").
+    Falls back to a best-effort split of the class name when there's no localisation."""
+    toks = [t for t in re.split(r"[_\s]+", re.sub(r"(?<=[a-z])(?=[A-Z])", " ", cls)) if t]
+    mineral_toks = [t for t in toks if t.lower() not in _MINEABLE_NOISE
+                    and not re.fullmatch(r"[A-Za-z]Type", t)]
+    mineral = " ".join(mineral_toks).title().strip()
+    if not deposit_name:
+        return mineral or cls
+    if mineral and mineral.lower() not in deposit_name.lower():
+        return f"{deposit_name} — {mineral}"
+    return deposit_name
+
+
+def _composition(preset_path: str, elem_index: dict, loc: dict,
+                 elem_cache: dict) -> dict:
+    """Parse a MineableComposition preset into {deposit_name, min_distinct, elements}."""
+    try:
+        cv = json.load(open(preset_path))["_RecordValue_"]
+    except (OSError, ValueError, KeyError):
+        return {"deposit_name": "", "min_distinct": 0, "elements": []}
+    elements = []
+    for part in cv.get("compositionArray") or []:
+        base = _ref_basename(part.get("mineableElement"))
+        if base in elem_cache:
+            name = elem_cache[base]
+        else:
+            ep = elem_index.get(base or "")
+            name = elem_cache[base] = _record_token_name(ep) if ep else (base or "")
+        elements.append({
+            "element": name,
+            "min_pct": part.get("minPercentage"),
+            "max_pct": part.get("maxPercentage"),
+            "probability": part.get("probability"),
+        })
+    return {
+        "deposit_name": _loc_text(cv.get("depositName"), loc),
+        "min_distinct": cv.get("minimumDistinctElements") or 0,
+        "elements": elements,
+    }
+
+
+def build_mineables(records_root: str, loc: dict) -> list:
+    """Every mineable rock -> {class, name, deposit_name, rs, min_distinct, composition},
+    read from an extracted DataCore records root (the same one ``build_ships`` uses).
+
+    RS is the rock's base radar signature; the in-game HUD shows ``rs x cluster size``.
+    Composition is the probabilistic mineral makeup of the rock's class. Rocks with no
+    RS (a handful of test/placeholder entities) are skipped."""
+    comp_index = _index_by_basename(records_root, "rockcompositionpresets")
+    elem_index = _index_by_basename(records_root, "mineableelements")
+    comp_cache: dict[str, dict] = {}
+    elem_cache: dict[str, str] = {}
+    rocks: list[dict] = []
+    for p in glob.glob(os.path.join(records_root, "**", "entities", "mineable", "*.json"),
+                       recursive=True):
+        try:
+            d = json.load(open(p))
+            rv = d["_RecordValue_"]
+            cls = d["_RecordName_"].split(".", 1)[1]
+        except (OSError, ValueError, KeyError, IndexError):
+            continue
+        if _MINEABLE_SKIP.search(cls):
+            continue
+        rs = _rs_signature(rv)
+        if rs <= 0:
+            continue
+        mp = _component(rv, "MineableParams") or {}
+        comp_base = _ref_basename(mp.get("composition"))
+        if comp_base and comp_base in comp_cache:
+            comp = comp_cache[comp_base]
+        elif comp_base and comp_base in comp_index:
+            comp = comp_cache[comp_base] = _composition(comp_index[comp_base], elem_index,
+                                                        loc, elem_cache)
+        else:
+            comp = {"deposit_name": "", "min_distinct": 0, "elements": []}
+        rocks.append({
+            "class": cls,
+            "name": _mineable_label(cls, comp["deposit_name"]),
+            "deposit_name": comp["deposit_name"],
+            "rs": round(rs),
+            "min_distinct": comp["min_distinct"],
+            "composition": comp["elements"],
+        })
+    rocks.sort(key=lambda r: (r["rs"], r["class"]))
+    return rocks
+
+
+def build_mineables_from_p4k(p4k: str, sb: str | None = None,
+                             progress=lambda m: None) -> list:
+    """Full-extract orchestrator: extract the DataCore + localisation from the local
+    install and build the mineable-rock list. Heavy (a full ``dcb extract``), so gated on
+    a major game-version bump like ship cargo -- see ``shipcargo.refresh_loop``."""
+    sb = sb or ensure_binary()
+    workdir = tempfile.mkdtemp(prefix="starlogger-mineables-")
+    try:
+        progress("extracting DataCore for mineables")
+        recs = extract_records(workdir, p4k, sb)
+        loc = load_localization(recs)
+        return build_mineables(recs, loc)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 def _pad_block(short: int, x0: int) -> dict:
     """Represent `short` phantom SCU (capacity we know from an override but can't place
     from geometry) as one reasonably-shaped block at x=x0, instead of a 1×N strip that

@@ -21,6 +21,10 @@ SHIP_CARGO_PATH = os.path.join(DATA_DIR, "ships_cargo.json")
 # Commodity GUID->name and location code->name, built together from Data.p4k and
 # kept in one file (see reference.py). Was commodities.json + locations.json.
 REFERENCE_PATH = os.path.join(DATA_DIR, "reference.json")
+# Mineable-rock RS (radar signature) + composition, built from the full DataCore
+# extract (its own file/trigger, like ships_cargo.json -- the data can't be pulled
+# via the cheap query path reference.json uses). See mineables.py.
+MINEABLES_PATH = os.path.join(DATA_DIR, "mineables.json")
 TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")

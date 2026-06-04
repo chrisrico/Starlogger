@@ -136,7 +136,18 @@ def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
         else:
             ref_reason = None
 
-        if reason or ref_reason:
+        # Mineable-rock RS + composition. Built from a full DataCore extract (its own
+        # file/trigger -- the RS value can't be pulled via the cheap reference query),
+        # gated like ship cargo: rebuild when missing or the major version moved on.
+        from . import mineables
+        if not mineables.load_mineables().get("rocks"):
+            min_reason = "no cache"
+        elif ver and major_version(ver) != major_version(mineables.mineables_version()):
+            min_reason = f"version {mineables.mineables_version() or '?'} -> {ver}"
+        else:
+            min_reason = None
+
+        if reason or ref_reason or min_reason:
             p4k = scdata.find_p4k(log_path)
             if not p4k:
                 print("[ship cargo] skip refresh: Data.p4k not found next to Game.log")
@@ -161,4 +172,13 @@ def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
                               f"{len(ref['station_names'])} stations ({ref_reason})")
                     except Exception as e:
                         print(f"[reference] build failed: {e}")
+                if min_reason:
+                    try:
+                        print(f"[mineables] rebuilding from local install ({min_reason}) -- niced, ~minutes")
+                        rocks = scdata.build_mineables_from_p4k(p4k)
+                        if rocks:
+                            mineables.save_mineables(rocks, game_version=ver)
+                            print(f"[mineables] built {len(rocks)} mineable rocks ({min_reason})")
+                    except Exception as e:
+                        print(f"[mineables] build failed: {e}")
         stop.wait(300)  # re-check for a version bump (e.g. after a patch + relaunch)

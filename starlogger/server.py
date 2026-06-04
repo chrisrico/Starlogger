@@ -11,6 +11,7 @@ from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_field, set_leg_states, write_override
 from .replay import build_timeline, snapshot_at
 from .settings import set_setting
+from .mineables import load_mineables, lookup_rs
 from .shipcargo import load_ship_cargo
 from .tradeflags import set_lost
 from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot
@@ -76,6 +77,26 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
         # The whole cargo-grid database (name → {scu, manufacturer, groups}) plus
         # its metadata — backs the all-ships debug page at /grids.html.
         return jsonify(load_ship_cargo())
+
+    @app.get("/api/rock-lookup")
+    def api_rock_lookup():
+        # Reverse-map an observed radar RS reading to candidate mineable rock
+        # class(es), the inferred cluster size (HUD value ≈ base_rs × count), and each
+        # class's probabilistic mineral makeup. ?rs=<number> required. With no rs, just
+        # returns the full mineable catalog (count + game_version) for browsing.
+        raw = request.args.get("rs")
+        if raw is None:
+            data = load_mineables()
+            return jsonify({"count": data.get("count", len(data.get("rocks", []))),
+                            "game_version": data.get("game_version"),
+                            "rocks": data.get("rocks", [])})
+        try:
+            rs = float(raw)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "rs must be a number"}), 400
+        if rs <= 0:
+            return jsonify({"ok": False, "error": "rs must be positive"}), 400
+        return jsonify({"rs": rs, "candidates": lookup_rs(rs)})
 
     @app.post("/api/select-ship")
     def api_select_ship():
