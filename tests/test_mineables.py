@@ -139,6 +139,74 @@ def test_lookup_rs_rejects_non_multiples_and_bad_input(tmp_path):
     assert mineables.lookup_rs("abc", path=path) == []
 
 
+def _save_rich_catalog(path: str) -> None:
+    """A catalog with real composition, for the forward/index/plan/decompose features."""
+    def comp(*parts):
+        return [{"element": e, "min_pct": lo, "max_pct": hi, "probability": pr}
+                for e, lo, hi, pr in parts]
+    mineables.save_mineables([
+        {"class": "AsteroidCTypeMineableRock_Iron", "name": "Asteroid (C-Type) — Iron",
+         "deposit_name": "Asteroid (C-Type)", "rs": 4700, "min_distinct": 2,
+         "composition": comp(("Iron Ore", 30, 70, 1.0), ("Gold Ore", 20, 50, 0.1),
+                             ("Bexalite Raw", 20, 50, 0.5))},
+        {"class": "AsteroidSTypeMineableRock_Gold", "name": "Asteroid (S-Type) — Gold",
+         "deposit_name": "Asteroid (S-Type)", "rs": 4720, "min_distinct": 2,
+         "composition": comp(("Gold Ore", 40, 80, 1.0), ("Bexalite Raw", 10, 30, 0.3))},
+        {"class": "FelsicMineableRock_Iron", "name": "Felsic Deposit — Iron",
+         "deposit_name": "Felsic Deposit", "rs": 4000, "min_distinct": 2,
+         "composition": comp(("Iron Ore", 20, 60, 0.8))},
+    ], game_version="4.8", path=path)
+    mineables._cache["mtime"] = None
+
+
+def test_lookup_mineral_ranks_sources_and_lists_signatures(tmp_path):
+    path = str(tmp_path / "mineables.json")
+    _save_rich_catalog(path)
+    res = mineables.lookup_mineral("gold", path=path)
+    # both gold-bearing rocks, richest first (S-Type gold: 1.0*60=60 > C-Type gold: 0.1*35=3.5)
+    assert [r["name"] for r in res["rocks"]] == ["Asteroid (S-Type) — Gold",
+                                                 "Asteroid (C-Type) — Iron"]
+    assert res["signatures"] == [4700, 4720]   # the RS values to hunt for gold
+    assert res["rocks"][0]["score"] == 60.0
+    assert mineables.lookup_mineral("", path=path)["rocks"] == []
+
+
+def test_mineral_index_maps_each_mineral_to_rocks(tmp_path):
+    path = str(tmp_path / "mineables.json")
+    _save_rich_catalog(path)
+    idx = {e["mineral"]: e for e in mineables.mineral_index(path=path)}
+    assert set(idx) == {"Iron Ore", "Gold Ore", "Bexalite Raw"}
+    assert idx["Iron Ore"]["count"] == 2
+    assert idx["Iron Ore"]["signatures"] == [4000, 4700]
+
+
+def test_decompose_rs_homogeneous_and_mixed(tmp_path):
+    path = str(tmp_path / "mineables.json")
+    _save_rich_catalog(path)
+    # 9400 -> two C-type (4700) rocks, exact
+    homo = mineables.decompose_rs(9400, path=path)
+    assert any(c["parts"] == [{"base_rs": 4700, "count": 2,
+                               "names": ["Asteroid (C-Type)"]}] for c in homo)
+    # 9420 -> one C-type + one S-type (4700+4720), exact mixed cluster
+    mixed = mineables.decompose_rs(9420, path=path)
+    two = [c for c in mixed if len(c["parts"]) == 2 and c["residual"] == 0]
+    assert two and {p["base_rs"] for p in two[0]["parts"]} == {4700, 4720}
+    assert mineables.decompose_rs(0, path=path) == []
+
+
+def test_mining_plan_coverage_ranks_multi_ingredient_deposits(tmp_path):
+    path = str(tmp_path / "mineables.json")
+    _save_rich_catalog(path)
+    plan = mineables.mining_plan(["Gold", "Bexalite", "Iron"], path=path)
+    assert plan["targets"] == ["Gold", "Bexalite", "Iron"]
+    top = plan["coverage"][0]
+    # C-Type yields all three -> ranks first
+    assert top["deposit"] == "Asteroid (C-Type)" and top["n_covers"] == 3
+    assert top["covers"] == ["Bexalite", "Gold", "Iron"]
+    # per-mineral sourcing is present for each requested ingredient
+    assert {p["mineral"] for p in plan["per_mineral"]} == {"Gold", "Bexalite", "Iron"}
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

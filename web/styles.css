@@ -689,4 +689,46 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .cg-ship > h3 .cg-cap{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--cyan)}
 .cg-ship > h3 b{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.04em}
 
+/* ---- Mining tab (RS / composition tools) ---- */
+.mining{display:flex;flex-direction:column;gap:14px}
+.msubbar{display:flex;gap:6px;flex-wrap:wrap}
+.msub{background:transparent;color:var(--ink-2);border:1px solid var(--line);border-radius:3px;
+  padding:7px 14px;font-family:var(--display);font-size:13px;letter-spacing:.04em;cursor:pointer}
+.msub:hover{color:var(--ink);border-color:var(--line-2)}
+.msub.active{color:#04121d;background:var(--cyan);border-color:var(--cyan);font-weight:600}
+.mtool .mform{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:4px 16px 6px}
+.mtool .mform.col{flex-direction:column;align-items:stretch}
+.mtool .mform label{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.mtool .mform label .mn-dim{text-transform:none;letter-spacing:0}
+.mining input,.mining textarea{background:var(--void);border:1px solid var(--line-2);color:var(--ink);
+  border-radius:2px;padding:8px 10px;font-family:var(--mono);font-size:13px}
+.mining input[type=number]{width:140px}
+.mining input#mf-name{min-width:200px}
+.mining textarea{resize:vertical;width:100%}
+.mining input:focus,.mining textarea:focus{outline:none;border-color:var(--cyan);
+  box-shadow:0 0 0 2px rgba(79,220,255,.18)}
+.mining button{background:transparent;border:1px solid var(--line-2);color:var(--ink);
+  border-radius:2px;padding:8px 14px;font-family:var(--display);font-size:13px;cursor:pointer}
+.mining button:hover{border-color:var(--cyan);color:var(--cyan)}
+.mining button.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan);font-weight:600}
+.mining button.primary:hover{box-shadow:0 0 16px rgba(79,220,255,.5);color:#04121d}
+.mtool .mform.col button{align-self:flex-start}
+.mhint{margin:2px 16px 12px;color:var(--ink-2);font-size:12px;line-height:1.5}
+.mhint code{font-family:var(--mono);color:var(--cyan);font-size:11.5px}
+.mres{display:flex;flex-direction:column;gap:12px}
+.mres-h{font-family:var(--display);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin-top:4px}
+.mcand-body{padding:4px 16px 14px;display:flex;flex-direction:column;gap:9px}
+.mrow{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;line-height:1.5}
+.mrow .mk{flex:0 0 auto;min-width:120px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-3)}
+.mels{display:flex;flex-wrap:wrap;gap:6px}
+.mn-el{font-family:var(--mono);font-size:11.5px;color:var(--ink-1);background:var(--panel-2);
+  border:1px solid var(--line);border-radius:3px;padding:2px 7px}
+.mn-el b{color:var(--ink);font-weight:600}
+.mn-pct{color:var(--ink-2)}
+.mn-prob{color:var(--amber)}
+.mn-dim{color:var(--ink-3)}
+.mplan-srcs{padding:6px 16px 14px;display:flex;flex-direction:column;gap:10px}
+
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}

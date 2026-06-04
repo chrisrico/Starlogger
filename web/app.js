@@ -85,7 +85,7 @@ const th = (label, num) => `<th${num ? ' class="lt-num"' : ""}>${label}</th>`;
 const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
 
 // ---- tabs (with URL-hash deep-linking) ---- //
-const TABS = ["loading", "unloading", "routes", "missions", "grid", "history"];
+const TABS = ["loading", "unloading", "routes", "missions", "grid", "history", "mining"];
 function activateTab(name) {
   if (!TABS.includes(name)) return;
   TAB = name;
@@ -100,6 +100,7 @@ function activateTab(name) {
   closeNav();                                  // collapse the mobile dropdown after a pick
   const lbl = $("navtoggle-label"); if (lbl) lbl.textContent = label;  // reflect the tab on the toggle
   if (name === "history") { ARCH_PICK = true; loadSessions(); }
+  if (name === "mining") initMining();
 }
 // Mobile hamburger: the nav collapses to a dropdown under the toggle (CSS @media).
 function closeNav() {
@@ -1615,3 +1616,216 @@ setInterval(refresh, 3000);
   }
   window.addEventListener("resize", sync);
 })();
+
+// ============================================================================ //
+// Mining tab — RS (radar signature) + composition tools. Self-contained and
+// independent of the live /api/state poll: it reads the p4k-derived mineables
+// catalog via /api/{rock-lookup,rock-decompose,mineral-lookup,mineral-index,
+// mining-plan}. The shell (sub-tab bar + the active tool's inputs + an empty
+// #mining-results) is rendered once per sub-tab switch; submitting a query only
+// repaints #mining-results, so the inputs keep focus/value.
+// ============================================================================ //
+let MINING_SUB = "identify";       // identify | find | plan
+let MINING_MINERALS = null;        // cached mineral names for the autocomplete
+let MINING_INIT = false;
+
+async function initMining() {
+  if (!MINING_INIT) {
+    MINING_INIT = true;
+    try {
+      MINING_MINERALS = (await (await fetch("/api/minerals", { cache: "no-store" })).json()).minerals || [];
+    } catch (e) { MINING_MINERALS = []; }
+  }
+  renderMiningShell();
+}
+function miningSub(sub) { MINING_SUB = sub; renderMiningShell(); }
+
+const _pct = (x) => (x == null ? "?" : Math.round(x));
+const _chance = (p) => (p == null ? "" : Math.round(p * 100) + "%");
+
+function renderMiningShell() {
+  const subs = [["identify", "Identify rock"], ["find", "Find mineral"], ["plan", "Blueprint plan"]];
+  const bar = subs.map(([k, t]) =>
+    `<button class="msub${MINING_SUB === k ? " active" : ""}" onclick="miningSub('${k}')">${t}</button>`).join("");
+  const tool = MINING_SUB === "identify" ? identifyToolHtml()
+    : MINING_SUB === "find" ? findToolHtml() : planToolHtml();
+  const datalist = `<datalist id="dl_mineral">${(MINING_MINERALS || [])
+    .map(m => `<option value="${esc(m)}">`).join("")}</datalist>`;
+  setHTML("mining", `${datalist}<div class="mining">
+    <div class="msubbar">${bar}</div>
+    ${tool}
+    <div id="mining-results" class="mres"></div>
+  </div>`);
+}
+
+// small shared bits ---------------------------------------------------------- //
+function elBadge(e) {
+  return `<span class="mn-el"><b>${esc(e.element)}</b>` +
+    ` <span class="mn-pct">${_pct(e.min_pct)}–${_pct(e.max_pct)}%</span>` +
+    (e.probability != null ? ` <span class="mn-prob">${_chance(e.probability)}</span>` : "") + `</span>`;
+}
+// Dedupe a rock list's composition to the distinct possible minerals (keep the
+// richest occurrence), so an ambiguous RS shows "what might be in there".
+function mineralUnion(rocks) {
+  const m = new Map();
+  for (const r of rocks || []) for (const e of r.composition || []) {
+    const cur = m.get(e.element);
+    if (!cur || (e.probability || 0) > (cur.probability || 0)) m.set(e.element, e);
+  }
+  return [...m.values()].sort((a, b) => (b.probability || 0) - (a.probability || 0));
+}
+
+// ---- Identify: RS reading → rock class(es), cluster size, possible minerals ---- //
+function identifyToolHtml() {
+  return `<div class="card mtool"><h3><span>RS reading → rock</span></h3>
+    <div class="mform">
+      <input id="mi-rs" type="number" min="1" step="1" inputmode="numeric" placeholder="e.g. 9400"
+        aria-label="Radar signature reading" onkeydown="if(event.key==='Enter')miningIdentify()">
+      <button class="primary" onclick="miningIdentify()">Identify</button>
+    </div>
+    <p class="mhint">The radar number is <code>base RS × number of rocks</code>. RS identifies the rock
+      <b>class</b>, not the exact mineral — many classes share a base, so a reading can be ambiguous.</p>
+  </div>`;
+}
+async function miningIdentify() {
+  const v = parseFloat(($("mi-rs") || {}).value);
+  if (!(v > 0)) { setHTML("mining-results", `<div class="empty">Enter a positive RS reading.</div>`); return; }
+  setHTML("mining-results", `<div class="empty">scanning…</div>`);
+  try {
+    const [look, dec] = await Promise.all([
+      fetch(`/api/rock-lookup?rs=${v}`).then(r => r.json()),
+      fetch(`/api/rock-decompose?rs=${v}`).then(r => r.json()),
+    ]);
+    setHTML("mining-results", identifyResultHtml(v, look.candidates || [], dec.combos || []));
+  } catch (e) { setHTML("mining-results", `<div class="empty">lookup failed</div>`); }
+}
+function identifyResultHtml(v, candidates, combos) {
+  if (!candidates.length && !combos.length)
+    return `<div class="empty">Nothing reads RS ${num(v)} as a clean cluster.</div>`;
+  let html = "";
+  if (candidates.length) {
+    html += `<div class="mres-h">Single-class readings</div>`;
+    html += candidates.map(c => {
+      const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
+      const minerals = mineralUnion(c.rocks);
+      const extra = deps.length > 1 ? ` <span class="mn-dim">+${deps.length - 1} more</span>` : "";
+      return `<div class="card mcand">
+        <h3><span>${c.count} × <b>${esc(deps[0])}</b>${extra}</span>
+            <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>
+        <div class="mcand-body">
+          ${deps.length > 1 ? `<div class="mrow"><span class="mk">reads as</span>
+             <div class="mels">${deps.map(d => tag(d)).join(" ")}</div></div>` : ""}
+          <div class="mrow"><span class="mk">possible minerals</span>
+            <div class="mels">${minerals.map(elBadge).join("") || '<span class="mn-dim">—</span>'}</div></div>
+        </div></div>`;
+    }).join("");
+  }
+  const mixed = combos.filter(c => c.parts.length > 1);
+  if (mixed.length) {
+    html += `<div class="mres-h">Mixed-cluster interpretations</div><div class="card">` + logTable(
+      th("Cluster") + th("Total RS", true) + th("Rocks", true),
+      mixed.slice(0, 12).map(c =>
+        `<tr><td>${c.parts.map(p => `${p.count}× ${esc(p.names[0] || ("RS " + p.base_rs))}`).join(" + ")}</td>` +
+        `<td class="lt-num">${num(c.total)}</td><td class="lt-num">${c.count}</td></tr>`).join(""),
+      "") + `</div>`;
+  }
+  return html;
+}
+
+// ---- Find: mineral → RS to scan for + ranked source rocks (+ browse all) ---- //
+function findToolHtml() {
+  return `<div class="card mtool"><h3><span>Mineral → where to mine</span></h3>
+    <div class="mform">
+      <input id="mf-name" list="dl_mineral" placeholder="e.g. Bexalite" autocomplete="off"
+        aria-label="Mineral name" onkeydown="if(event.key==='Enter')miningFind()">
+      <button class="primary" onclick="miningFind()">Find</button>
+      <button onclick="miningIndex()">Browse all</button>
+    </div>
+    <p class="mhint">Shows the RS value(s) to scan for and the richest source rocks, ranked by
+      probability × yield.</p>
+  </div>`;
+}
+async function miningFind() {
+  const name = (($("mf-name") || {}).value || "").trim();
+  if (!name) { setHTML("mining-results", `<div class="empty">Enter or pick a mineral.</div>`); return; }
+  setHTML("mining-results", `<div class="empty">searching…</div>`);
+  try {
+    const r = await fetch(`/api/mineral-lookup?name=${encodeURIComponent(name)}`).then(x => x.json());
+    setHTML("mining-results", findResultHtml(r));
+  } catch (e) { setHTML("mining-results", `<div class="empty">lookup failed</div>`); }
+}
+function findResultHtml(r) {
+  if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
+  const sigs = (r.signatures || []).map(s => tag("RS " + num(s))).join(" ");
+  const rows = r.rocks.map(x => `<tr>
+    <td class="lt-num">${num(x.rs)}</td><td>${esc(x.name)}</td>
+    <td class="lt-num">${_pct(x.min_pct)}–${_pct(x.max_pct)}%</td>
+    <td class="lt-num">${_chance(x.probability)}</td><td class="lt-num">${x.score}</td></tr>`).join("");
+  return `<div class="card">
+    <div class="mrow"><span class="mk">scan for</span> <div class="mels">${sigs}</div></div>
+    ${logTable(th("RS", true) + th("Rock") + th("Yield %", true) + th("Chance", true) + th("Score", true), rows, "")}
+  </div>`;
+}
+async function miningIndex() {
+  setHTML("mining-results", `<div class="empty">loading…</div>`);
+  try {
+    const r = await fetch("/api/mineral-index").then(x => x.json());
+    setHTML("mining-results", indexResultHtml(r.minerals || []));
+  } catch (e) { setHTML("mining-results", `<div class="empty">load failed</div>`); }
+}
+function indexResultHtml(minerals) {
+  if (!minerals.length) return `<div class="empty">No mineral data.</div>`;
+  const rows = minerals.map(m => `<tr>
+    <td><b>${esc(m.mineral)}</b></td>
+    <td>${(m.signatures || []).slice(0, 8).map(num).join(", ")}</td>
+    <td>${m.rocks.slice(0, 4).map(x => esc(x.name)).join("; ")}${m.rocks.length > 4 ? ` <span class="mn-dim">…+${m.rocks.length - 4}</span>` : ""}</td>
+  </tr>`).join("");
+  return `<div class="card"><h3><span>All minerals → source rocks</span><span class="scu">${minerals.length}</span></h3>` +
+    logTable(th("Mineral") + th("RS to scan") + th("Best sources"), rows, "") + `</div>`;
+}
+
+// ---- Plan: wanted minerals → deposit coverage + per-ingredient sources ---- //
+function planToolHtml() {
+  return `<div class="card mtool"><h3><span>Blueprint mining plan</span></h3>
+    <div class="mform col">
+      <label for="mp-list">Wanted minerals <span class="mn-dim">(one per line, or comma-separated)</span></label>
+      <textarea id="mp-list" rows="4" placeholder="Quantainium&#10;Bexalite&#10;Gold"></textarea>
+      <button class="primary" onclick="miningPlan()">Build plan</button>
+    </div>
+    <p class="mhint">Ranks rock deposits by how many of your ingredients each can yield, so one stop
+      covers more of the list.</p>
+  </div>`;
+}
+async function miningPlan() {
+  const raw = ($("mp-list") || {}).value || "";
+  const minerals = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  if (!minerals.length) { setHTML("mining-results", `<div class="empty">Enter at least one mineral.</div>`); return; }
+  setHTML("mining-results", `<div class="empty">planning…</div>`);
+  try {
+    const r = await fetch("/api/mining-plan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ minerals }),
+    }).then(x => x.json());
+    setHTML("mining-results", planResultHtml(r));
+  } catch (e) { setHTML("mining-results", `<div class="empty">plan failed</div>`); }
+}
+function planResultHtml(r) {
+  const targets = r.targets || [];
+  if (!targets.length) return `<div class="empty">No minerals given.</div>`;
+  const covRows = (r.coverage || []).slice(0, 15).map(c => `<tr>
+    <td><b>${esc(c.deposit)}</b></td>
+    <td class="lt-num">${c.n_covers}/${targets.length}</td>
+    <td>${c.covers.map(x => tag(x)).join(" ")}</td>
+    <td>${(c.signatures || []).map(num).join(", ")}</td></tr>`).join("");
+  const srcs = (r.per_mineral || []).map(p => {
+    const best = (p.rocks || []).slice(0, 3).map(x =>
+      `${esc(x.name)} <span class="mn-dim">(RS ${num(x.rs)}${x.probability != null ? ", " + _chance(x.probability) : ""})</span>`).join("<br>");
+    return `<div class="mrow"><span class="mk">${esc(p.mineral)}</span>
+      <div>${best || '<span class="mn-dim">no source found</span>'}</div></div>`;
+  }).join("");
+  return `<div class="card"><h3><span>Best deposits — by coverage</span></h3>
+      ${logTable(th("Deposit") + th("Covers", true) + th("Ingredients") + th("RS"), covRows,
+        "No deposit yields any of these minerals.")}
+    </div>
+    <div class="card"><h3><span>Per-ingredient sources</span></h3><div class="mplan-srcs">${srcs}</div></div>`;
+}

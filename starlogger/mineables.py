@@ -42,6 +42,12 @@ def load_mineables(path: str = MINEABLES_PATH) -> dict:
     return load_cached(path, _cache)
 
 
+def catalog(path: str = MINEABLES_PATH) -> list:
+    """The mineable-rock list (each {class, name, deposit_name, rs, min_distinct,
+    composition}); empty until the cache is built."""
+    return (load_mineables(path) or {}).get("rocks") or []
+
+
 def mineables_version(path: str = MINEABLES_PATH) -> str | None:
     """Game version the data was built for -- gates the rebuild on a major bump."""
     return (load_mineables(path) or {}).get("game_version")
@@ -65,7 +71,7 @@ def lookup_rs(rs_value: float, tol: float = 0.5, max_count: int = 500,
         return []
     if rs_value <= 0:
         return []
-    rocks = (load_mineables(path) or {}).get("rocks") or []
+    rocks = catalog(path)
     by_base: dict[int, list] = {}
     for r in rocks:
         by_base.setdefault(int(r["rs"]), []).append(r)
@@ -92,3 +98,154 @@ def lookup_rs(rs_value: float, tol: float = 0.5, max_count: int = 500,
         })
     out.sort(key=lambda c: (c["residual"], c["count"]))
     return out
+
+
+def _yield_score(part: dict) -> float:
+    """A rough "how good a source is this" score for one mineral in a rock: spawn
+    probability x the midpoint of its percentage range. Used to rank sources."""
+    p = part.get("probability") or 0
+    lo = part.get("min_pct") or 0
+    hi = part.get("max_pct") or 0
+    return round(p * (lo + hi) / 2.0, 1)
+
+
+def all_minerals(path: str = MINEABLES_PATH) -> list:
+    """Sorted distinct mineral-element names across every rock (for autocomplete)."""
+    names = {e["element"] for r in catalog(path) for e in r["composition"] if e.get("element")}
+    return sorted(names)
+
+
+def _source_row(rock: dict, part: dict) -> dict:
+    """One 'rock X yields mineral Y' row: where to find it (rs/name) + how richly."""
+    return {
+        "class": rock["class"], "name": rock["name"], "deposit_name": rock["deposit_name"],
+        "rs": rock["rs"], "element": part.get("element"),
+        "min_pct": part.get("min_pct"), "max_pct": part.get("max_pct"),
+        "probability": part.get("probability"), "score": _yield_score(part),
+    }
+
+
+def lookup_mineral(name: str, path: str = MINEABLES_PATH) -> dict:
+    """Forward lookup: a mineral -> the rocks that yield it and the RS value(s) to hunt
+    for. Case-insensitive substring match on the element name. Returns
+    ``{mineral, signatures: [rs...], rocks: [source-row...]}`` with rocks ranked by yield
+    score (richest source first), so you know both *what number* to scan for and *which
+    rock* is the best source."""
+    q = (name or "").strip().lower()
+    if not q:
+        return {"mineral": name, "signatures": [], "rocks": []}
+    rows, sigs = [], set()
+    for r in catalog(path):
+        for e in r["composition"]:
+            if q in (e.get("element") or "").lower():
+                rows.append(_source_row(r, e))
+                sigs.add(r["rs"])
+    rows.sort(key=lambda x: (-x["score"], x["rs"], x["deposit_name"]))
+    return {"mineral": name, "signatures": sorted(sigs), "rocks": rows}
+
+
+def mineral_index(path: str = MINEABLES_PATH) -> list:
+    """Every mineral -> the rocks that contain it: ``[{mineral, count, signatures,
+    rocks: [source-row...]}]`` sorted by mineral name (rocks ranked by yield score). The
+    full reverse map from ingredient to where it's mined."""
+    idx: dict[str, list] = {}
+    for r in catalog(path):
+        for e in r["composition"]:
+            el = e.get("element")
+            if el:
+                idx.setdefault(el, []).append(_source_row(r, e))
+    out = []
+    for mineral, rows in idx.items():
+        rows.sort(key=lambda x: (-x["score"], x["rs"]))
+        out.append({"mineral": mineral, "count": len(rows),
+                    "signatures": sorted({x["rs"] for x in rows}), "rocks": rows})
+    out.sort(key=lambda x: x["mineral"])
+    return out
+
+
+def _combo(parts: list, value: float, by_base: dict) -> dict:
+    """Package a list of (base_rs, count) tuples into a decompose result, attaching the
+    deposit names that read at each base so the cluster can be identified."""
+    total = sum(b * c for b, c in parts)
+    return {
+        "count": sum(c for _, c in parts),
+        "total": total,
+        "residual": round(abs(value - total), 2),
+        "parts": [{"base_rs": b, "count": c, "names": sorted(by_base.get(b, []))[:8]}
+                  for b, c in sorted(parts)],
+    }
+
+
+def decompose_rs(value: float, tol: float = 0.5, max_rocks: int = 8,
+                 max_results: int = 40, path: str = MINEABLES_PATH) -> list:
+    """Break an observed RS reading into plausible clusters: homogeneous (one rock class
+    x count) and two-class mixes whose base RS values sum to the reading within ``tol``.
+    Because the ship-mining asteroid bases sit close together, a single reading can decode
+    several ways -- this enumerates them, capped to two distinct classes and ``max_rocks``
+    total (3+ class mixes explode and aren't actionable). Sorted fewest-residual, then
+    fewest rocks. ``parts`` carries the deposit names reading at each base."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return []
+    if value <= 0:
+        return []
+    by_base: dict[int, set] = {}
+    for r in catalog(path):
+        by_base.setdefault(int(r["rs"]), set()).add(r["deposit_name"] or r["name"])
+    bases = sorted(by_base)
+    combos, seen = [], set()
+    n = len(bases)
+    for i in range(n):
+        b1 = bases[i]
+        for c1 in range(1, min(max_rocks, int((value + tol) // b1)) + 1):
+            rem = value - b1 * c1
+            if abs(rem) <= tol:                       # homogeneous
+                key = ((b1, c1),)
+                if key not in seen:
+                    seen.add(key)
+                    combos.append(_combo([(b1, c1)], value, by_base))
+            if rem <= tol:
+                continue
+            for j in range(i + 1, n):                 # + a second, distinct class
+                b2 = bases[j]
+                c2 = round(rem / b2)
+                if c2 < 1 or c1 + c2 > max_rocks:
+                    continue
+                if abs(value - (b1 * c1 + b2 * c2)) <= tol:
+                    key = tuple(sorted([(b1, c1), (b2, c2)]))
+                    if key not in seen:
+                        seen.add(key)
+                        combos.append(_combo([(b1, c1), (b2, c2)], value, by_base))
+    combos.sort(key=lambda c: (c["residual"], c["count"], len(c["parts"])))
+    return combos[:max_results]
+
+
+def mining_plan(minerals: list, path: str = MINEABLES_PATH) -> dict:
+    """Turn a list of wanted minerals (e.g. a blueprint's ingredients) into a mining plan:
+    per mineral, the best source rocks + RS to scan for; and a *coverage* ranking of rock
+    deposit types by how many of the wanted minerals each can yield (so one stop can cover
+    several ingredients). Returns ``{targets, per_mineral, coverage}``."""
+    targets = [m.strip() for m in (minerals or []) if m and m.strip()]
+    per_mineral = []
+    for m in targets:
+        res = lookup_mineral(m, path)
+        per_mineral.append({"mineral": m, "signatures": res["signatures"],
+                            "rocks": res["rocks"][:6]})
+
+    cov: dict[str, dict] = {}
+    for r in catalog(path):
+        deposit = r["deposit_name"] or r["name"]
+        for e in r["composition"]:
+            el = (e.get("element") or "").lower()
+            for t in targets:
+                if t.lower() in el:
+                    d = cov.setdefault(deposit, {"covers": set(), "rs": set(), "score": 0.0})
+                    d["covers"].add(t)
+                    d["rs"].add(r["rs"])
+                    d["score"] += _yield_score(e)
+    coverage = [{"deposit": dep, "covers": sorted(v["covers"]), "n_covers": len(v["covers"]),
+                 "signatures": sorted(v["rs"]), "score": round(v["score"], 1)}
+                for dep, v in cov.items()]
+    coverage.sort(key=lambda x: (-x["n_covers"], -x["score"]))
+    return {"targets": targets, "per_mineral": per_mineral, "coverage": coverage}

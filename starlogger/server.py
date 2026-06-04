@@ -11,7 +11,8 @@ from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_field, set_leg_states, write_override
 from .replay import build_timeline, snapshot_at
 from .settings import set_setting
-from .mineables import load_mineables, lookup_rs
+from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
+                        lookup_rs, mineral_index, mining_plan)
 from .shipcargo import load_ship_cargo
 from .tradeflags import set_lost
 from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot
@@ -97,6 +98,44 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
         if rs <= 0:
             return jsonify({"ok": False, "error": "rs must be positive"}), 400
         return jsonify({"rs": rs, "candidates": lookup_rs(rs)})
+
+    @app.get("/api/rock-decompose")
+    def api_rock_decompose():
+        # Break an RS reading into plausible homogeneous + 2-class mixed clusters.
+        try:
+            rs = float(request.args.get("rs", ""))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "rs must be a number"}), 400
+        if rs <= 0:
+            return jsonify({"ok": False, "error": "rs must be positive"}), 400
+        return jsonify({"rs": rs, "combos": decompose_rs(rs)})
+
+    @app.get("/api/minerals")
+    def api_minerals():
+        # Distinct mineral names (autocomplete for the forward lookup + blueprint plan).
+        return jsonify({"minerals": all_minerals()})
+
+    @app.get("/api/mineral-lookup")
+    def api_mineral_lookup():
+        # Forward lookup: a mineral → the RS value(s) to scan for and ranked source rocks.
+        name = request.args.get("name", "")
+        if not name.strip():
+            return jsonify({"ok": False, "error": "name is required"}), 400
+        return jsonify(lookup_mineral(name))
+
+    @app.get("/api/mineral-index")
+    def api_mineral_index():
+        # The full mineral → rocks reverse map.
+        return jsonify({"minerals": mineral_index()})
+
+    @app.post("/api/mining-plan")
+    def api_mining_plan():
+        # Blueprint plan: wanted minerals → per-mineral sourcing + deposit coverage ranking.
+        payload = request.get_json(force=True, silent=True) or {}
+        minerals = payload.get("minerals")
+        if not isinstance(minerals, list):
+            return jsonify({"ok": False, "error": "minerals must be a list"}), 400
+        return jsonify(mining_plan([str(m) for m in minerals]))
 
     @app.post("/api/select-ship")
     def api_select_ship():
