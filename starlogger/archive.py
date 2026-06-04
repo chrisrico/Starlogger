@@ -28,9 +28,9 @@ _cache = {"mtime": None, "data": []}
 _write_lock = threading.Lock()  # serialize sessions.json writers (live tailer + backfill)
 
 # Bump when build_summary() gains a field that existing archives should acquire. The
-# backfill records this version per processed logbackup (backfill_index.json) and
-# re-parses any backup stamped with an older schema, refreshing its session(s) in
-# sessions.json — so a deploy that adds a summary field still self-heals history.
+# backfill records this version per processed logbackup (the `backfill` map in
+# sessions.json) and re-parses any backup stamped with an older schema, refreshing its
+# session(s) — so a deploy that adds a summary field still self-heals history.
 ARCHIVE_SCHEMA = 1
 
 
@@ -176,6 +176,28 @@ def filter_sessions(sessions: list, trade_only: bool = False, show_unfinished: b
     return out
 
 
+# sessions.json holds an object: {"backfill": {basename: {size, schema}}, "sessions": [...]}.
+# The backfill index lives here rather than in its own file so wiping sessions.json resets it
+# atomically (they can never desync). A legacy bare-list file (just the sessions) is read
+# transparently and rewritten into the object form on the next archive write.
+def _read_archive(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"backfill": {}, "sessions": []}
+    if isinstance(data, list):  # legacy format: a bare sessions list
+        return {"backfill": {}, "sessions": data}
+    return {"backfill": data.get("backfill") or {}, "sessions": data.get("sessions") or []}
+
+
+def _write_archive(path: str, sessions: list, backfill: dict) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"backfill": backfill, "sessions": sessions}, f, indent=2)
+    os.replace(tmp, path)
+
+
 def load_sessions(path: str = SESSIONS_PATH) -> list:
     try:
         mt = os.stat(path).st_mtime
@@ -184,7 +206,8 @@ def load_sessions(path: str = SESSIONS_PATH) -> list:
     if _cache["mtime"] != mt:
         try:
             with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+                raw = json.load(f)
+            data = raw if isinstance(raw, list) else (raw.get("sessions") or [])
             # normalize ship names so sessions archived before the canonical-name
             # fix don't show both "Crusader Mercury Star Runner" and "Mercury Star
             # Runner" (display-only; the stored file is left untouched).
@@ -210,19 +233,25 @@ def load_sessions(path: str = SESSIONS_PATH) -> list:
 def archive_session(state: State, path: str = SESSIONS_PATH) -> None:
     summary = build_summary(state)
     with _write_lock:  # read-modify-write is atomic vs. other archiving threads
-        sessions = []
-        try:
-            with open(path, encoding="utf-8") as f:
-                sessions = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            sessions = []
+        arch = _read_archive(path)
         # replace an existing entry with the same key, else append
-        sessions = [s for s in sessions if s.get("key") != summary["key"]]
+        sessions = [s for s in arch["sessions"] if s.get("key") != summary["key"]]
         sessions.append(summary)
         sessions.sort(key=lambda s: s.get("started_at") or "", reverse=True)
         sessions = sessions[:SESSIONS_KEEP]
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(sessions, f, indent=2)
-        os.replace(tmp, path)
+        _write_archive(path, sessions, arch["backfill"])  # preserve the backfill index
     _cache["mtime"] = None  # force reload on next read
+
+
+# --- backfill index (which immutable logbackups have been processed) ----------------- #
+# Stored alongside the sessions in the same file so the two stay in lockstep. See
+# tracker.backfill_archive for how it's used.
+def load_backfill_index(path: str = SESSIONS_PATH) -> dict:
+    return _read_archive(path)["backfill"]
+
+
+def save_backfill_index(index: dict, path: str = SESSIONS_PATH) -> None:
+    with _write_lock:
+        arch = _read_archive(path)
+        _write_archive(path, arch["sessions"], index)  # preserve the sessions
+    _cache["mtime"] = None

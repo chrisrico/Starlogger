@@ -20,8 +20,14 @@ import os
 import threading
 
 from starlogger import shipcargo
-from starlogger.archive import ARCHIVE_SCHEMA, archive_session, load_sessions
-from starlogger.config import BACKFILL_INDEX_PATH, find_log, find_log_backups
+from starlogger.archive import (
+    ARCHIVE_SCHEMA,
+    archive_session,
+    load_backfill_index,
+    load_sessions,
+    save_backfill_index,
+)
+from starlogger.config import find_log, find_log_backups
 from starlogger.maintenance import run_cleanup
 from starlogger.server import create_app
 from starlogger.snapshot import build_snapshot
@@ -51,32 +57,17 @@ def rebuild_history(log_path: str) -> int:
     return len(load_sessions()) - before
 
 
-def _load_backfill_index() -> dict:
-    try:
-        with open(BACKFILL_INDEX_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_backfill_index(index: dict) -> None:
-    tmp = BACKFILL_INDEX_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(index, f, indent=2, sort_keys=True)
-    os.replace(tmp, BACKFILL_INDEX_PATH)
-
-
 def backfill_archive(log_path: str, stop: threading.Event) -> None:
     """Archive any logbackup sessions missing from sessions.json, in the background
-    once the tailer is up. Logbackups are immutable, so a small index
-    (backfill_index.json: {basename: {size, schema}}) records which ones have already
-    been processed -- a relaunch then skips them WITHOUT reading the file at all,
-    instead of re-parsing all of them every startup. A backup is processed (full parse
-    + archive) when it's new, its size changed, or its recorded `schema` is older than
-    ARCHIVE_SCHEMA (a deploy that adds a summary field bumps the version, so history
-    self-heals on the next run). If sessions.json is wiped, delete the index too to
-    force a clean re-archive."""
-    index = _load_backfill_index()
+    once the tailer is up. Logbackups are immutable, so an index recorded inside
+    sessions.json (the `backfill` map: {basename: {size, schema}}) tracks which ones
+    have already been processed -- a relaunch then skips them WITHOUT reading the file
+    at all, instead of re-parsing all of them every startup. A backup is processed (full
+    parse + archive) when it's new, its size changed, or its recorded `schema` is older
+    than ARCHIVE_SCHEMA (a deploy that adds a summary field bumps the version, so history
+    self-heals on the next run). The index shares sessions.json, so wiping that file
+    resets both together."""
+    index = load_backfill_index()
     before = len(load_sessions())
     dirty = False
     for f in find_log_backups(log_path):
@@ -100,7 +91,7 @@ def backfill_archive(log_path: str, stop: threading.Event) -> None:
         index[bn] = {"size": size, "schema": ARCHIVE_SCHEMA}
         dirty = True
     if dirty:
-        _save_backfill_index(index)
+        save_backfill_index(index)
     added = len(load_sessions()) - before
     if added:
         print(f"[archive] backfilled {added} session(s) from logbackups")
