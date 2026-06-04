@@ -1,9 +1,14 @@
-# Star Citizen Mission Tracker
+<p align="center">
+  <img src="assets/social-preview.png" alt="Starlogger" width="760">
+</p>
 
-Tails Star Citizen's `Game.log` and serves a web dashboard at
+# Starlogger
+
+**Starlogger** tails Star Citizen's `Game.log` and serves a web dashboard at
 **http://127.0.0.1:8765** that models your accepted cargo missions and **groups
 the work by route** — what to load at each origin, what to drop at each
-destination — plus a 3-D **cargo-grid loader** and a per-session archive.
+destination — plus a 3-D **cargo-grid loader**, a per-session **archive**, and
+**session replay** that scrubs the whole dashboard through any past session.
 
 Runs on **Linux (Wine/Proton)** and **native Windows** — the same codebase
 auto-detects the install for each.
@@ -70,27 +75,19 @@ Six tabs (deep-linked via the URL hash):
 - **Manifest** — the **cargo-grid loader**: an isometric 3-D view of your ship's
   hold packed in delivery order (first-out on top), with a **load sequence** of
   elevators to bring up. Each bay is labelled (Rear, Mid, Nose, Module 1…) and a
-  **▲ FWD** marker shows the bow. A **test-scenario** picker drives the *whole*
-  dashboard with sample hauls scaled to the selected ship (see below).
+  **▲ FWD** marker shows the bow.
 - **Unloading** — per destination: total SCU and cargo to drop, with its origin.
 - **Routes** — origin → destination pairs aggregated into an ordered trip.
 - **Contracts** — full mission table with per-row **Edit** / **Delete**.
-- **Archive** — past sessions, newest first, with **Trade only** and **Show
-  unfinished** toggles.
+- **Archive** — pooled, cross-session logs: a **Contract Log** (with a high-level
+  type filter), **Trade Loads** (manual buy/sell P&L plus your best trade routes),
+  a **Travel Log** of quantum jumps, and a **Sessions** list with **replay** —
+  pick a session and scrub the entire dashboard through its past states.
 
 The live tabs are always cargo-only; non-trade missions (couriers, combat) appear
 only in the Archive. The capacity gauge and grid follow the game-detected ship, or
 a ship you pick in the **SHIP** box at the top. The all-ships grid reference is at
 **/grids.html**.
-
-### Test scenarios
-
-On the Manifest tab, the scenario picker replaces live data with sample hauls
-(single delivery, multi-stop, shared-cargo, over-capacity, …) generated for the
-selected ship. Selecting one previews it across **every** tab — loading,
-unloading, routes, contracts and the grid — so you can explore the loader without
-live missions. Deep-link a scenario with `?scenario=<index>`. Pick **— live
-data —** to return.
 
 ## Ship cargo data
 
@@ -129,11 +126,13 @@ run-tracker.bat   Windows: start the tracker for a play session
 scmt/             package:
                     config · patterns · model · state (log parser) · snapshot ·
                     planner · overrides · stations · shipcargo · scdata
-                    (Data.p4k extraction) · archive · maintenance · tailer ·
-                    settings · server (Flask)
+                    (Data.p4k extraction) · archive · replay (session replay) ·
+                    maintenance · tailer · settings · server (Flask)
 web/              dashboard front-end:
                     index.html · styles.css · app.js · cargogrid.js (3-D grid
-                    renderer) · grids.html (all-ships reference)
+                    renderer) · grids.html (all-ships reference) ·
+                    logo.svg / icon.svg (brand)
+assets/           social-preview.png · icon.png (repo/brand images)
 ```
 
 Generated data lives in `SCMT_DATA_DIR` (repo root by default): `overrides.json`,

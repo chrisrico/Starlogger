@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Star Citizen mission tracker -- CLI entry point.
+"""Starlogger -- Star Citizen cargo/flight logger, CLI entry point.
 
 Tails the game's Game.log, models accepted missions (cargo, quantity, origin,
 destination, progress), and serves a web dashboard that groups the work by route.
@@ -179,7 +179,7 @@ def cleanup_loop(log_path: str, trigger: threading.Event, stop: threading.Event,
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Star Citizen mission tracker + dashboard")
+    ap = argparse.ArgumentParser(description="Starlogger -- Star Citizen cargo/flight logger + dashboard")
     ap.add_argument("--log", help="path to Game.log (auto-detected if omitted)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
@@ -234,7 +234,7 @@ def main() -> None:
     threading.Thread(target=shipcargo.refresh_loop, args=(state, stop, log_path), daemon=True).start()
     threading.Thread(target=cleanup_loop, args=(log_path, epoch_trigger, stop), daemon=True).start()
 
-    print("Star Citizen mission tracker")
+    print("Starlogger -- Star Citizen cargo/flight logger")
     print(f"  log:       {log_path}")
     print(f"  dashboard: http://{args.host}:{args.port}")
     print("  Ctrl-C to stop")
