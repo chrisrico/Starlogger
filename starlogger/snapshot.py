@@ -11,8 +11,7 @@ from dataclasses import asdict
 
 from . import patterns
 from .archive import build_session_trades, build_session_travels
-from .commodities import commodity_names
-from .locations import station_names
+from .reference import commodity_names, station_names
 from .model import Leg, Mission
 from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
 from .overrides import apply_override, get_overrides

@@ -73,8 +73,8 @@ def decode_location(code: str) -> tuple[str | None, bool]:
     "RR_CRU_LEO"       -> ("Crusader", False) — only the body (orbital region).
     unrecognized       -> (None, False).
     """
-    from . import locations  # lazy: locations imports scdata which imports this module's siblings
-    named = locations.resolve_code(code)
+    from . import reference  # lazy: reference imports scdata which imports this module's siblings
+    named = reference.resolve_code(code)
     if named:
         return (named, True)
     parts = code.split("_")
@@ -105,7 +105,7 @@ AWARD = re.compile(r'Added notification "Awarded\s*(?P<amt>\d+)\s*aUEC')
 # parsed trade is "submitted", treated as effective. SCU is taken from the box
 # data (boxSize x unitAmount); the `quantity[...]` field is inconsistent (cSCU on
 # buy, SCU on sell). The commodity is logged only as a `resourceGUID`; its name is
-# resolved from the game's ResourceTypeDatabase (see starlogger/commodities.py).
+# resolved from the game's ResourceTypeDatabase (see starlogger/reference.py).
 #   ...SendCommodityBuyRequest> ... shopName[SCShop_...] ... price[1067040.000000]
 #      ... resourceGUID[35121003-...] ... quantity[28800.000000 cSCU]
 #      Cargo Box Data: boxSize[16.000000] | unitAmount[18] ...

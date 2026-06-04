@@ -20,6 +20,6 @@ trade_flags.json
 *.zip
 dist/
 
-# ships_cargo.json is kept tracked: a committed copy of the latest generated ship
-# DB, shipped with the code purely for distribution (runtime reads its own copy in
-# STARLOGGER_DATA_DIR, not this one).
+# ships_cargo.json and reference.json (commodity + location maps) are kept tracked:
+# committed copies of the latest generated p4k data, shipped with the code purely for
+# distribution (runtime reads its own copies in STARLOGGER_DATA_DIR, not these).

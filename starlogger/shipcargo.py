@@ -10,12 +10,11 @@ unchanged); each entry also carries its ``class`` (the DataCore entity class, e.
 
 from __future__ import annotations
 
-import json
-import os
 import threading
 import time
 
 from .config import SHIP_CARGO_PATH
+from .jsonstore import atomic_write, load_cached
 from .patterns import major_version
 from . import scdata
 
@@ -37,17 +36,13 @@ def build_ship_cargo(p4k: str, progress=lambda m: None) -> dict:
 
 def save_ship_cargo(ships: dict, game_version: str | None = None,
                     path: str = SHIP_CARGO_PATH) -> None:
-    data = {
+    atomic_write(path, {
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "game_version": game_version,
         "count": len(ships),
         "ships": ships,
-    }
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-    os.replace(tmp, path)  # atomic: readers always see a complete file (live reload)
+    })
 
 
 def _reindex(data: dict) -> None:
@@ -56,20 +51,13 @@ def _reindex(data: dict) -> None:
     _cache["by_class"] = {e["class"].lower(): e for e in ships.values() if e.get("class")}
 
 
+def _parse_ships(data: dict) -> dict:
+    _reindex(data)  # refresh the by-name / by-class lookup tables on each (re)load
+    return data
+
+
 def load_ship_cargo(path: str = SHIP_CARGO_PATH) -> dict:
-    try:
-        mt = os.stat(path).st_mtime
-    except FileNotFoundError:
-        return _cache["data"]
-    if _cache["mtime"] != mt:
-        try:
-            with open(path, encoding="utf-8") as f:
-                _cache["data"] = json.load(f)
-            _cache["mtime"] = mt
-            _reindex(_cache["data"])
-        except (OSError, json.JSONDecodeError):
-            pass
-    return _cache["data"]
+    return load_cached(path, _cache, _parse_ships)
 
 
 def _lookup(name: str | None, db: dict | None) -> dict | None:
@@ -140,11 +128,11 @@ def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
         # one dcb query), gated like ship cargo: rebuild when missing or the major
         # version moved on. Independent of `reason` so a fresh data dir with current
         # ships still gets it.
-        from . import commodities, locations
-        if not commodities.load_commodities() or not locations.location_codes():
+        from . import reference
+        if not reference.load_commodities() or not reference.location_codes():
             ref_reason = "no cache"
-        elif ver and major_version(ver) != major_version(commodities.commodities_version()):
-            ref_reason = f"version {commodities.commodities_version() or '?'} -> {ver}"
+        elif ver and major_version(ver) != major_version(reference.commodities_version()):
+            ref_reason = f"version {reference.commodities_version() or '?'} -> {ver}"
         else:
             ref_reason = None
 
@@ -165,9 +153,10 @@ def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
                 if ref_reason:
                     try:
                         ref = scdata.build_reference_data(p4k)
-                        commodities.save_commodities(ref["commodities"], game_version=ver,
-                                                     names=ref["commodity_names"])
-                        locations.save_locations(ref["location_codes"], game_version=ver)
+                        reference.save_reference(
+                            ref["commodities"], ref["location_codes"],
+                            commodity_names=ref["commodity_names"],
+                            station_names=ref["station_names"], game_version=ver)
                         print(f"[reference] built {len(ref['commodity_names'])} commodities + "
                               f"{len(ref['station_names'])} stations ({ref_reason})")
                     except Exception as e:

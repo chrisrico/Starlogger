@@ -18,8 +18,9 @@ DATA_DIR = os.environ.get("STARLOGGER_DATA_DIR", BASE_DIR)
 WEB_DIR = os.path.join(BASE_DIR, "web")  # static assets always ship with the code
 OVERRIDES_PATH = os.path.join(DATA_DIR, "overrides.json")
 SHIP_CARGO_PATH = os.path.join(DATA_DIR, "ships_cargo.json")
-COMMODITIES_PATH = os.path.join(DATA_DIR, "commodities.json")
-LOCATIONS_PATH = os.path.join(DATA_DIR, "locations.json")
+# Commodity GUID->name and location code->name, built together from Data.p4k and
+# kept in one file (see reference.py). Was commodities.json + locations.json.
+REFERENCE_PATH = os.path.join(DATA_DIR, "reference.json")
 TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")

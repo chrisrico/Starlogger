@@ -7,13 +7,11 @@ the same log (e.g. on tracker restart) updates rather than duplicates them.
 
 from __future__ import annotations
 
-import json
-import os
 import threading
 import time
 
-from .commodities import load_commodities, resolve_commodity
 from .config import SESSIONS_KEEP, SESSIONS_PATH
+from .jsonstore import atomic_write, load_cached, read_json
 from .overrides import apply_override, get_overrides
 from .patterns import (
     canonical_ship_name,
@@ -22,6 +20,7 @@ from .patterns import (
     friendly_ship,
     qt_system,
 )
+from .reference import load_commodities, resolve_commodity
 from .state import State
 
 _cache = {"mtime": None, "data": []}
@@ -181,10 +180,8 @@ def filter_sessions(sessions: list, trade_only: bool = False, show_unfinished: b
 # atomically (they can never desync). A legacy bare-list file (just the sessions) is read
 # transparently and rewritten into the object form on the next archive write.
 def _read_archive(path: str) -> dict:
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    data = read_json(path)
+    if data is None:
         return {"backfill": {}, "sessions": []}
     if isinstance(data, list):  # legacy format: a bare sessions list
         return {"backfill": {}, "sessions": data}
@@ -192,42 +189,33 @@ def _read_archive(path: str) -> dict:
 
 
 def _write_archive(path: str, sessions: list, backfill: dict) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"backfill": backfill, "sessions": sessions}, f, indent=2)
-    os.replace(tmp, path)
+    # sort_keys=False: keep the session list in its (chronological) write order and
+    # the top-level keys as authored, rather than alphabetising the whole archive.
+    atomic_write(path, {"backfill": backfill, "sessions": sessions}, sort_keys=False)
+
+
+def _normalize_sessions(raw) -> list:
+    data = raw if isinstance(raw, list) else (raw.get("sessions") or [])
+    # normalize ship names so sessions archived before the canonical-name fix don't
+    # show both "Crusader Mercury Star Runner" and "Mercury Star Runner" (display-only;
+    # the stored file is left untouched).
+    cmap = load_commodities()
+    for s in data:
+        if s.get("ships"):
+            s["ships"] = sorted({canonical_ship_name(x) for x in s["ships"]})
+        # Re-resolve trade commodity names from their stored GUID against the current
+        # map, so trades archived before the reference map existed (or built later)
+        # self-heal from "Commodity xxxxxxxx" to a real name on read -- no archive
+        # rebuild needed. Only overrides on a known GUID.
+        for t in s.get("trades") or []:
+            name = cmap.get((t.get("commodity_guid") or "").lower())
+            if name:
+                t["commodity"] = name
+    return data
 
 
 def load_sessions(path: str = SESSIONS_PATH) -> list:
-    try:
-        mt = os.stat(path).st_mtime
-    except FileNotFoundError:
-        return []
-    if _cache["mtime"] != mt:
-        try:
-            with open(path, encoding="utf-8") as f:
-                raw = json.load(f)
-            data = raw if isinstance(raw, list) else (raw.get("sessions") or [])
-            # normalize ship names so sessions archived before the canonical-name
-            # fix don't show both "Crusader Mercury Star Runner" and "Mercury Star
-            # Runner" (display-only; the stored file is left untouched).
-            cmap = load_commodities()
-            for s in data:
-                if s.get("ships"):
-                    s["ships"] = sorted({canonical_ship_name(x) for x in s["ships"]})
-                # Re-resolve trade commodity names from their stored GUID against the
-                # current map, so trades archived before commodities.json existed (or
-                # built later) self-heal from "Commodity xxxxxxxx" to a real name on
-                # read -- no archive rebuild needed. Only overrides on a known GUID.
-                for t in s.get("trades") or []:
-                    name = cmap.get((t.get("commodity_guid") or "").lower())
-                    if name:
-                        t["commodity"] = name
-            _cache["data"] = data
-            _cache["mtime"] = mt
-        except (OSError, json.JSONDecodeError):
-            pass
-    return _cache["data"]
+    return load_cached(path, _cache, _normalize_sessions)
 
 
 def archive_session(state: State, path: str = SESSIONS_PATH) -> None:

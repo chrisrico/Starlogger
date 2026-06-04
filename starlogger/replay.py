@@ -21,9 +21,9 @@ from __future__ import annotations
 import os
 import threading
 
-from .commodities import load_commodities, resolve_commodity
 from .config import find_log_backups
 from .patterns import TS, decode_qt_dest
+from .reference import load_commodities, resolve_commodity
 from .snapshot import build_snapshot
 from .state import State
 

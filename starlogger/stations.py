@@ -14,11 +14,10 @@ temp-file writes) so it's re-read automatically with no restart.
 
 from __future__ import annotations
 
-import json
-import os
 import re
 
 from .config import STATION_NAMES_PATH
+from .jsonstore import atomic_write, load_cached, read_json
 
 _cache: dict = {"mtime": None, "data": {}}
 
@@ -36,34 +35,16 @@ _TEXT = re.compile(
 
 
 def get_station_names(path: str = STATION_NAMES_PATH) -> dict:
-    try:
-        mtime = os.stat(path).st_mtime
-    except FileNotFoundError:
-        return {}
-    if _cache["mtime"] != mtime:
-        try:
-            with open(path, encoding="utf-8") as f:
-                _cache["data"] = json.load(f)
-            _cache["mtime"] = mtime
-        except (OSError, json.JSONDecodeError):
-            pass
-    return _cache["data"]
+    return load_cached(path, _cache)
 
 
 def _write(data: dict, path: str) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+    atomic_write(path, data)
     _cache["mtime"] = None  # force a fresh read on next get_station_names()
 
 
 def _load_raw(path: str) -> dict:
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
+    return read_json(path, dict)
 
 
 def set_station_name(zone_id: str, name: str | None, path: str = STATION_NAMES_PATH) -> None:

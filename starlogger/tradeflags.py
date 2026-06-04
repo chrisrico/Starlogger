@@ -11,27 +11,14 @@ atomic write conventions in overrides.py / settings.py, so edits apply live.
 
 from __future__ import annotations
 
-import json
-import os
-
 from .config import TRADE_FLAGS_PATH
+from .jsonstore import atomic_write, load_cached, read_json
 
 _cache: dict = {"mtime": None, "data": {}}
 
 
 def get_trade_flags(path: str = TRADE_FLAGS_PATH) -> dict:
-    try:
-        mtime = os.stat(path).st_mtime
-    except FileNotFoundError:
-        return {}
-    if _cache["mtime"] != mtime:
-        try:
-            with open(path, encoding="utf-8") as f:
-                _cache["data"] = json.load(f)
-            _cache["mtime"] = mtime
-        except (OSError, json.JSONDecodeError):
-            pass
-    return _cache["data"]
+    return load_cached(path, _cache)
 
 
 def lost_trade_ids(path: str = TRADE_FLAGS_PATH) -> list:
@@ -41,17 +28,10 @@ def lost_trade_ids(path: str = TRADE_FLAGS_PATH) -> list:
 
 def set_lost(trade_id: str, lost: bool, path: str = TRADE_FLAGS_PATH) -> None:
     """Flag (or unflag) a trade as lost. Removes the entry entirely when unset."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        data = {}
+    data = read_json(path, dict)
     if lost:
         data[trade_id] = {"lost": True}
     else:
         data.pop(trade_id, None)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+    atomic_write(path, data)
     _cache["mtime"] = None  # force fresh read next get
