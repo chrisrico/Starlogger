@@ -27,6 +27,12 @@ from .state import State
 _cache = {"mtime": None, "data": []}
 _write_lock = threading.Lock()  # serialize sessions.json writers (live tailer + backfill)
 
+# Bump when build_summary() gains a field that existing archives should acquire. The
+# backfill records this version per processed logbackup (backfill_index.json) and
+# re-parses any backup stamped with an older schema, refreshing its session(s) in
+# sessions.json — so a deploy that adds a summary field still self-heals history.
+ARCHIVE_SCHEMA = 1
+
 
 def _session_key(state: State) -> str:
     return f"{state.session_started_at or '?'}|{state.player or '?'}"

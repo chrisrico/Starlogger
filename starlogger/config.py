@@ -24,6 +24,9 @@ TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+# Records which (immutable) logbackups the archive backfill has already processed, so a
+# relaunch doesn't re-parse them every time. {basename: {size, schema}}.
+BACKFILL_INDEX_PATH = os.path.join(DATA_DIR, "backfill_index.json")
 SESSIONS_KEEP = 300  # cap archived session history
 
 USER_AGENT = (

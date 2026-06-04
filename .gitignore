@@ -13,6 +13,7 @@ sessions.json
 settings.json
 station_names.json
 trade_flags.json
+backfill_index.json
 *.log
 
 # build artifacts
