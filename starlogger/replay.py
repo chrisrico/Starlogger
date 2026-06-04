@@ -12,7 +12,7 @@ Public API:
     snapshot_at(key, log_path, i) -> snapshot dict | None
 
 A session is identified by its archive key ``"<session_started_at>|<player>"`` (see
-:func:`scmt.archive._session_key`). ``None`` is returned when no still-present log file
+:func:`starlogger.archive._session_key`). ``None`` is returned when no still-present log file
 contains that session — the UI surfaces that as "original log no longer available".
 """
 

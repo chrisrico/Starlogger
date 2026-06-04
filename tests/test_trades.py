@@ -10,9 +10,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scmt import patterns
-from scmt.archive import build_session_trades
-from scmt.state import State
+from starlogger import patterns
+from starlogger.archive import build_session_trades
+from starlogger.state import State
 
 # Real log lines (IDs intact). Note the format differs between buy and sell:
 # buy carries price[...] and a bare "boxSize[..] | unitAmount[..]"; sell carries

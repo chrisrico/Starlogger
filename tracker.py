@@ -19,15 +19,15 @@ import json
 import os
 import threading
 
-from scmt import shipcargo
-from scmt.archive import archive_session, load_sessions
-from scmt.config import find_log, find_log_backups
-from scmt.maintenance import run_cleanup
-from scmt.server import create_app
-from scmt.snapshot import build_snapshot
-from scmt.state import State
-from scmt.stations import seed_station_names, zone_epoch
-from scmt.tailer import parse_whole_file, tail_loop
+from starlogger import shipcargo
+from starlogger.archive import archive_session, load_sessions
+from starlogger.config import find_log, find_log_backups
+from starlogger.maintenance import run_cleanup
+from starlogger.server import create_app
+from starlogger.snapshot import build_snapshot
+from starlogger.state import State
+from starlogger.stations import seed_station_names, zone_epoch
+from starlogger.tailer import parse_whole_file, tail_loop
 
 
 def rebuild_history(log_path: str) -> int:

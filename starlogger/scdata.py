@@ -12,7 +12,7 @@ A ship's SCU and per-bay grid geometry come from the cargo-grid *InventoryContai
 records (``interiorDimensions`` in metres; 1 SCU = a 1.25 m cube). Heavy but only run
 on a major game-version bump, niced into the background -- see ``shipcargo.py``.
 
-The binary is fetched once into ``SCMT_DATA_DIR/bin`` and verified by SHA-256.
+The binary is fetched once into ``STARLOGGER_DATA_DIR/bin`` and verified by SHA-256.
 """
 
 from __future__ import annotations
@@ -632,7 +632,7 @@ def build_reference_data(p4k: str, sb: str | None = None) -> dict:
     names (guid->name + a clean trade-commodity list) and station names (code->name +
     a clean station list)."""
     sb = sb or ensure_binary()
-    workdir = tempfile.mkdtemp(prefix="scmt-ref-")
+    workdir = tempfile.mkdtemp(prefix="starlogger-ref-")
     try:
         loc = extract_localization(p4k, sb, workdir)
         rec = query_resource_types(p4k, sb)
@@ -743,7 +743,7 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
     """Extract + resolve every cargo-carrying ship into {class: {scu, groups, ...}}."""
     sb = sb or ensure_binary()
     own_tmp = workdir is None
-    workdir = workdir or tempfile.mkdtemp(prefix="scmt-scdata-")
+    workdir = workdir or tempfile.mkdtemp(prefix="starlogger-scdata-")
     try:
         progress("extracting DataCore + localisation")
         recs = extract_records(workdir, p4k, sb)

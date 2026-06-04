@@ -22,7 +22,7 @@ from .config import STATION_NAMES_PATH
 
 _cache: dict = {"mtime": None, "data": {}}
 
-# Same two facts the live parser keys together (see scmt/state.py): a marker line
+# Same two facts the live parser keys together (see starlogger/state.py): a marker line
 # carries objectiveId + zoneHostId; the objective-text line carries objectiveId +
 # station name. Joining them on objectiveId recovers zone -> name from old logs.
 _MARK = re.compile(

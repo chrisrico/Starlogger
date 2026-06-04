@@ -11,9 +11,9 @@ PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PKG_DIR)
 
 # Generated data files live in DATA_DIR; defaults to the repo root for bare-metal
-# runs, but the containerized service points SCMT_DATA_DIR at a persistent volume
+# runs, but the containerized service points STARLOGGER_DATA_DIR at a persistent volume
 # so code (baked into the image) and data (on the host) stay separate.
-DATA_DIR = os.environ.get("SCMT_DATA_DIR", BASE_DIR)
+DATA_DIR = os.environ.get("STARLOGGER_DATA_DIR", BASE_DIR)
 
 WEB_DIR = os.path.join(BASE_DIR, "web")  # static assets always ship with the code
 OVERRIDES_PATH = os.path.join(DATA_DIR, "overrides.json")
@@ -34,13 +34,13 @@ USER_AGENT = (
 # `Game.log` (and `Data.p4k` beside it) live in the game's LIVE folder. On native
 # Windows that's under %PROGRAMFILES%; on Linux it's inside the Wine/Proton prefix.
 # We probe every platform's candidates (a stray isfile() on the wrong OS is cheap and
-# the path just won't exist) -- GAME_LOG, when set, wins and is the escape hatch for
+# the path just won't exist) -- STARLOGGER_LOG, when set, wins and is the escape hatch for
 # non-default install drives/folders.
 _PROGRAM_FILES = os.environ.get("PROGRAMFILES", r"C:\Program Files")
 _RSI = ("Roberts Space Industries", "StarCitizen")
 DEFAULT_LOG_CANDIDATES = [
     p for p in (
-        os.path.expanduser(os.environ["GAME_LOG"]) if os.environ.get("GAME_LOG") else None,
+        os.path.expanduser(os.environ["STARLOGGER_LOG"]) if os.environ.get("STARLOGGER_LOG") else None,
         # native Windows install (LIVE, then PTU)
         os.path.join(_PROGRAM_FILES, *_RSI, "LIVE", "Game.log"),
         os.path.join(_PROGRAM_FILES, *_RSI, "PTU", "Game.log"),

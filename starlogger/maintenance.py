@@ -2,7 +2,7 @@
 
 `run_cleanup` is the epoch-aware prune behind both `tracker.py --cleanup` and the
 automatic cleanup the running tracker fires when it detects a new server epoch in
-the log (see scmt/state.py's epoch-change hook). Keeping the logic here means the
+the log (see starlogger/state.py's epoch-change hook). Keeping the logic here means the
 one-shot command and the live trigger can never drift apart.
 """
 

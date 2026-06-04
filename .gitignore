@@ -6,7 +6,7 @@ __pycache__/
 # downloaded extractor binary (StarBreaker), fetched at runtime
 bin/
 
-# per-user runtime data (lives in SCMT_DATA_DIR at runtime, regenerated on run;
+# per-user runtime data (lives in STARLOGGER_DATA_DIR at runtime, regenerated on run;
 # station_names.json is learned/recovered from logs so it's runtime data too)
 overrides.json
 sessions.json
@@ -22,4 +22,4 @@ dist/
 
 # ships_cargo.json is kept tracked: a committed copy of the latest generated ship
 # DB, shipped with the code purely for distribution (runtime reads its own copy in
-# SCMT_DATA_DIR, not this one).
+# STARLOGGER_DATA_DIR, not this one).

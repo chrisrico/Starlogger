@@ -44,21 +44,21 @@ The only runtime dependency is Flask. The ship cargo-grid database
 Leave it running while you play; the dashboard polls every few seconds and resets
 itself when you relaunch the game. It auto-detects the LIVE `Game.log` (on Windows,
 `%ProgramFiles%\Roberts Space Industries\StarCitizen\LIVE\Game.log`). Point it at a
-specific log with `--log PATH` or the `GAME_LOG` env var (the escape hatch for a
-non-default install drive/folder). `SCMT_DATA_DIR` sets where the generated `*.json`
+specific log with `--log PATH` or the `STARLOGGER_LOG` env var (the escape hatch for a
+non-default install drive/folder). `STARLOGGER_DATA_DIR` sets where the generated `*.json`
 data (and the downloaded extractor binary) are stored — defaults to the repo root.
 
 ## Run it with the game
 
 **Windows:** run `run-tracker.bat` in a terminal (or make a desktop shortcut to it);
-Ctrl-C stops it. `SCMT_DATA_DIR` defaults to `%LOCALAPPDATA%\starlogger`.
+Ctrl-C stops it. `STARLOGGER_DATA_DIR` defaults to `%LOCALAPPDATA%\starlogger`.
 
 **Linux (LUG `sc-launch.sh`):** to start the tracker with the game and stop it when
 you quit, add one line just before the launcher line in the
 [LUG Helper](https://github.com/starcitizen-lug/lug-helper)'s `sc-launch.sh`:
 
 ```bash
-GAME_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
+STARLOGGER_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
 ```
 
 `run-tracker.sh` backgrounds the dashboard and uses `setpriv --pdeathsig` so the
@@ -95,7 +95,7 @@ a ship you pick in the **SHIP** box at the top. The all-ships grid reference is 
 role) is read **straight from the game's own `Data.p4k`** — no third-party site.
 The tracker drives [StarBreaker](https://github.com/diogotr7/StarBreaker), a Rust
 extractor it downloads once (SHA-256-pinned, the right Linux or Windows build for
-your OS) into `SCMT_DATA_DIR/bin`, and rebuilds the database only when the game's
+your OS) into `STARLOGGER_DATA_DIR/bin`, and rebuilds the database only when the game's
 **major version changes**, at background priority so it never disturbs the game.
 This needs the game installed with `Data.p4k` next to `Game.log`; if it isn't found
 the tracker just keeps using the committed `ships_cargo.json` (so most users never
@@ -123,7 +123,7 @@ Two common gaps:
 tracker.py        CLI entry point
 run-tracker.sh    Linux: start the tracker for a play session (sc-launch hook)
 run-tracker.bat   Windows: start the tracker for a play session
-scmt/             package:
+starlogger/       package:
                     config · patterns · model · state (log parser) · snapshot ·
                     planner · overrides · stations · shipcargo · scdata
                     (Data.p4k extraction) · archive · replay (session replay) ·
@@ -135,6 +135,6 @@ web/              dashboard front-end:
 assets/           social-preview.png · icon.png (repo/brand images)
 ```
 
-Generated data lives in `SCMT_DATA_DIR` (repo root by default): `overrides.json`,
+Generated data lives in `STARLOGGER_DATA_DIR` (repo root by default): `overrides.json`,
 `sessions.json`, `settings.json`, `station_names.json`, `ships_cargo.json`, and the
 extractor in `bin/`.

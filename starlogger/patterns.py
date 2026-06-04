@@ -105,7 +105,7 @@ AWARD = re.compile(r'Added notification "Awarded\s*(?P<amt>\d+)\s*aUEC')
 # parsed trade is "submitted", treated as effective. SCU is taken from the box
 # data (boxSize x unitAmount); the `quantity[...]` field is inconsistent (cSCU on
 # buy, SCU on sell). The commodity is logged only as a `resourceGUID`; its name is
-# resolved from the game's ResourceTypeDatabase (see scmt/commodities.py).
+# resolved from the game's ResourceTypeDatabase (see starlogger/commodities.py).
 #   ...SendCommodityBuyRequest> ... shopName[SCShop_...] ... price[1067040.000000]
 #      ... resourceGUID[35121003-...] ... quantity[28800.000000 cSCU]
 #      Cargo Box Data: boxSize[16.000000] | unitAmount[18] ...
