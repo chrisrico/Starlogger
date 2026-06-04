@@ -89,11 +89,36 @@ const TABS = ["loading", "unloading", "routes", "missions", "grid", "history"];
 function activateTab(name) {
   if (!TABS.includes(name)) return;
   TAB = name;
-  document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  let label = name;
+  document.querySelectorAll("#nav button").forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle("active", on);
+    if (on) label = b.textContent.replace(/^\s*\d+\s*/, "").trim();  // drop the "01" prefix
+  });
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
+  closeNav();                                  // collapse the mobile dropdown after a pick
+  const lbl = $("navtoggle-label"); if (lbl) lbl.textContent = label;  // reflect the tab on the toggle
   if (name === "history") { ARCH_PICK = true; loadSessions(); }
 }
+// Mobile hamburger: the nav collapses to a dropdown under the toggle (CSS @media).
+function closeNav() {
+  const nav = $("nav"), tog = $("navtoggle");
+  if (nav) nav.classList.remove("open");
+  if (tog) tog.setAttribute("aria-expanded", "false");
+}
+function toggleNav() {
+  const nav = $("nav"), tog = $("navtoggle");
+  if (!nav) return;
+  const open = nav.classList.toggle("open");
+  if (tog) tog.setAttribute("aria-expanded", open ? "true" : "false");
+}
+const _navToggleEl = $("navtoggle"); if (_navToggleEl) _navToggleEl.onclick = toggleNav;
+// tap outside the open dropdown closes it (the toggle handles its own clicks)
+document.addEventListener("click", (e) => {
+  if ($("nav") && $("nav").classList.contains("open")
+      && !e.target.closest("#nav") && !e.target.closest("#navtoggle")) closeNav();
+});
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
 if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
 
