@@ -44,7 +44,7 @@ The only runtime dependency is Flask. The ship cargo-grid database
 Leave it running while you play; the dashboard polls every few seconds and resets
 itself when you relaunch the game. It auto-detects the LIVE `Game.log` (on Windows,
 `%ProgramFiles%\Roberts Space Industries\StarCitizen\LIVE\Game.log`). Point it at a
-specific log with `--log PATH` or the `SCMT_LOG` env var (the escape hatch for a
+specific log with `--log PATH` or the `GAME_LOG` env var (the escape hatch for a
 non-default install drive/folder). `SCMT_DATA_DIR` sets where the generated `*.json`
 data (and the downloaded extractor binary) are stored — defaults to the repo root.
 
@@ -58,7 +58,7 @@ you quit, add one line just before the launcher line in the
 [LUG Helper](https://github.com/starcitizen-lug/lug-helper)'s `sc-launch.sh`:
 
 ```bash
-SCMT_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
+GAME_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
 ```
 
 `run-tracker.sh` backgrounds the dashboard and uses `setpriv --pdeathsig` so the

@@ -2,7 +2,7 @@
 # Launch Starlogger for a play session, tied to the caller's lifetime.
 #
 # Meant to be backgrounded from the LUG sc-launch.sh:
-#   SCMT_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
+#   GAME_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
 #
 # Lifetime: `setpriv --pdeathsig` asks the kernel to send the tracker SIGTERM the
 # moment the calling process (sc-launch) dies -- normal exit, closed terminal, or

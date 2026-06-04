@@ -34,13 +34,13 @@ USER_AGENT = (
 # `Game.log` (and `Data.p4k` beside it) live in the game's LIVE folder. On native
 # Windows that's under %PROGRAMFILES%; on Linux it's inside the Wine/Proton prefix.
 # We probe every platform's candidates (a stray isfile() on the wrong OS is cheap and
-# the path just won't exist) -- SCMT_LOG, when set, wins and is the escape hatch for
+# the path just won't exist) -- GAME_LOG, when set, wins and is the escape hatch for
 # non-default install drives/folders.
 _PROGRAM_FILES = os.environ.get("PROGRAMFILES", r"C:\Program Files")
 _RSI = ("Roberts Space Industries", "StarCitizen")
 DEFAULT_LOG_CANDIDATES = [
     p for p in (
-        os.path.expanduser(os.environ["SCMT_LOG"]) if os.environ.get("SCMT_LOG") else None,
+        os.path.expanduser(os.environ["GAME_LOG"]) if os.environ.get("GAME_LOG") else None,
         # native Windows install (LIVE, then PTU)
         os.path.join(_PROGRAM_FILES, *_RSI, "LIVE", "Game.log"),
         os.path.join(_PROGRAM_FILES, *_RSI, "PTU", "Game.log"),

@@ -116,7 +116,7 @@ ensure_tracker() {
         return 1
     fi
 }
-{ ensure_tracker && [ -x "$tracker" ] && SCMT_LOG="$game_log" exec "$tracker"; } &
+{ ensure_tracker && [ -x "$tracker" ] && GAME_LOG="$game_log" exec "$tracker"; } &
 
 ############################################################################
 # Run the stock LUG launcher.
