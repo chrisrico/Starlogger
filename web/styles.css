@@ -366,18 +366,26 @@ tr:hover .lt-replay .lt-act{opacity:1}
   border-bottom:1px solid var(--cyan);box-shadow:0 6px 20px rgba(0,0,0,.4)}
 #replaybar.hide{display:none}
 #replaybar.rb-busy{opacity:.8}
-.rb-tag{font-family:var(--display);letter-spacing:.12em;font-size:10.5px;font-weight:700;
-  color:#06101e;background:var(--cyan);padding:2px 8px;border-radius:3px}
+/* body holds two rows: the slider controls (fixed) and, below, the checkpoint time +
+   event label (variable). Both rows start at the body's left edge, so the info line is
+   left-aligned under the session time. min-width:0 lets the label ellipsis work. */
+.rb-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px}
+.rb-top{display:flex;align-items:center;gap:12px}
+.rb-info{display:flex;align-items:baseline;gap:8px;min-width:0;font-size:11px}
 .rb-sess{color:var(--ink-1);font-weight:600;white-space:nowrap}
 .rb-step{background:var(--panel);border:1px solid var(--line);color:var(--ink-1);
   border-radius:4px;cursor:pointer;padding:1px 9px;font-size:12px;line-height:1.5}
 .rb-step:hover{border-color:var(--cyan);color:var(--cyan)}
 .rb-scrub{flex:1 1 auto;min-width:140px;accent-color:var(--cyan);cursor:pointer}
-.rb-pos{color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
-.rb-when{color:var(--ink-2);white-space:nowrap}
-.rb-label{color:var(--cyan);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:36ch}
-.rb-exit{margin-left:auto;background:transparent;border:1px solid var(--red);color:var(--red);
-  border-radius:4px;cursor:pointer;padding:3px 12px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em}
+/* fixed-width counter so it can't nudge the slider as the digits change */
+.rb-pos{color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap;min-width:50px;text-align:right}
+.rb-when{color:var(--ink-2);white-space:nowrap;flex:0 0 auto}
+.rb-when:not(:empty)::after{content:"·";color:var(--ink-3);margin-left:8px}
+.rb-label{color:var(--cyan);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0}
+/* the former REPLAY badge: now the Exit button, leftmost, centered across both rows */
+.rb-exit{flex:0 0 auto;align-self:center;background:transparent;border:1px solid var(--red);color:var(--red);
+  border-radius:4px;cursor:pointer;padding:7px 13px;font-size:10.5px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.1em}
 .rb-exit:hover{background:rgba(255,94,116,.12)}
 .lt-act{margin-left:6px;padding:0 5px;font-size:11px;line-height:1.4;cursor:pointer;color:var(--ink-3);
   background:transparent;border:1px solid var(--line-2);border-radius:2px;opacity:0;transition:opacity .12s}

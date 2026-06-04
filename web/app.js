@@ -1470,16 +1470,25 @@ function renderReplayBar() {
   if (!REPLAY_MODE) { bar.classList.add("hide"); bar.innerHTML = ""; root.setProperty("--replay-h", "0px"); return; }
   const n = REPLAY_POINTS.length, sess = (REPLAY_KEY || "").split("|")[0];
   bar.classList.remove("hide");
-  bar.innerHTML = `<span class="rb-tag">▶ REPLAY</span>
-    <span class="rb-sess">${esc(fmtWhen(sess))}</span>
-    <button class="rb-step" onclick="scrubStep(-1)" title="previous checkpoint">◀</button>
-    <input id="rb-scrub" class="rb-scrub" type="range" min="0" max="${Math.max(0, n - 1)}"
-      value="${REPLAY_I}" oninput="scrubTo(this.value)">
-    <button class="rb-step" onclick="scrubStep(1)" title="next checkpoint">▶</button>
-    <span id="rb-pos" class="rb-pos"></span>
-    <span id="rb-when" class="rb-when"></span>
-    <span id="rb-label" class="rb-label"></span>
-    <button class="rb-exit" onclick="exitReplay()">Exit replay</button>`;
+  // Two rows: the fixed-width slider controls on top, the variable-length checkpoint
+  // time + event label on their own line below (left-aligned under the session time) so
+  // the slider doesn't resize as you scrub. The former "REPLAY" badge is now the Exit
+  // button (leftmost), vertically centered across both rows.
+  bar.innerHTML = `<button class="rb-exit" onclick="exitReplay()" title="Return to live data">Exit replay</button>
+    <span class="rb-body">
+      <span class="rb-top">
+        <span class="rb-sess">${esc(fmtWhen(sess))}</span>
+        <button class="rb-step" onclick="scrubStep(-1)" title="previous checkpoint">◀</button>
+        <input id="rb-scrub" class="rb-scrub" type="range" min="0" max="${Math.max(0, n - 1)}"
+          value="${REPLAY_I}" oninput="scrubTo(this.value)">
+        <button class="rb-step" onclick="scrubStep(1)" title="next checkpoint">▶</button>
+        <span id="rb-pos" class="rb-pos"></span>
+      </span>
+      <span class="rb-info">
+        <span id="rb-when" class="rb-when"></span>
+        <span id="rb-label" class="rb-label"></span>
+      </span>
+    </span>`;
   root.setProperty("--replay-h", bar.offsetHeight + "px");  // archive panel subtracts this
   updateReplayBar();
 }
