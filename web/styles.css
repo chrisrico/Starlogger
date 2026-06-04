@@ -25,7 +25,11 @@
 }
 
 *{box-sizing:border-box}
-html{scrollbar-color:var(--line-2) transparent}
+/* Solid dark base on the root canvas so any area the body doesn't paint stays dark
+   instead of showing the browser's white canvas. On mobile the body can be shorter than
+   the visual viewport (100vh quirks) and background-attachment:fixed often isn't honored,
+   which left a white band that the fixed .scanlines overlay (mix-blend multiply) striped. */
+html{scrollbar-color:var(--line-2) transparent;background:var(--void)}
 body{
   margin:0;color:var(--ink);font-family:var(--display);font-size:14px;line-height:1.45;
   background:
@@ -34,6 +38,7 @@ body{
     linear-gradient(180deg,var(--void),var(--bg));
   background-attachment:fixed;
   min-height:100vh;
+  min-height:100dvh;   /* dynamic viewport unit: fill the *visible* height on mobile */
 }
 /* faint engineering grid */
 body::before{
