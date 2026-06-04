@@ -193,6 +193,13 @@ nav button.active::after{content:"";position:absolute;left:0;right:0;bottom:-2px
   nav button.active{border-bottom-color:var(--line);border-left-color:var(--cyan);
     background:rgba(79,220,255,.08)}
   nav button.active::after{display:none}  /* the under-tab bar doesn't fit a vertical list */
+
+  /* readouts (incl. the Player name) scroll sideways as one row instead of wrapping
+     into a stacked grid; swipe to see the rest. */
+  .readouts{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none}
+  .readouts::-webkit-scrollbar{display:none}
+  .stat{flex:0 0 auto}   /* keep each readout its natural width so the row overflows + scrolls */
 }
 
 main{padding:22px;max-width:1280px;margin:0 auto}
