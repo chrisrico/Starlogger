@@ -51,14 +51,14 @@ data (and the downloaded extractor binary) are stored — defaults to the repo r
 ## Run it with the game
 
 **Windows:** run `run-tracker.bat` in a terminal (or make a desktop shortcut to it);
-Ctrl-C stops it. `SCMT_DATA_DIR` defaults to `%LOCALAPPDATA%\sc-mission-tracker`.
+Ctrl-C stops it. `SCMT_DATA_DIR` defaults to `%LOCALAPPDATA%\starlogger`.
 
 **Linux (LUG `sc-launch.sh`):** to start the tracker with the game and stop it when
 you quit, add one line just before the launcher line in the
 [LUG Helper](https://github.com/starcitizen-lug/lug-helper)'s `sc-launch.sh`:
 
 ```bash
-SCMT_LOG="$user_cfg_dir/Game.log" "$HOME/Code/sc-mission-tracker/run-tracker.sh" &
+SCMT_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
 ```
 
 `run-tracker.sh` backgrounds the dashboard and uses `setpriv --pdeathsig` so the

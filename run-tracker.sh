@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Launch the SC mission tracker for a play session, tied to the caller's lifetime.
+# Launch Starlogger for a play session, tied to the caller's lifetime.
 #
 # Meant to be backgrounded from the LUG sc-launch.sh:
-#   SCMT_LOG="$user_cfg_dir/Game.log" "$HOME/Code/sc-mission-tracker/run-tracker.sh" &
+#   SCMT_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
 #
 # Lifetime: `setpriv --pdeathsig` asks the kernel to send the tracker SIGTERM the
 # moment the calling process (sc-launch) dies -- normal exit, closed terminal, or
@@ -12,7 +12,7 @@ set -euo pipefail
 
 repo="$(dirname "$(readlink -f "$0")")"
 py="$repo/.venv/bin/python"
-: "${SCMT_DATA_DIR:=$HOME/.local/share/sc-mission-tracker}"
+: "${SCMT_DATA_DIR:=$HOME/.local/share/starlogger}"
 export SCMT_DATA_DIR
 
 [ -x "$py" ] || { echo "run-tracker: venv missing ($py)" >&2; exit 0; }

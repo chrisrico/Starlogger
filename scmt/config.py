@@ -27,8 +27,8 @@ SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
 SESSIONS_KEEP = 300  # cap archived session history
 
 USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) sc-mission-tracker" if IS_WINDOWS
-    else "Mozilla/5.0 (X11; Linux x86_64) sc-mission-tracker"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) starlogger" if IS_WINDOWS
+    else "Mozilla/5.0 (X11; Linux x86_64) starlogger"
 )
 
 # `Game.log` (and `Data.p4k` beside it) live in the game's LIVE folder. On native
