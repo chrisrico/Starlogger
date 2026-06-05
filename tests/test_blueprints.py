@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from starlogger import blueprints, scdata
+from starlogger import blueprints, patterns, scdata
 from starlogger.mineables import _mineral_matches
 
 
@@ -106,6 +106,16 @@ def test_blueprint_section_derivation():
     assert blueprints._keep_component({}) is True
     assert blueprints._keep_component({"grade": "A"}) is True
     assert blueprints._keep_component({"grade": "B"}) is False
+
+
+def test_camel_split():
+    # the simple lowercase->uppercase splitter shared by patterns + scdata name decoders;
+    # acronym runs are left intact by design (the category decoder has its own stricter split)
+    assert patterns.camel_split("PortOlisar") == "Port Olisar"
+    assert patterns.camel_split("ShubinMining") == "Shubin Mining"
+    assert patterns.camel_split("FPSWeapons") == "FPSWeapons"   # acronym run untouched
+    assert patterns.camel_split("plain") == "plain"
+    assert patterns.camel_split("") == ""
 
 
 def test_mineral_name_reconciliation():

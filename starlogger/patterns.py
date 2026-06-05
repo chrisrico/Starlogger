@@ -5,6 +5,14 @@ from __future__ import annotations
 
 import re
 
+
+def camel_split(s: str) -> str:
+    """Insert a space at each lowercase->uppercase boundary ("PortOlisar" -> "Port
+    Olisar"). Acronym runs are left intact by design ("FPSWeapons" stays as-is); the
+    blueprint category decoder in scdata uses its own stricter, acronym-aware split."""
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", s)
+
+
 # --------------------------------------------------------------------------- #
 # Log line patterns
 # --------------------------------------------------------------------------- #
@@ -83,7 +91,7 @@ def decode_location(code: str) -> tuple[str | None, bool]:
         if place:
             # codes may be CamelCase ("PortTressler") or already spaced; split case
             # boundaries so the name matches the planner's station table.
-            return (re.sub(r"(?<=[a-z])(?=[A-Z])", " ", place), True)
+            return (camel_split(place), True)
     for p in parts:
         if p.upper() in _LOC_BODY_CODE:
             return (_LOC_BODY_CODE[p.upper()], False)

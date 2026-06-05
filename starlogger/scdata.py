@@ -28,6 +28,7 @@ import tempfile
 import urllib.request
 
 from .config import DATA_DIR, IS_WINDOWS, USER_AGENT
+from .patterns import camel_split
 
 # --- vendored StarBreaker binary (pinned + checksummed, per platform) -------- #
 # Same upstream release, different asset: a .tar.gz holding `starbreaker` on Linux,
@@ -250,19 +251,7 @@ def _find_container_ref(o) -> str | None:
 
 def _find_struct(o, type_name: str):
     """First nested struct whose ``_Type_`` is ``type_name`` (depth-first), or None."""
-    if isinstance(o, dict):
-        if o.get("_Type_") == type_name:
-            return o
-        for v in o.values():
-            r = _find_struct(v, type_name)
-            if r is not None:
-                return r
-    elif isinstance(o, list):
-        for v in o:
-            r = _find_struct(v, type_name)
-            if r is not None:
-                return r
-    return None
+    return _deep_find(o, "_Type_", type_name)
 
 
 def build_component_index(records_root: str) -> dict:
@@ -667,35 +656,6 @@ def query_resource_types(p4k: str, sb: str | None = None) -> dict:
     return json.JSONDecoder().raw_decode(out[out.index("{"):])[0]
 
 
-def build_commodity_map(p4k: str, sb: str | None = None, loc: dict | None = None) -> dict:
-    """{resourceGUID(lower) -> commodity display name}, from the ResourceTypeDatabase.
-
-    Maps every resource's ``_RecordId_`` (the UUID the trade log carries as
-    ``resourceGUID``) to a name -- the localised ``displayName`` when a ``global.ini``
-    (``loc``) is supplied, else the ``_RecordName_`` token (``ResourceType.Quartz`` ->
-    ``Quartz``, CamelCase split). Walks nested groups."""
-    rec = query_resource_types(p4k, sb)
-    out: dict[str, str] = {}
-
-    def walk(g: dict) -> None:
-        for r in g.get("resources", []):
-            guid = (r.get("_RecordId_") or "").lower()
-            if not guid:
-                continue
-            name = _loc_text(r.get("displayName"), loc) if loc else ""
-            if not name:
-                rn = r.get("_RecordName_", "")
-                tok = rn.split(".", 1)[1] if "." in rn else rn
-                name = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", tok)
-            out[guid] = name
-        for sub in g.get("groups", []):
-            walk(sub)
-
-    for g in rec.get("_RecordValue_", {}).get("groups", []):
-        walk(g)
-    return out
-
-
 def extract_localization(p4k: str, sb: str, workdir: str) -> dict:
     """Pull just english ``global.ini`` from the p4k and load it (case-insensitive
     key->value). Fast: it's one file, after StarBreaker reads the central directory."""
@@ -759,7 +719,7 @@ def build_reference_data(p4k: str, sb: str | None = None) -> dict:
                 if not name:  # fall back to the record-name token
                     rn = r.get("_RecordName_", "")
                     tok = rn.split(".", 1)[1] if "." in rn else rn
-                    name = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", tok.replace("_", " "))
+                    name = camel_split(tok.replace("_", " "))
                 if guid:
                     guid_map[guid] = name
                 if name and isinstance(dn, str) and dn.lower().startswith("@items_commodities"):
@@ -835,7 +795,7 @@ def _record_token_name(path: str) -> str:
     except (OSError, ValueError):
         rn = ""
     tok = rn.split(".", 1)[1] if "." in rn else (rn or os.path.basename(path)[:-5])
-    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", tok.replace("_", " ")).strip().title()
+    return camel_split(tok.replace("_", " ")).strip().title()
 
 
 # Class-name family tokens stripped to get a readable rock label when localisation
@@ -854,7 +814,7 @@ def _mineable_label(cls: str, deposit_name: str) -> str:
     information the deposit name doesn't already carry (``AsteroidCTypeMineableRock_Iron``
     -> "Asteroid (C-Type) — Iron"; ``GraniteMineableRock_Granite`` -> "Granite Deposit").
     Falls back to a best-effort split of the class name when there's no localisation."""
-    toks = [t for t in re.split(r"[_\s]+", re.sub(r"(?<=[a-z])(?=[A-Z])", " ", cls)) if t]
+    toks = [t for t in re.split(r"[_\s]+", camel_split(cls)) if t]
     mineral_toks = [t for t in toks if t.lower() not in _MINEABLE_NOISE
                     and not re.fullmatch(r"[A-Za-z]Type", t)]
     mineral = " ".join(mineral_toks).title().strip()
