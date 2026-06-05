@@ -129,7 +129,7 @@ if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
 // routes are hidden and the Mining tab takes their slot right after Contracts. Driven
 // from renderAll on every snapshot; idempotent via MINING_LAYOUT so it only touches the
 // DOM (and renumbers the visible tabs) on an actual ship-type change.
-const HAUL_TABS = ["missions", "loading", "grid", "unloading", "routes", "history", "mining"];
+const HAUL_TABS = ["missions", "loading", "grid", "unloading", "routes", "history"];
 const MINE_TABS = ["missions", "mining", "history"];
 let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
 function applyTabLayout(mining) {
