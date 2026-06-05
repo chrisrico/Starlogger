@@ -134,13 +134,6 @@ const _collapseBtn = $("navtoggle");
 if (_collapseBtn) _collapseBtn.onclick = () => setCollapsed(!$("sidebar").classList.contains("collapsed"));
 
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
-// Honour deep-links, including legacy ones from before the Cargo/Plan merge: #loading /
-// #unloading → Cargo (pre-selecting the phase); #routes / #grid → Plan.
-const LEGACY_HASH = { loading: ["cargo", () => CARGO_SUB = "pickup"], unloading: ["cargo", () => CARGO_SUB = "dropoff"],
-                      routes: ["plan", () => PLAN_SUB = "route"], grid: ["plan", () => PLAN_SUB = "hold"] };
-const _hash = location.hash.slice(1);
-if (LEGACY_HASH[_hash]) { LEGACY_HASH[_hash][1](); activateTab(LEGACY_HASH[_hash][0]); }
-else if (TABS.includes(_hash)) activateTab(_hash);
 
 // ---- mining vs cargo mode ---- //
 // Mode normally follows the snapshot: a mining vehicle (mining_ship — Prospector, MOLE,
@@ -2223,3 +2216,14 @@ function planResultHtml(r) {
     </div>
     <div class="card"><h3><span>Per-ingredient sources</span></h3><div class="mplan-srcs">${srcs}</div></div>`;
 }
+
+// ---- deep-link resolution (runs last, once all tab state + functions exist) ---- //
+// Honour the URL hash, including legacy ones from before the Cargo/Plan merge: #loading /
+// #unloading → Cargo (pre-selecting the phase); #routes / #grid → Plan. Must run after the
+// whole module is initialised — activating #archive/#mining calls loadSessions()/initMining(),
+// which touch state declared far below the nav setup.
+const LEGACY_HASH = { loading: ["cargo", () => CARGO_SUB = "pickup"], unloading: ["cargo", () => CARGO_SUB = "dropoff"],
+                      routes: ["plan", () => PLAN_SUB = "route"], grid: ["plan", () => PLAN_SUB = "hold"] };
+const _hash = location.hash.slice(1);
+if (LEGACY_HASH[_hash]) { LEGACY_HASH[_hash][1](); activateTab(LEGACY_HASH[_hash][0]); }
+else if (TABS.includes(_hash)) activateTab(_hash);
