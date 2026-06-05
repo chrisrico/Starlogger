@@ -39,7 +39,13 @@ The only runtime dependency is Flask. The ship cargo-grid database
 .venv/bin/python tracker.py --port 9000
 .venv/bin/python tracker.py --once     # parse once, print JSON, exit
 .venv/bin/python tracker.py --rebuild  # backfill the archive from logbackups/
+.venv/bin/python tracker.py --no-browser  # serve without auto-opening the browser
 ```
+
+On launch the dashboard **auto-opens in your default browser**. If an instance is
+already serving the port, launching again just exits cleanly ("already running …")
+instead of opening a second tab or crashing — so re-launching the game won't pile up
+windows. Disable auto-open with `--no-browser` or `STARLOGGER_NO_BROWSER=1`.
 
 Leave it running while you play; the dashboard polls every few seconds and resets
 itself when you relaunch the game. It auto-detects the LIVE `Game.log` (on Windows,

@@ -17,7 +17,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import threading
+import time
+import webbrowser
 
 from starlogger import shipcargo
 from starlogger.archive import (
@@ -166,6 +169,39 @@ def cleanup_loop(log_path: str, trigger: threading.Event, stop: threading.Event,
             print(f"[cleanup] failed: {e}")
 
 
+def _probe_host(host: str) -> str:
+    """Map wildcard bind addresses to a loopback address we can actually connect to."""
+    if host in ("0.0.0.0", "", "::"):
+        return "127.0.0.1"
+    return host
+
+
+def _port_in_use(host: str, port: int, timeout: float = 0.5) -> bool:
+    """True if something already accepts TCP on host:port. A plain TCP check, matching
+    run-tracker.sh's /dev/tcp guard -- a non-starlogger squatter counts as in-use on
+    purpose (we won't start a second server on an occupied port either way)."""
+    try:
+        with socket.create_connection((_probe_host(host), port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _open_browser_when_ready(host: str, port: int, url: str) -> None:
+    """Daemon thread: wait for our own server to start accepting, then open it once.
+    Best-effort -- on a headless box webbrowser.open returns False or raises; swallow it
+    (the URL is already printed, so the user can still click it)."""
+    probe = _probe_host(host)
+    for _ in range(50):                       # ~10s max (50 * 0.2s)
+        if _port_in_use(probe, port, timeout=0.2):
+            break
+        time.sleep(0.2)
+    try:
+        webbrowser.open(url, new=2)           # new=2 -> new tab if possible
+    except Exception:
+        pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Starlogger -- Star Citizen cargo/flight logger + dashboard")
     ap.add_argument("--log", help="path to Game.log (auto-detected if omitted)")
@@ -180,6 +216,8 @@ def main() -> None:
                     help="epoch-aware prune of stale station_names.json + overrides.json rows, then exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="with --cleanup: report what would be removed without writing")
+    ap.add_argument("--no-browser", action="store_true",
+                    help="don't auto-open the dashboard in a browser on launch")
     args = ap.parse_args()
 
     log_path = args.log or find_log()
@@ -208,6 +246,13 @@ def main() -> None:
         print(json.dumps(build_snapshot(state), indent=2))
         return
 
+    # Only the live-serving path dedups + auto-opens; the one-shot/maintenance modes
+    # above have already returned.
+    if _port_in_use(args.host, args.port):
+        print(f"Starlogger already running at http://{args.host}:{args.port} -- "
+              f"not starting a second instance.")
+        return
+
     stop = threading.Event()
     epoch_trigger = threading.Event()
 
@@ -223,10 +268,15 @@ def main() -> None:
     threading.Thread(target=shipcargo.refresh_loop, args=(state, stop, log_path), daemon=True).start()
     threading.Thread(target=cleanup_loop, args=(log_path, epoch_trigger, stop), daemon=True).start()
 
+    url = f"http://{args.host}:{args.port}"
     print("Starlogger -- Star Citizen cargo/flight logger")
     print(f"  log:       {log_path}")
-    print(f"  dashboard: http://{args.host}:{args.port}")
+    print(f"  dashboard: {url}")
     print("  Ctrl-C to stop")
+
+    if not (args.no_browser or os.environ.get("STARLOGGER_NO_BROWSER")):
+        threading.Thread(target=_open_browser_when_ready,
+                         args=(args.host, args.port, url), daemon=True).start()
     try:
         create_app(state, log_path).run(host=args.host, port=args.port, threaded=True)
     finally:
