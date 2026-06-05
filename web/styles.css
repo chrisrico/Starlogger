@@ -796,8 +796,6 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
   background:var(--panel-2);color:var(--ink-2)}
 .mtool .mi-chip b{color:var(--cyan);font-weight:600}
 .mtool .mi-chip span{color:var(--ink-3)}
-.mtool .mi-chip.miss{opacity:.6}
-.mtool .mi-chip.miss b{color:var(--ink-2)}
 .mtool .mi-chip:hover{border-color:var(--cyan);background:rgba(var(--cyan-rgb),.08)}
 /* mining tool-card buttons share the app button base (scoped to .mtool, not bare `button`,
    so the .arch-tab sub-tab strip keeps its own underlined styling) — see the button base above */

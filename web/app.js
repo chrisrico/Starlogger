@@ -1,6 +1,8 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+// Defensive read of an input's value by id ("" when the element isn't in the DOM yet).
+const val = (id) => ($(id) || {}).value || "";
 const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"]/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const num = (n) => (n == null ? "" : Number(n).toLocaleString());
@@ -39,7 +41,7 @@ function toggleArch(key) {
   if (ARCH_OPEN === key) return;   // the open section stays open — only selecting another switches
   ARCH_OPEN = key;
   localStorage.setItem("archOpen", ARCH_OPEN);
-  setHTML("archive", sessionsView(SESSIONS));
+  _archRepaint();
 }
 // When the Archive opens with NOTHING expanded, auto-open whichever of the Contract Log /
 // Trade Loads reflects the most recent activity. If a section is already open (a previous
@@ -62,7 +64,7 @@ let ROUTE_SORT = localStorage.getItem("routeSort") || "profit";
 function setRouteSort(key) {
   ROUTE_SORT = key;
   localStorage.setItem("routeSort", key);
-  setHTML("archive", sessionsView(SESSIONS));
+  _archRepaint();
 }
 // One Archive section as a tab descriptor; sessionsView() renders the tab bar and the
 // selected section's body (only the active body is built into the DOM).
@@ -203,7 +205,7 @@ let SHIP_ACTIVE = -1;         // index of the keyboard-highlighted option (-1 = 
 let GRID_HOVER = false;       // hovering a load-order row — guards the poll from wiping the hold highlight
 async function loadShipList() {
   try {
-    const db = await (await fetch("/api/ships", { cache: "no-store" })).json();
+    const db = await getJSON("/api/ships");
     SHIP_DB = db.ships || {};
     if (LAST) renderAll(curData());  // repaint now that we have the catalog
   } catch (e) { /* leave null; the box still shows the current ship */ }
@@ -264,7 +266,7 @@ function openShipMenu() {
 }
 function filterShipMenu() {
   SHIP_ACTIVE = -1;     // typing resets the highlight
-  renderShipMenu(($("shipSel") || {}).value || "");
+  renderShipMenu(val("shipSel"));
 }
 function onShipBlur() {
   SHIP_MENU_OPEN = false;
@@ -307,14 +309,8 @@ function pickShip(ev, name) {
 
 async function selectShip(name) {
   if (REPLAY_MODE) return;
-  try {
-    const r = await fetch("/api/select-ship", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ship: name || null }),
-    });
-    const j = await r.json();
-    if (!j.ok) { alert("Couldn't set ship: " + (j.error || r.status)); return; }
-  } catch (e) { alert("Couldn't set ship: " + e); return; }
+  try { await postJSON("/api/select-ship", { ship: name || null }); }
+  catch (e) { alert("Couldn't set ship: " + e); return; }
   refresh();
 }
 
@@ -513,6 +509,11 @@ async function postJSON(url, body) {
   if (!j.ok) throw new Error(j.error || r.status);
   return j;
 }
+// GET + parse JSON for the live dashboard's no-cache reads (state/sessions/replay/ships).
+// Mining catalog lookups use their own plain fetch (cacheable, no `ok` envelope).
+async function getJSON(url) {
+  return (await fetch(url, { cache: "no-store" })).json();
+}
 // Re-render only the edit-bearing containers from the current snapshot (used when
 // opening/cancelling an inline editor, without a network round-trip).
 function rerenderEdits() {
@@ -540,14 +541,23 @@ function cargoSub(k) {
   localStorage.setItem("cargoSub", k);
   const d = curData(); if (d) setHTML("cargo", cargoView(d));
 }
+// Build an .arch-tabs segmented control: `items` is [[key,label],...]; `active` the
+// selected key; `fn` the handler name invoked with the key. opts.attr(key) adds per-button
+// attributes (e.g. data-sub); opts.tail is extra HTML appended inside the bar (e.g. the
+// archive summary span). Shared by every secondary-nav strip (cargo/plan/archive/mining).
+function tabBar(items, active, fn, opts = {}) {
+  const btns = items.map(([k, t]) => {
+    const attr = opts.attr ? " " + opts.attr(k) : "";
+    return `<button class="arch-tab${k === active ? " active" : ""}"${attr} onclick="${fn}('${k}')">${t}</button>`;
+  }).join("");
+  return `<div class="arch-tabs">${btns}${opts.tail || ""}</div>`;
+}
 function cargoView(d) {
   const sub = cargoSubActive(d);
-  const bar = [["pickup", "Loading"], ["dropoff", "Unloading"]].map(([k, t]) =>
-    `<button class="arch-tab${sub === k ? " active" : ""}" onclick="cargoSub('${k}')">${t}</button>`).join("");
   const body = sub === "dropoff"
     ? groupCards(d.unloading, "unloading", d)
     : groupCards(d.loading, "loading", d);
-  return `<div class="arch-tabs">${bar}</div>${body}`;
+  return tabBar([["pickup", "Loading"], ["dropoff", "Unloading"]], sub, "cargoSub") + body;
 }
 
 // ---- Plan tab: Routes (itinerary + rollup) ⇄ Manifest (3D hold packing) ---- //
@@ -559,10 +569,8 @@ function planSub(k) {
 }
 function planView2(d) {
   const sub = PLAN_SUB === "hold" ? "hold" : "route";
-  const bar = [["route", "Routes"], ["hold", "Manifest"]].map(([k, t]) =>
-    `<button class="arch-tab${sub === k ? " active" : ""}" onclick="planSub('${k}')">${t}</button>`).join("");
   const body = sub === "hold" ? gridView(d) : routeCards(d.routes, d);
-  return `<div class="arch-tabs">${bar}</div>${body}`;
+  return tabBar([["route", "Routes"], ["hold", "Manifest"]], sub, "planSub") + body;
 }
 
 function groupCards(groups, kind, d) {
@@ -602,14 +610,8 @@ function legCheck(mid, oid, done, legsJson) {
 async function markDelivered(legs, done) {
   if (REPLAY_MODE) return;
   if (typeof legs === "string") legs = JSON.parse(legs);
-  try {
-    const r = await fetch("/api/leg-state", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ legs, done }),
-    });
-    const j = await r.json();
-    if (!j.ok) { alert("Update failed: " + (j.error || r.status)); return; }
-  } catch (e) { alert("Update failed: " + e); return; }
+  try { await postJSON("/api/leg-state", { legs, done }); }
+  catch (e) { alert("Update failed: " + e); return; }
   refresh();
 }
 
@@ -1203,14 +1205,8 @@ function buildOverride() {
 
 async function postOverride(mid, override) {
   if (REPLAY_MODE) return;   // belt-and-suspenders: no live writes during replay
-  try {
-    const r = await fetch("/api/override", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mission_id: mid, override }),
-    });
-    const j = await r.json();
-    if (!j.ok) alert("Save failed: " + (j.error || r.status));
-  } catch (e) { alert("Save failed: " + e); }
+  try { await postJSON("/api/override", { mission_id: mid, override }); }
+  catch (e) { alert("Save failed: " + e); }
   EDIT = null;
   refresh();
 }
@@ -1222,12 +1218,21 @@ function fmtWhen(iso) {
   return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " +
     d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+// Format an elapsed span in seconds. Default is Xh Ym / Xm (session length, QT total);
+// {seconds:true} gives Xm Ys / Xs for short hops (per-jump travel time). "" if invalid.
+function fmtElapsed(sec, { seconds = false } = {}) {
+  if (sec == null || sec < 0 || !isFinite(sec)) return "";
+  if (seconds) {
+    sec = Math.round(sec);
+    const m = Math.floor(sec / 60);
+    return m ? `${m}m ${sec % 60}s` : `${sec}s`;
+  }
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
 function fmtDuration(a, b) {
   if (!a || !b) return "";
-  let s = (new Date(b) - new Date(a)) / 1000;
-  if (s < 0 || !isFinite(s)) return "";
-  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
-  return h ? `${h}h ${m}m` : `${m}m`;
+  return fmtElapsed((new Date(b) - new Date(a)) / 1000);
 }
 
 function sessionsView(sessions) {
@@ -1239,10 +1244,10 @@ function sessionsView(sessions) {
   const secs = [contractLogView(sessions), tradeLogView(sessions), travelLogView(sessions), sessionListView(sessions)];
   if (!secs.some(s => s.key === ARCH_OPEN)) ARCH_OPEN = secs[0].key;
   const active = secs.find(s => s.key === ARCH_OPEN) || secs[0];
-  const tabs = secs.map(s =>
-    `<button class="arch-tab${s.key === ARCH_OPEN ? " active" : ""}" onclick="toggleArch('${s.key}')">${s.title}</button>`).join("");
+  const tabs = tabBar(secs.map(s => [s.key, s.title]), ARCH_OPEN, "toggleArch",
+    { tail: `<span class="arch-sum">${active.headSpan}</span>` });
   return `<div class="arch-acc">
-    <div class="arch-tabs">${tabs}<span class="arch-sum">${active.headSpan}</span></div>
+    ${tabs}
     <div class="card logcard arch-panel">${active.body}</div>
   </div>`;
 }
@@ -1250,10 +1255,7 @@ function sessionsView(sessions) {
 // Departed → arrived elapsed, seconds-aware (jumps run seconds to minutes). "" if no arrival.
 function fmtTravelTime(dep, arr) {
   if (!dep || !arr) return "";
-  const s = Math.round((new Date(arr) - new Date(dep)) / 1000);
-  if (s < 0 || !isFinite(s)) return "";
-  const m = Math.floor(s / 60);
-  return m ? `${m}m ${s % 60}s` : `${s}s`;
+  return fmtElapsed((new Date(arr) - new Date(dep)) / 1000, { seconds: true });
 }
 
 // Pool every session's trades + the live ones, deduped (shared by the trade & travel logs).
@@ -1301,8 +1303,7 @@ function travelLogView(sessions) {
       <td class="lt-num" title="QT fuel estimate">${fuelShort(t.fuel)}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
-  const hrs = Math.floor(totalSecs / 3600), tmin = Math.round((totalSecs % 3600) / 60);
-  const tot = totalSecs ? ` · ${hrs ? hrs + "h " + tmin + "m" : tmin + "m"} in QT` : "";
+  const tot = totalSecs ? ` · ${fmtElapsed(totalSecs)} in QT` : "";
   const inner = logTable(
     `<th>Departed</th><th>Status</th><th>Route</th><th class="lt-num">Time</th><th>System</th><th class="lt-num">QT fuel</th><th>Ship</th>`,
     body, "No quantum travel in range.");
@@ -1557,10 +1558,10 @@ function tradeRoutesBlock(loads, lostSet) {
 
 async function loadSessions() {
   try {
-    SESSIONS = await (await fetch("/api/sessions", { cache: "no-store" })).json();
+    SESSIONS = await getJSON("/api/sessions");
   } catch (e) { SESSIONS = SESSIONS || []; }
   if (ARCH_PICK) { if (!ARCH_OPEN) ARCH_OPEN = archDefaultSection(); ARCH_PICK = false; }  // only when none open
-  setHTML("archive", sessionsView(SESSIONS));
+  _archRepaint();
 }
 
 // Flag/unflag a trade load as lost (cargo destroyed/stolen). Optimistically updates
@@ -1571,13 +1572,9 @@ async function markTradeLost(id, lost) {
     lost ? set.add(id) : set.delete(id);
     LAST.lost_trades = [...set];
   }
-  setHTML("archive", sessionsView(SESSIONS));
-  try {
-    await fetch("/api/trade-lost", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trade_id: id, lost }),
-    });
-  } catch (e) { /* next poll reconciles from the server */ }
+  _archRepaint();
+  try { await postJSON("/api/trade-lost", { trade_id: id, lost }); }
+  catch (e) { /* next poll reconciles from the server */ }
 }
 
 // Every archived session as a row, newest first: when (+ duration) · player · ship(s) ·
@@ -1617,10 +1614,10 @@ function sessionListView(sessions) {
 // then drive the whole dashboard from the reconstructed snapshot. Live polling pauses.
 async function enterReplay(key) {
   try {
-    const tl = await (await fetch(`/api/replay/timeline?key=${encodeURIComponent(key)}`, { cache: "no-store" })).json();
+    const tl = await getJSON(`/api/replay/timeline?key=${encodeURIComponent(key)}`);
     if (!tl.available || !tl.count) {
       REPLAY_UNAVAILABLE.add(key);
-      setHTML("archive", sessionsView(SESSIONS));
+      _archRepaint();
       return;
     }
     REPLAY_KEY = key; REPLAY_POINTS = tl.points; REPLAY_MODE = true;
@@ -1633,10 +1630,10 @@ async function enterReplay(key) {
     REPLAY_I = bestFill > 0 ? best : tl.count - 1;
     await loadReplayState();                       // sets REPLAY_SNAPSHOT + renders all tabs
     renderReplayBar();
-    setHTML("archive", sessionsView(SESSIONS));     // reflect the active-replay row state
+    _archRepaint();     // reflect the active-replay row state
   } catch (e) {
     REPLAY_UNAVAILABLE.add(key);
-    setHTML("archive", sessionsView(SESSIONS));
+    _archRepaint();
   }
 }
 
@@ -1644,8 +1641,8 @@ async function enterReplay(key) {
 async function loadReplayState() {
   const bar = $("replaybar"); if (bar) bar.classList.add("rb-busy");
   try {
-    const snap = await (await fetch(
-      `/api/replay/state?key=${encodeURIComponent(REPLAY_KEY)}&at=${REPLAY_I}`, { cache: "no-store" })).json();
+    const snap = await getJSON(
+      `/api/replay/state?key=${encodeURIComponent(REPLAY_KEY)}&at=${REPLAY_I}`);
     if (snap && snap.available !== false) { REPLAY_SNAPSHOT = snap; renderAll(curData()); }
   } catch (e) { /* leave the prior frame up */ }
   if (bar) bar.classList.remove("rb-busy");
@@ -1665,7 +1662,7 @@ function exitReplay() {
   REPLAY_MODE = false; REPLAY_KEY = null; REPLAY_SNAPSHOT = null; REPLAY_POINTS = []; REPLAY_I = 0;
   renderReplayBar();
   if (LAST) renderAll(curData());                 // back to the live snapshot
-  setHTML("archive", sessionsView(SESSIONS));
+  _archRepaint();
   refresh();                                       // resume live polling now
 }
 
@@ -1770,7 +1767,7 @@ function handleDisconnect() {
 async function refresh() {
   if (REPLAY_MODE) return;   // replay pauses live polling; exitReplay() resumes it
   try {
-    const d = await (await fetch("/api/state", { cache: "no-store" })).json();
+    const d = await getJSON("/api/state");
     _lastOkTs = Date.now();
     if (_dcTimer) clearDisconnect();   // back online -> drop the countdown
     LAST = d;
@@ -1823,7 +1820,7 @@ let MINING_SUB = "identify";       // identify | find | plan
 let MINING_MINERALS = null;        // cached mineral names for the autocomplete
 let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the picker
 let MINING_RS = null;              // cached base RS values, seeding Identify's prediction
-let IDENTIFY_HISTORY = [];         // recent readings {rs, summary, ok}, newest first
+let IDENTIFY_HISTORY = [];         // recent valid readings {rs, summary}, newest first
 const IDENTIFY_HIST_MAX = 8;       // how many recent readings to keep on screen
 let MINING_INIT = false;
 
@@ -1831,7 +1828,7 @@ async function initMining() {
   if (!MINING_INIT) {
     MINING_INIT = true;
     const grab = async (url, key) => {
-      try { return (await (await fetch(url, { cache: "no-store" })).json())[key] || []; }
+      try { return (await getJSON(url))[key] || []; }
       catch (e) { return []; }
     };
     [MINING_MINERALS, MINING_BLUEPRINTS, MINING_RS] = await Promise.all([
@@ -1857,17 +1854,16 @@ const _chance = (p) => (p == null ? "" : Math.round(p * 100) + "%");
 function renderMiningShell() {
   const subs = [["identify", "Identify rock", identifyToolHtml], ["find", "Find mineral", findToolHtml],
                 ["plan", "Blueprint plan", planToolHtml]];
-  // Same underlined sub-tab strip as the Archive tab (.arch-tabs/.arch-tab), for a
-  // consistent secondary-nav look across the app.
-  const bar = subs.map(([k, t]) =>
-    `<button class="arch-tab${MINING_SUB === k ? " active" : ""}" data-sub="${k}" onclick="miningSub('${k}')">${t}</button>`).join("");
+  // Same underlined sub-tab strip as the Archive tab, with a data-sub on each button so
+  // miningSub() can toggle .active without a rebuild.
+  const bar = tabBar(subs, MINING_SUB, "miningSub", { attr: k => `data-sub="${k}"` });
   // Each sub-tool + its own results live in a .msub section; only the active one shows.
   const sections = subs.map(([k, , toolFn]) =>
     `<div class="msub${MINING_SUB === k ? "" : " hide"}" id="msub-${k}">${toolFn()}<div id="mres-${k}" class="mres"></div></div>`).join("");
   const datalist = `<datalist id="dl_mineral">${(MINING_MINERALS || [])
       .map(m => `<option value="${esc(m)}">`).join("")}</datalist>`;
   setHTML("mining", `${datalist}<div class="mining">
-    <div class="arch-tabs">${bar}</div>
+    ${bar}
     ${sections}
   </div>`);
 }
@@ -1912,7 +1908,7 @@ function identifyToolHtml() {
 function identifyHistHtml() {
   if (!IDENTIFY_HISTORY.length) return "";
   return `<span class="mi-hist-k">recent</span>` + IDENTIFY_HISTORY.map(h =>
-    `<button class="mi-chip${h.ok ? "" : " miss"}" onclick="identifyAgain(${h.rs})"
+    `<button class="mi-chip" onclick="identifyAgain(${h.rs})"
        title="Re-run RS ${num(h.rs)}"><b>${num(h.rs)}</b> <span>${esc(h.summary)}</span></button>`).join("");
 }
 // One-line gist of a reading's result, for the history chip.
@@ -1954,7 +1950,7 @@ function identifyKey(e) {
   }
 }
 async function miningIdentify() {
-  const v = parseFloat(($("mi-rs") || {}).value);
+  const v = parseFloat(val("mi-rs"));
   if (!(v > 0)) { setHTML(mres(), `<div class="empty">Enter a positive RS reading.</div>`); return; }
   setHTML(mres(), `<div class="empty">scanning…</div>`);
   try {
@@ -1968,7 +1964,7 @@ async function miningIdentify() {
     // reorder it); a new one is prepended (newest first).
     const ok = candidates.length > 0 || combos.some(c => c.parts.length > 1);
     if (ok) {
-      const entry = { rs: v, summary: identifySummary(candidates, combos), ok: true };
+      const entry = { rs: v, summary: identifySummary(candidates, combos) };
       const at = IDENTIFY_HISTORY.findIndex(h => h.rs === v);
       if (at >= 0) IDENTIFY_HISTORY[at] = entry;
       else IDENTIFY_HISTORY = [entry, ...IDENTIFY_HISTORY].slice(0, IDENTIFY_HIST_MAX);
@@ -2026,7 +2022,7 @@ function findToolHtml() {
   </div>`;
 }
 async function miningFind() {
-  const name = (($("mf-name") || {}).value || "").trim();
+  const name = val("mf-name").trim();
   if (!name) { setHTML(mres(), `<div class="empty">Enter or pick a mineral.</div>`); return; }
   setHTML(mres(), `<div class="empty">searching…</div>`);
   try {
@@ -2168,7 +2164,7 @@ const _miningDur = (s) => {
   return m ? `${m}m${sec ? " " + sec + "s" : ""}` : `${sec}s`;
 };
 async function miningPlanFromBlueprint(name) {
-  name = (name || ($("mp-bp") || {}).value || "").trim();
+  name = (name || val("mp-bp")).trim();
   if (!name) { setHTML(mres(), `<div class="empty">Pick a blueprint.</div>`); return; }
   setHTML(mres(), `<div class="empty">loading blueprint…</div>`);
   try {
