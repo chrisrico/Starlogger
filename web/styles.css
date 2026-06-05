@@ -59,7 +59,63 @@ body::before{
 }
 header,main,footer{position:relative;z-index:2}
 
-/* ---- header / command bar ---- */
+/* ============================================================================
+   App shell: a collapsible left sidebar + a scrolling content column.
+   ========================================================================== */
+.app{display:flex;align-items:flex-start;min-height:100dvh}
+.content{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;min-height:100dvh}
+
+/* ---- sidebar (the former top tab bar) ---- */
+.sidebar{
+  position:sticky;top:0;align-self:flex-start;z-index:7;
+  flex:0 0 212px;width:212px;height:100dvh;
+  display:flex;flex-direction:column;
+  background:linear-gradient(180deg,rgba(10,16,28,.97),rgba(7,11,21,.92));
+  border-right:1px solid var(--line);
+  backdrop-filter:blur(8px);
+  box-shadow:18px 0 40px -34px rgba(0,0,0,.9);
+  transition:flex-basis .18s ease,width .18s ease;
+}
+.sb-brand{display:flex;align-items:center;gap:11px;padding:16px 16px 14px;
+  border-bottom:1px solid var(--line);overflow:hidden}
+.sb-brand h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- vertical nav buttons (one per screen): icon + label ---- */
+nav{display:flex;flex-direction:column;gap:2px;padding:12px 10px;flex:1 1 auto;
+  overflow-y:auto;overflow-x:hidden}
+nav button{position:relative;display:flex;align-items:center;gap:13px;width:100%;text-align:left;
+  background:transparent;color:var(--ink-2);border:0;border-radius:4px;
+  padding:11px 12px;cursor:pointer;font-family:var(--display);font-size:13px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;transition:color .15s,background .15s}
+.ic{flex:none;width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round}
+nav button .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+nav button:hover{color:var(--ink);background:rgba(79,220,255,.06)}
+nav button.active{color:var(--cyan);background:rgba(79,220,255,.10)}
+nav button.active .ic{filter:drop-shadow(0 0 6px rgba(79,220,255,.55))}
+nav button.active::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;
+  border-radius:0 2px 2px 0;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+
+/* ---- collapse toggle (pinned at the sidebar foot) ---- */
+.sb-collapse{display:flex;align-items:center;gap:13px;width:100%;
+  background:transparent;color:var(--ink-3);border:0;border-top:1px solid var(--line);
+  padding:13px 14px;cursor:pointer;font-family:var(--display);font-size:11px;
+  text-transform:uppercase;letter-spacing:.12em}
+.sb-collapse:hover{color:var(--cyan)}
+.sb-chevron{flex:none;width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round;transition:transform .18s}
+
+/* ---- skinny mode: an icons-only rail (default on mobile; toggle on desktop) ---- */
+.sidebar.collapsed{flex-basis:62px;width:62px}
+.sidebar.collapsed .sb-brand{justify-content:center;padding-left:0;padding-right:0}
+.sidebar.collapsed .sb-brand h1,
+.sidebar.collapsed nav button .lbl,
+.sidebar.collapsed .sb-collapse .lbl{display:none}
+.sidebar.collapsed nav button{justify-content:center;gap:0;padding-left:0;padding-right:0}
+.sidebar.collapsed .sb-collapse{justify-content:center;padding-left:0;padding-right:0}
+.sidebar.collapsed .sb-chevron{transform:rotate(180deg)}
+
+/* ---- header / command bar (now inside the content column) ---- */
 header{
   position:sticky;top:0;z-index:6;padding:14px 22px 0;
   background:linear-gradient(180deg,rgba(7,11,21,.96),rgba(7,11,21,.78));
@@ -67,7 +123,7 @@ header{
   border-bottom:1px solid var(--line);
   box-shadow:0 18px 40px -28px rgba(0,0,0,.9);
 }
-.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.bar{display:flex;align-items:center;justify-content:flex-end;gap:16px;flex-wrap:wrap;min-height:30px}
 .brand{display:flex;align-items:center;gap:12px}
 .glyph{width:30px;height:30px;display:block;flex:none;
   filter:drop-shadow(0 0 7px rgba(79,220,255,.55));animation:twinkle 5s ease-in-out infinite}
@@ -143,47 +199,7 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
 .gauge .remain b.over{color:var(--red)}
 @keyframes barIn{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 
-/* ---- tabs ---- */
-nav{display:flex;gap:4px;margin-top:14px}
-nav button{position:relative;background:transparent;color:var(--ink-2);border:0;border-bottom:2px solid transparent;
-  padding:11px 18px 12px;cursor:pointer;font-family:var(--display);font-size:13px;font-weight:600;
-  letter-spacing:.1em;text-transform:uppercase;transition:color .15s}
-nav button span{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-right:6px}
-nav button:hover{color:var(--ink)}
-nav button.active{color:var(--cyan);border-bottom-color:var(--cyan)}
-nav button.active span{color:var(--cyan-deep)}
-nav button.active::after{content:"";position:absolute;left:0;right:0;bottom:-2px;height:2px;
-  background:var(--cyan);box-shadow:0 0 12px var(--cyan)}
-
-/* ---- mobile: collapse the tab bar into a hamburger dropdown ---- */
-.navtoggle{display:none}  /* desktop: the horizontal nav is shown, toggle hidden */
 @media (max-width:680px){
-  .navtoggle{
-    display:flex;align-items:center;gap:12px;width:100%;margin-top:14px;cursor:pointer;
-    padding:11px 14px;background:rgba(0,0,0,.35);border:1px solid var(--line-2);border-radius:4px;
-    font-family:var(--display);font-size:13px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
-  }
-  .navtoggle .nt-bars{display:inline-flex;flex-direction:column;justify-content:center;gap:3px;width:18px;flex:none}
-  .navtoggle .nt-bars i{display:block;height:2px;border-radius:2px;background:var(--cyan);
-    box-shadow:0 0 6px var(--cyan-deep);transition:transform .2s,opacity .2s}
-  .navtoggle .nt-label{flex:1;text-align:left;color:var(--ink)}
-  .navtoggle::after{content:"\25BE";color:var(--ink-3);transition:transform .2s}
-  .navtoggle[aria-expanded="true"]::after{transform:rotate(180deg)}
-  /* morph the bars into an X when open */
-  .navtoggle[aria-expanded="true"] .nt-bars i:nth-child(1){transform:translateY(5px) rotate(45deg)}
-  .navtoggle[aria-expanded="true"] .nt-bars i:nth-child(2){opacity:0}
-  .navtoggle[aria-expanded="true"] .nt-bars i:nth-child(3){transform:translateY(-5px) rotate(-45deg)}
-
-  nav{display:none;flex-direction:column;gap:0;margin-top:6px;overflow:hidden;
-    background:var(--panel);border:1px solid var(--line);border-radius:4px}
-  nav.open{display:flex}
-  nav button{width:100%;text-align:left;padding:13px 16px;
-    border-bottom:1px solid var(--line);border-left:2px solid transparent}
-  nav button:last-child{border-bottom:0}
-  nav button.active{border-bottom-color:var(--line);border-left-color:var(--cyan);
-    background:rgba(79,220,255,.08)}
-  nav button.active::after{display:none}  /* the under-tab bar doesn't fit a vertical list */
-
   /* readouts (incl. the Player name) scroll sideways as one row instead of wrapping
      into a stacked grid; swipe to see the rest. */
   .readouts{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
@@ -192,7 +208,7 @@ nav button.active::after{content:"";position:absolute;left:0;right:0;bottom:-2px
   .stat{flex:0 0 auto}   /* keep each readout its natural width so the row overflows + scrolls */
 }
 
-main{padding:22px;max-width:1280px;margin:0 auto}
+main{padding:22px;max-width:1280px;margin:0 auto;width:100%}
 
 /* ---- card grid ---- */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}

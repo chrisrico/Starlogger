@@ -89,37 +89,40 @@ const TABS = ["loading", "unloading", "routes", "missions", "grid", "history", "
 function activateTab(name) {
   if (!TABS.includes(name)) return;
   TAB = name;
-  let label = name;
   document.querySelectorAll("#nav button").forEach(b => {
-    const on = b.dataset.tab === name;
-    b.classList.toggle("active", on);
-    if (on) label = b.textContent.replace(/^\s*\d+\s*/, "").trim();  // drop the "01" prefix
+    b.classList.toggle("active", b.dataset.tab === name);
   });
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
-  closeNav();                                  // collapse the mobile dropdown after a pick
-  const lbl = $("navtoggle-label"); if (lbl) lbl.textContent = label;  // reflect the tab on the toggle
   if (name === "history") { ARCH_PICK = true; loadSessions(); }
   if (name === "mining") initMining();
 }
-// Mobile hamburger: the nav collapses to a dropdown under the toggle (CSS @media).
-function closeNav() {
-  const nav = $("nav"), tog = $("navtoggle");
-  if (nav) nav.classList.remove("open");
-  if (tog) tog.setAttribute("aria-expanded", "false");
+
+// ---- sidebar: wide (icon + label) ⇄ skinny (icons only) ----
+// The footer toggle flips the `.collapsed` (skinny) state and persists an explicit
+// choice. With no stored choice the default follows the viewport — skinny on narrow
+// screens (≤880px, the mobile default), wide on desktop — and tracks the breakpoint
+// live until the user picks a side.
+const SB_KEY = "sidebarCollapsed";
+const SB_MQ = window.matchMedia("(max-width:880px)");
+function applyCollapsed(on) {
+  const sb = $("sidebar"), tog = $("navtoggle");
+  if (!sb) return;
+  sb.classList.toggle("collapsed", on);
+  if (tog) { tog.setAttribute("aria-expanded", on ? "false" : "true");
+             tog.title = on ? "Expand sidebar" : "Collapse sidebar"; }
 }
-function toggleNav() {
-  const nav = $("nav"), tog = $("navtoggle");
-  if (!nav) return;
-  const open = nav.classList.toggle("open");
-  if (tog) tog.setAttribute("aria-expanded", open ? "true" : "false");
+function storedPref() { try { return localStorage.getItem(SB_KEY); } catch (_) { return null; } }
+function setCollapsed(on) {
+  applyCollapsed(on);
+  try { localStorage.setItem(SB_KEY, on ? "1" : "0"); } catch (_) {}
 }
-const _navToggleEl = $("navtoggle"); if (_navToggleEl) _navToggleEl.onclick = toggleNav;
-// tap outside the open dropdown closes it (the toggle handles its own clicks)
-document.addEventListener("click", (e) => {
-  if ($("nav") && $("nav").classList.contains("open")
-      && !e.target.closest("#nav") && !e.target.closest("#navtoggle")) closeNav();
-});
+applyCollapsed(storedPref() === null ? SB_MQ.matches : storedPref() === "1");
+// follow the viewport across the breakpoint until an explicit choice is made
+SB_MQ.addEventListener?.("change", e => { if (storedPref() === null) applyCollapsed(e.matches); });
+const _collapseBtn = $("navtoggle");
+if (_collapseBtn) _collapseBtn.onclick = () => setCollapsed(!$("sidebar").classList.contains("collapsed"));
+
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
 if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
 
@@ -128,7 +131,7 @@ if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
 // MOLE, ROC…), the cargo-hauling tabs make no sense, so loading/manifest/unloading/
 // routes are hidden and the Mining tab takes their slot right after Contracts. Driven
 // from renderAll on every snapshot; idempotent via MINING_LAYOUT so it only touches the
-// DOM (and renumbers the visible tabs) on an actual ship-type change.
+// DOM on an actual ship-type change.
 const HAUL_TABS = ["missions", "loading", "grid", "unloading", "routes", "history"];
 const MINE_TABS = ["missions", "mining", "history"];
 let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
@@ -139,11 +142,7 @@ function applyTabLayout(mining) {
   document.querySelectorAll("#nav button").forEach(b => {
     const i = order.indexOf(b.dataset.tab);
     b.classList.toggle("hide", i < 0);
-    if (i >= 0) {
-      b.style.order = i;                                  // flex order: keep the slots contiguous
-      const span = b.querySelector("span");
-      if (span) span.textContent = String(i + 1).padStart(2, "0");  // renumber 01,02,03…
-    }
+    if (i >= 0) b.style.order = i;   // flex order: keep the visible slots contiguous
   });
   // If the active tab just got hidden, fall back to a sensible visible one.
   if (!order.includes(TAB)) activateTab(mining ? "mining" : "missions");
