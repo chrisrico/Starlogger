@@ -54,6 +54,18 @@ SB_PATH = os.path.join(SB_DIR, f"starbreaker-{SB_VERSION}" + (".exe" if IS_WINDO
 
 SCU_M = 1.25  # edge length in metres of a 1 SCU cube
 
+# Stock ship "components" worth surfacing with their grade. The item record's
+# SAttachableComponentParams.AttachDef carries an integer ``Grade`` (1-4) which the
+# game's UI shows as a letter; map it and key the four headline component slots by a
+# friendly name. (Verified vs the localised item description: Grade 1 -> "Grade: A".)
+_GRADE_LETTER = {1: "A", 2: "B", 3: "C", 4: "D"}
+_COMPONENT_SLOTS = {
+    "PowerPlant": "power_plant",
+    "Cooler": "cooler",
+    "Shield": "shield",
+    "QuantumDrive": "quantum_drive",
+}
+
 # A handful of capital / modular ships whose grids live in same-class sub-assemblies
 # that the flattened loadout text can't disambiguate. Hand-pinned total SCU; rare
 # enough that geometry is synthesised as one block. Revisit if StarBreaker gains a
@@ -236,6 +248,53 @@ def _find_container_ref(o) -> str | None:
     return None
 
 
+def _find_struct(o, type_name: str):
+    """First nested struct whose ``_Type_`` is ``type_name`` (depth-first), or None."""
+    if isinstance(o, dict):
+        if o.get("_Type_") == type_name:
+            return o
+        for v in o.values():
+            r = _find_struct(v, type_name)
+            if r is not None:
+                return r
+    elif isinstance(o, list):
+        for v in o:
+            r = _find_struct(v, type_name)
+            if r is not None:
+                return r
+    return None
+
+
+def build_component_index(records_root: str) -> dict:
+    """Map a ship-component item class (lower) -> {slot, size, grade, grade_num} for the
+    four headline components (power plant / cooler / shield / quantum drive), read from
+    each item's ``SAttachableComponentParams.AttachDef`` (``Type``/``Size``/``Grade``)."""
+    idx: dict[str, dict] = {}
+    for sub in ("powerplant", "cooler", "shieldgenerator", "quantumdrive"):
+        pat = os.path.join(records_root, "**", "entities", "scitem", "ships", sub, "**", "*.json")
+        for p in glob.glob(pat, recursive=True):
+            try:
+                d = json.load(open(p))
+            except (OSError, ValueError):
+                continue
+            name = d.get("_RecordName_", "")
+            if "." not in name:
+                continue
+            ad = _find_struct(d.get("_RecordValue_"), "SAttachableComponentParams")
+            ad = (ad or {}).get("AttachDef") or {}
+            slot = _COMPONENT_SLOTS.get(ad.get("Type"))
+            if not slot:
+                continue
+            grade = ad.get("Grade")
+            idx[name.split(".", 1)[1].lower()] = {
+                "slot": slot,
+                "size": ad.get("Size"),
+                "grade": _GRADE_LETTER.get(grade),
+                "grade_num": grade,
+            }
+    return idx
+
+
 _ROOT_RE = re.compile(r"^EntityClassDefinition\.(\S+)\s")
 _INST_RE = re.compile(r"^(\s+)(\S+)\s+\[([^\]]*)\]")
 
@@ -372,6 +431,40 @@ def resolve_cargo_grids(ship_class: str, loadout_text: str, grid_index: dict) ->
             elif c in blocks and c not in grid_index and c not in visited:
                 stack.append(c)
     return grids
+
+
+def resolve_ship_components(ship_class: str, loadout_text: str, component_index: dict,
+                           loc: dict) -> dict:
+    """A ship's stock components grouped by slot -> [{name, grade, grade_num, size, count}].
+    Reads only the ship's OWN loadout block (power plant / cooler / shield / quantum drive
+    install directly on the hull, not on sub-assemblies), counting identical installs."""
+    blocks = _parse_loadout_blocks(loadout_text or "")
+    out: dict[str, dict] = {}   # slot -> {component_class: entry}
+    for child in blocks.get(ship_class.lower(), []):
+        info = component_index.get(child)
+        if not info:
+            continue
+        bucket = out.setdefault(info["slot"], {})
+        if child in bucket:
+            bucket[child]["count"] += 1
+            continue
+        # localised item name: the key is inconsistently formed across components --
+        # it may keep or drop the `_scitem` suffix and may carry an extra underscore
+        # after `item_name` (e.g. `item_Name_POWR_AEGS_S03_Centurion`). Try each form
+        # before falling back to the raw class.
+        bare = child.removesuffix("_scitem")
+        name = (loc.get(f"item_name{child}")
+                or loc.get(f"item_name{bare}")
+                or loc.get(f"item_name_{bare}")
+                or child)
+        bucket[child] = {
+            "name": name,
+            "grade": info["grade"],
+            "grade_num": info["grade_num"],
+            "size": info["size"],
+            "count": 1,
+        }
+    return {slot: list(by_class.values()) for slot, by_class in out.items()}
 
 
 def _wrap_cells(boxes: list) -> list:
@@ -1023,17 +1116,12 @@ def _pad_block(short: int, x0: int) -> dict:
 
 
 def resolve_ship_groups(cls: str, p4k: str, sb: str, grid_index: dict,
-                        workdir: str) -> tuple:
+                        workdir: str, loadout_text: str = "") -> tuple:
     """Resolve one ship -> (total_scu, groups). Prefers deck-accurate geometry from
     `entity export --dump-hierarchy`; cross-checks capacity against the text loadout
     and, if the hierarchy missed sub-assembly grids (or capacity is overridden), falls
     back to a synthesised layout that is correct on SCU/packing if not deck-accurate."""
-    grids = []
-    try:
-        text = _run(sb, p4k, ["entity", "loadout", cls], timeout=120)
-        grids = resolve_cargo_grids(cls, text, grid_index)
-    except (RuntimeError, subprocess.TimeoutExpired):
-        pass
+    grids = resolve_cargo_grids(cls, loadout_text, grid_index) if loadout_text else []
     scu = SCU_OVERRIDES.get(cls, sum(grid_cells_scu(grid_index, c) for c in grids))
     if scu <= 0:
         return 0, [], "synth"   # grid-less (e.g. a mining vehicle); caller decides to keep
@@ -1089,7 +1177,9 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
         recs = extract_records(workdir, p4k, sb)
         loc = load_localization(recs)
         grid_index = build_grid_index(recs)
-        progress(f"resolved {len(grid_index)} cargo-grid definitions")
+        component_index = build_component_index(recs)
+        progress(f"resolved {len(grid_index)} cargo-grid + "
+                 f"{len(component_index)} component definitions")
 
         ships: dict[str, dict] = {}
         bases = base_ship_classes(recs)
@@ -1106,7 +1196,12 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
             progress(f"resolving {i + 1}/{len(vehicles)}: {cls}")
             meta = _ship_meta(rec_path, loc)
             mining = _is_mining_role(meta)
-            scu, groups, layout = resolve_ship_groups(cls, p4k, sb, grid_index, workdir)
+            try:
+                loadout_text = _run(sb, p4k, ["entity", "loadout", cls], timeout=120)
+            except (RuntimeError, subprocess.TimeoutExpired):
+                loadout_text = ""
+            scu, groups, layout = resolve_ship_groups(cls, p4k, sb, grid_index, workdir,
+                                                      loadout_text)
             # Keep cargo ships; also keep mining vehicles even with no cargo grid so the
             # UI can flag them (the MOLE has a grid; the Prospector / Golem / ROC / ATLS
             # GEO don't).
@@ -1125,6 +1220,9 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                 "groups": groups,
             }
             entry.update(meta)
+            components = resolve_ship_components(cls, loadout_text, component_index, loc)
+            if components:
+                entry["components"] = components
             if mining:
                 entry["mining"] = True
             entry.update(_NAME_FIXUPS.get(cls, {}))   # hand-fix names that lack localisation
