@@ -229,6 +229,8 @@ main{padding:22px;max-width:1280px;margin:0 auto}
 .edc .edc-pen{opacity:0;color:var(--ink-3);font-size:11px;margin-left:4px;transition:opacity .12s}
 .edc:hover .edc-pen{opacity:.9}
 .edc.is-unknown{text-decoration:underline dotted var(--amber);text-underline-offset:3px}
+/* a missing/placeholder station in a read-only cell — reads as "unknown", not a name */
+.unk{color:var(--amber);font-style:italic}
 .edc.is-unknown .edc-unkn{color:var(--amber);font-style:italic}
 .edc.is-unknown .edc-pen{opacity:.9;color:var(--amber)}
 .edc.editing{display:inline-flex}

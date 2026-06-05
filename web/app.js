@@ -354,7 +354,13 @@ const partialNote = (d) => d.counts.partial
 //   cargo|qty — keyed by mission_id+objective id -> /api/leg-field
 // Click a value to edit it in place; Enter/blur commits, Escape cancels. The token
 // identifies which single cell is open so the 3s poll never yanks it mid-edit.
-const UNKNOWN_STATION = (s) => !s || /^Unknown station/.test(s);
+// A station value that's a placeholder, not a real name: missing, an unresolved
+// "Unknown station …", or an "Origin/Destination pending" marker. Such values must
+// read as *missing*, never as the station's actual name.
+const UNKNOWN_STATION = (s) => !s || /^Unknown station/.test(s) || /^(Origin|Destination) pending$/.test(s);
+// Display a station as plain text when real, or muted/italic ("missing") when a
+// placeholder — for the read-only cells that don't use the editable() machinery.
+const stationText = (s) => UNKNOWN_STATION(s) ? `<span class="unk">${esc(s || "unknown")}</span>` : esc(s);
 const cellTok = (f) => [f.k, f.zone || "", f.mid || "", f.oid || ""].join("|");
 const editPlaceholder = (k) => k === "qty" ? "SCU" : k === "cargo" ? "commodity" : "station name";
 const editList = (k) => k === "cargo" ? "dl_cargo" : (k === "station" || k === "origin") ? "dl_station" : "";
@@ -704,7 +710,8 @@ function missionLegs(m) {
   }
   if (drops.length) {
     const ct = (m.cargo_types || []).join(", ") || "Unknown cargo";
-    const dests = (m.destinations || []).map(esc).join(", ") || "?";
+    const dests = (m.destinations || []).length
+      ? m.destinations.map(stationText).join(", ") : '<span class="unk">?</span>';
     const row = legRow(esc(ct), '<span class="warn">?</span> SCU',
       `${dests} <span class="sub">· qty not logged</span>`, { warnCargo: true });
     return `<div class="manilegs">${row}</div>`;
@@ -715,9 +722,9 @@ function missionLegs(m) {
 function editorRow(m) {
   const opt = (v, l, sel) => `<option value="${v}"${sel ? " selected" : ""}>${l}</option>`;
   const statuses = ["active", "completed", "abandoned", "failed", "expired"];
-  // an unresolved origin ("Unknown station …") is a placeholder, not real content:
-  // show it as the placeholder and leave the field empty so typing overwrites it.
-  const unknownOrigin = !m.origin || /^Unknown station/.test(m.origin);
+  // an unresolved origin (Unknown station / Origin pending) is a placeholder, not real
+  // content: show it as the input placeholder and leave the field empty so typing overwrites.
+  const unknownOrigin = UNKNOWN_STATION(m.origin);
   return `<tr class="editrow"><td colspan="6"><div class="editor"
     onkeydown="edFormKey(event,'${m.mission_id}')">
     <div class="ef"><label for="ed_title">Title</label><input id="ed_title" value="${esc(m.title || "")}"></div>
@@ -757,7 +764,7 @@ function missionsTable(ms) {
     const tr = `<tr class="${m.hidden ? "hiddenrow" : ""}">
       <td><span class="badge b-${m.status}">${esc(m.status)}</span>${note}</td>
       <td>${esc(m.title || m.contract)}${edited}<div class="sub">${esc(m.org)}</div>${tags}</td>
-      <td>${esc(m.origin)}</td>
+      <td>${stationText(m.origin)}</td>
       <td>${missionLegs(m)}</td>
       <td>${m.reward ? num(m.reward) + " aUEC" : '<span class="sub">—</span>'}</td>
       <td>${action}</td>
