@@ -54,6 +54,12 @@ def mineables_version(path: str = MINEABLES_PATH) -> str | None:
     return (load_mineables(path) or {}).get("game_version")
 
 
+def rock_signatures(path: str = MINEABLES_PATH) -> list:
+    """Sorted distinct base RS values across the catalog -- seeds the Identify input's
+    inline prediction (a single rock reads its base; a cluster reads base x count)."""
+    return sorted({r["rs"] for r in catalog(path) if r.get("rs")})
+
+
 def lookup_rs(rs_value: float, tol: float = 0.5, max_count: int = 500,
               path: str = MINEABLES_PATH) -> list:
     """Candidate rock classes for an observed HUD RS reading.

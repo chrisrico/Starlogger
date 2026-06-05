@@ -732,17 +732,50 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mining{display:flex;flex-direction:column;gap:14px}
 /* sub-tab strip reuses the Archive tab's .arch-tabs/.arch-tab styling */
 .mtool .mform{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:4px 16px 6px}
-.mtool .mform.col{flex-direction:column;align-items:stretch}
-.mtool .mform label{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.mtool .mform label .mn-dim{text-transform:none;letter-spacing:0}
-.mining input,.mining textarea{background:var(--void);border:1px solid var(--line-2);color:var(--ink);
+.mining input{background:var(--void);border:1px solid var(--line-2);color:var(--ink);
   border-radius:2px;padding:8px 10px;font-family:var(--mono);font-size:13px}
 .mining input[type=number]{width:140px}
 .mining input#mf-name{min-width:200px}
-.mining input#mp-bp{flex:1;min-width:280px}
-.mining textarea{resize:vertical;width:100%}
-.mining input:focus,.mining textarea:focus{outline:none;border-color:var(--cyan);
+.mining input:focus{outline:none;border-color:var(--cyan);
   box-shadow:0 0 0 2px rgba(79,220,255,.18)}
+/* blueprint picker: search input + grouped (type/size) dropdown */
+.bp-dd{position:relative;flex:1;min-width:280px}
+.bp-dd input#mp-bp{width:100%;box-sizing:border-box}
+.bp-dd-list{display:none;position:absolute;z-index:30;top:calc(100% + 4px);left:0;right:0;
+  max-height:340px;overflow-y:auto;background:var(--panel-2);border:1px solid var(--line-2);
+  border-radius:3px;box-shadow:0 12px 30px rgba(0,0,0,.45)}
+.bp-dd-list.open{display:block}
+.bp-dd-grp{position:sticky;top:0;display:flex;justify-content:space-between;gap:10px;
+  padding:6px 12px;background:var(--panel);border-bottom:1px solid var(--line);
+  font-family:var(--display);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-3)}
+.bp-dd-size{padding:4px 12px 2px 18px;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.06em;color:var(--cyan)}
+.bp-dd-item{padding:5px 12px 5px 18px;font-family:var(--mono);font-size:12.5px;color:var(--ink-1);
+  cursor:pointer}
+.bp-dd-item:hover{background:rgba(79,220,255,.12);color:var(--cyan)}
+/* prominent "scan for" band on the Find-mineral results */
+.mscan{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 16px;
+  border-bottom:1px solid var(--line)}
+.mscan-k{flex:0 0 auto;font-family:var(--display);font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-3)}
+.mscan-vals{display:flex;flex-wrap:wrap;gap:8px}
+.mscan-rs{font-family:var(--mono);font-size:16px;font-weight:600;color:var(--cyan);
+  background:rgba(79,220,255,.1);border:1px solid rgba(79,220,255,.4);border-radius:3px;
+  padding:3px 11px;letter-spacing:.02em}
+/* Identify: recent-readings strip */
+.mi-hist{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:0 16px}
+.mi-hist:empty{display:none}
+.mi-hist-k{font-family:var(--display);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin-right:1px}
+.mtool .mi-chip{display:inline-flex;align-items:baseline;gap:6px;padding:3px 9px;
+  font-family:var(--mono);font-size:11.5px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel-2);color:var(--ink-2)}
+.mtool .mi-chip b{color:var(--cyan);font-weight:600}
+.mtool .mi-chip span{color:var(--ink-3)}
+.mtool .mi-chip.miss{opacity:.6}
+.mtool .mi-chip.miss b{color:var(--ink-2)}
+.mtool .mi-chip:hover{border-color:var(--cyan);background:rgba(79,220,255,.08)}
 /* tool-card buttons only (scoped to .mtool so the .arch-tab sub-tab strip keeps its
    own underlined styling instead of getting a box border) */
 .mtool button{background:transparent;border:1px solid var(--line-2);color:var(--ink);
@@ -750,7 +783,6 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mtool button:hover{border-color:var(--cyan);color:var(--cyan)}
 .mtool button.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan);font-weight:600}
 .mtool button.primary:hover{box-shadow:0 0 16px rgba(79,220,255,.5);color:#04121d}
-.mtool .mform.col button{align-self:flex-start}
 .mhint{margin:2px 16px 12px;color:var(--ink-2);font-size:12px;line-height:1.5}
 .mhint code{font-family:var(--mono);color:var(--cyan);font-size:11.5px}
 .mres{display:flex;flex-direction:column;gap:12px}

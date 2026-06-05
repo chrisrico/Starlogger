@@ -7,8 +7,8 @@ material list its recipe needs: ``{slot, resource, scu, min_quality}`` per ingre
 plus a ``minerals`` shortcut. That feeds the Mining tab's blueprint planner: pick a
 blueprint -> its required minerals -> the rocks (and RS values) that yield them.
 
-``lookup_blueprint`` resolves a (case-insensitive) blueprint name; ``blueprint_names``
-backs the autocomplete.
+``lookup_blueprint`` resolves a (case-insensitive) blueprint name; ``blueprint_catalog``
+({name, category} rows) backs the planner's grouped picker.
 """
 
 from __future__ import annotations
@@ -57,6 +57,14 @@ def blueprint_names(path: str = BLUEPRINTS_PATH) -> list:
     """Sorted distinct blueprint names (for the autocomplete)."""
     load_blueprints(path)
     return sorted({b["name"] for b in _cache["by_name"].values()})
+
+
+def blueprint_catalog(path: str = BLUEPRINTS_PATH) -> list:
+    """Sorted ``{name, category}`` rows -- backs the planner's grouped picker, which
+    organises blueprints by category (type + size)."""
+    load_blueprints(path)
+    return sorted(({"name": b["name"], "category": b.get("category", "")}
+                   for b in _cache["by_name"].values()), key=lambda r: r["name"].lower())
 
 
 def lookup_blueprint(name: str, path: str = BLUEPRINTS_PATH) -> dict | None:

@@ -18,7 +18,7 @@ function setHTML(id, html) {
   _seen[id] = true;
 }
 
-let TAB = "missions";   // Contracts is the first/default tab
+let TAB = "contracts";   // Contracts is the first/default tab
 let LAST = null;      // latest snapshot
 let EDIT = null;      // mission_id whose editor is open (Contracts tab)
 let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
@@ -39,7 +39,7 @@ function toggleArch(key) {
   if (ARCH_OPEN === key) return;   // the open section stays open — only selecting another switches
   ARCH_OPEN = key;
   localStorage.setItem("archOpen", ARCH_OPEN);
-  setHTML("history", sessionsView(SESSIONS));
+  setHTML("archive", sessionsView(SESSIONS));
 }
 // When the Archive opens with NOTHING expanded, auto-open whichever of the Contract Log /
 // Trade Loads reflects the most recent activity. If a section is already open (a previous
@@ -62,7 +62,7 @@ let ROUTE_SORT = localStorage.getItem("routeSort") || "profit";
 function setRouteSort(key) {
   ROUTE_SORT = key;
   localStorage.setItem("routeSort", key);
-  setHTML("history", sessionsView(SESSIONS));
+  setHTML("archive", sessionsView(SESSIONS));
 }
 // One Archive section as a tab descriptor; sessionsView() renders the tab bar and the
 // selected section's body (only the active body is built into the DOM).
@@ -79,8 +79,10 @@ function logTable(headRow, bodyRows, emptyMsg) {
     ? `<div class="logwrap"><table class="logtable"><thead><tr>${headRow}</tr></thead><tbody>${bodyRows}</tbody></table></div>`
     : `<div class="empty">${emptyMsg}</div>`;
 }
-// A header cell; `num` right-aligns it to match a numeric column's values.
-const th = (label, num) => `<th${num ? ' class="lt-num"' : ""}>${label}</th>`;
+// A header cell; `num` right-aligns it to match a numeric column's values. `tip`
+// (optional) adds a hover tooltip explaining the column.
+const th = (label, num, tip) =>
+  `<th${num ? ' class="lt-num"' : ""}${tip ? ` title="${esc(tip)}"` : ""}>${label}</th>`;
 // A small uppercased status/category pill (the .lt-tag family).
 const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
 
@@ -93,7 +95,7 @@ let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "p
 let PLAN_SUB = localStorage.getItem("planSub") || "route";    // "route" · "hold"
 
 // ---- tabs (with URL-hash deep-linking) ---- //
-const TABS = ["cargo", "plan", "missions", "history", "mining"];
+const TABS = ["cargo", "plan", "contracts", "archive", "mining"];
 function activateTab(name) {
   if (!TABS.includes(name)) return;
   TAB = name;
@@ -102,7 +104,7 @@ function activateTab(name) {
   });
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
-  if (name === "history") { ARCH_PICK = true; loadSessions(); }
+  if (name === "archive") { ARCH_PICK = true; loadSessions(); }
   if (name === "mining") initMining();
 }
 
@@ -173,8 +175,8 @@ function modeSwitchHtml(d) {
 // sense, so the Cargo and Plan tabs are hidden and the Mining tab takes their slot right
 // after Contracts. Driven from renderAll on every snapshot; idempotent via MINING_LAYOUT so
 // it only touches the DOM on an actual mode change.
-const HAUL_TABS = ["missions", "cargo", "plan", "history"];
-const MINE_TABS = ["missions", "mining", "history"];
+const HAUL_TABS = ["contracts", "cargo", "plan", "archive"];
+const MINE_TABS = ["contracts", "mining", "archive"];
 let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
 function applyTabLayout(mining) {
   if (MINING_LAYOUT === mining) return;
@@ -186,7 +188,7 @@ function applyTabLayout(mining) {
     if (i >= 0) b.style.order = i;   // flex order: keep the visible slots contiguous
   });
   // If the active tab just got hidden, fall back to a sensible visible one.
-  if (!order.includes(TAB)) activateTab(mining ? "mining" : "missions");
+  if (!order.includes(TAB)) activateTab(mining ? "mining" : "contracts");
 }
 
 // Close the Contract Log's Type-filter dropdown on any click outside it (the toggle
@@ -904,7 +906,7 @@ function missionsTable(ms) {
   return `<div class="tscroll"><table><thead><tr><th>Status</th><th>Mission</th><th>Origin</th><th>Cargo → Destination</th><th>Reward</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-function renderMissions() { const d = curData(); if (d) setHTML("missions", missionsTable(d.missions)); }
+function renderMissions() { const d = curData(); if (d) setHTML("contracts", missionsTable(d.missions)); }
 
 // ---- cargo grid (current ship) ---- //
 // Distinct, evenly-spread hues per destination (golden-angle), stable as long as
@@ -926,7 +928,7 @@ function renderAll(d) {
   // renders only its active sub, so combining all three keeps either sub stable mid-interaction.
   if (!EDIT_CELL) setHTML("cargo", cargoView(d));
   if (!EDIT_CELL && DRAG_DEST == null && !GRID_HOVER) setHTML("plan", planView2(d));
-  if (EDIT === null) setHTML("missions", missionsTable(d.missions));  // don't clobber an open editor
+  if (EDIT === null) setHTML("contracts", missionsTable(d.missions));  // don't clobber an open editor
 }
 
 const loadOrder = (gs) => [...gs].sort((a, b) => b.routeIdx - a.routeIdx);
@@ -1342,7 +1344,7 @@ let CONTRACT_TYPE_HIDDEN = new Set(JSON.parse(localStorage.getItem("ctHidden") |
 let TYPE_MENU_OPEN = false;
 let CT_PRESENT = [];
 function _saveCtHidden() { localStorage.setItem("ctHidden", JSON.stringify([...CONTRACT_TYPE_HIDDEN])); }
-function _archRepaint() { setHTML("history", sessionsView(SESSIONS)); }
+function _archRepaint() { setHTML("archive", sessionsView(SESSIONS)); }
 function toggleTypeMenu() { TYPE_MENU_OPEN = !TYPE_MENU_OPEN; _archRepaint(); }
 function toggleTypeFilter(t) {
   CONTRACT_TYPE_HIDDEN.has(t) ? CONTRACT_TYPE_HIDDEN.delete(t) : CONTRACT_TYPE_HIDDEN.add(t);
@@ -1565,7 +1567,7 @@ async function loadSessions() {
     SESSIONS = await (await fetch("/api/sessions", { cache: "no-store" })).json();
   } catch (e) { SESSIONS = SESSIONS || []; }
   if (ARCH_PICK) { if (!ARCH_OPEN) ARCH_OPEN = archDefaultSection(); ARCH_PICK = false; }  // only when none open
-  setHTML("history", sessionsView(SESSIONS));
+  setHTML("archive", sessionsView(SESSIONS));
 }
 
 // Flag/unflag a trade load as lost (cargo destroyed/stolen). Optimistically updates
@@ -1576,7 +1578,7 @@ async function markTradeLost(id, lost) {
     lost ? set.add(id) : set.delete(id);
     LAST.lost_trades = [...set];
   }
-  setHTML("history", sessionsView(SESSIONS));
+  setHTML("archive", sessionsView(SESSIONS));
   try {
     await fetch("/api/trade-lost", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -1625,7 +1627,7 @@ async function enterReplay(key) {
     const tl = await (await fetch(`/api/replay/timeline?key=${encodeURIComponent(key)}`, { cache: "no-store" })).json();
     if (!tl.available || !tl.count) {
       REPLAY_UNAVAILABLE.add(key);
-      setHTML("history", sessionsView(SESSIONS));
+      setHTML("archive", sessionsView(SESSIONS));
       return;
     }
     REPLAY_KEY = key; REPLAY_POINTS = tl.points; REPLAY_MODE = true;
@@ -1638,10 +1640,10 @@ async function enterReplay(key) {
     REPLAY_I = bestFill > 0 ? best : tl.count - 1;
     await loadReplayState();                       // sets REPLAY_SNAPSHOT + renders all tabs
     renderReplayBar();
-    setHTML("history", sessionsView(SESSIONS));     // reflect the active-replay row state
+    setHTML("archive", sessionsView(SESSIONS));     // reflect the active-replay row state
   } catch (e) {
     REPLAY_UNAVAILABLE.add(key);
-    setHTML("history", sessionsView(SESSIONS));
+    setHTML("archive", sessionsView(SESSIONS));
   }
 }
 
@@ -1670,7 +1672,7 @@ function exitReplay() {
   REPLAY_MODE = false; REPLAY_KEY = null; REPLAY_SNAPSHOT = null; REPLAY_POINTS = []; REPLAY_I = 0;
   renderReplayBar();
   if (LAST) renderAll(curData());                 // back to the live snapshot
-  setHTML("history", sessionsView(SESSIONS));
+  setHTML("archive", sessionsView(SESSIONS));
   refresh();                                       // resume live polling now
 }
 
@@ -1780,7 +1782,7 @@ async function refresh() {
     if (_dcTimer) clearDisconnect();   // back online -> drop the countdown
     LAST = d;
     renderAll(curData());                  // render every tab from the live snapshot
-    if (TAB === "history") loadSessions();  // keep archive fresh while viewing
+    if (TAB === "archive") loadSessions();  // keep archive fresh while viewing
     const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
     const sess = d.logged_in ? ("session since " + (d.session_started_at || "?")) : "at main menu (logged out)";
     // RSI's patch-notes page is what the launcher links to pre-update (then hides) —
@@ -1826,7 +1828,10 @@ setInterval(refresh, 3000);
 // ============================================================================ //
 let MINING_SUB = "identify";       // identify | find | plan
 let MINING_MINERALS = null;        // cached mineral names for the autocomplete
-let MINING_BLUEPRINTS = null;      // cached blueprint names for the autocomplete
+let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the picker
+let MINING_RS = null;              // cached base RS values, seeding Identify's prediction
+let IDENTIFY_HISTORY = [];         // recent readings {rs, summary, ok}, newest first
+const IDENTIFY_HIST_MAX = 8;       // how many recent readings to keep on screen
 let MINING_INIT = false;
 
 async function initMining() {
@@ -1836,8 +1841,9 @@ async function initMining() {
       try { return (await (await fetch(url, { cache: "no-store" })).json())[key] || []; }
       catch (e) { return []; }
     };
-    [MINING_MINERALS, MINING_BLUEPRINTS] = await Promise.all([
-      grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints")]);
+    [MINING_MINERALS, MINING_BLUEPRINTS, MINING_RS] = await Promise.all([
+      grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints"),
+      grab("/api/rock-signatures", "signatures")]);
   }
   renderMiningShell();
 }
@@ -1855,9 +1861,7 @@ function renderMiningShell() {
   const tool = MINING_SUB === "identify" ? identifyToolHtml()
     : MINING_SUB === "find" ? findToolHtml() : planToolHtml();
   const datalist = `<datalist id="dl_mineral">${(MINING_MINERALS || [])
-      .map(m => `<option value="${esc(m)}">`).join("")}</datalist>` +
-    `<datalist id="dl_blueprint">${(MINING_BLUEPRINTS || [])
-      .map(b => `<option value="${esc(b)}">`).join("")}</datalist>`;
+      .map(m => `<option value="${esc(m)}">`).join("")}</datalist>`;
   setHTML("mining", `${datalist}<div class="mining">
     <div class="arch-tabs">${bar}</div>
     ${tool}
@@ -1883,16 +1887,68 @@ function mineralUnion(rocks) {
 }
 
 // ---- Identify: RS reading → rock class(es), cluster size, possible minerals ---- //
+// Tuned for rapid back-to-back readings: typing a number + Enter (or Identify) shows the
+// result, then clears and refocuses the box for the next reading. A strip of the last few
+// readings (with their top match) stays on screen so earlier scans can be glanced at. As
+// you type, the box predicts the rest from your recent readings (deposits recur while
+// mining) as a selected suffix — Enter accepts it, keep typing or Esc/Backspace to override.
 function identifyToolHtml() {
   return `<div class="card mtool"><h3><span>RS reading → rock</span></h3>
     <div class="mform">
-      <input id="mi-rs" type="number" min="1" step="1" inputmode="numeric" placeholder="e.g. 9400"
-        aria-label="Radar signature reading" onkeydown="if(event.key==='Enter')miningIdentify()">
+      <input id="mi-rs" type="text" inputmode="numeric" autocomplete="off"
+        placeholder="e.g. 9400" aria-label="Radar signature reading"
+        oninput="identifyPredict(event)" onkeydown="identifyKey(event)">
       <button class="primary" onclick="miningIdentify()">Identify</button>
     </div>
+    <div id="mi-hist" class="mi-hist">${identifyHistHtml()}</div>
     <p class="mhint">The radar number is <code>base RS × number of rocks</code>. RS identifies the rock
       <b>class</b>, not the exact mineral — many classes share a base, so a reading can be ambiguous.</p>
   </div>`;
+}
+// The recent-readings strip; chips re-run their reading when clicked.
+function identifyHistHtml() {
+  if (!IDENTIFY_HISTORY.length) return "";
+  return `<span class="mi-hist-k">recent</span>` + IDENTIFY_HISTORY.map(h =>
+    `<button class="mi-chip${h.ok ? "" : " miss"}" onclick="identifyAgain(${h.rs})"
+       title="Re-run RS ${num(h.rs)}"><b>${num(h.rs)}</b> <span>${esc(h.summary)}</span></button>`).join("");
+}
+// One-line gist of a reading's result, for the history chip.
+function identifySummary(candidates, combos) {
+  if (candidates.length) {
+    const c = candidates[0];
+    const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
+    return `${c.count}× ${deps[0]}${deps.length > 1 ? " +" + (deps.length - 1) : ""}`;
+  }
+  if (combos.filter(c => c.parts.length > 1).length) return "mixed cluster";
+  return "no clean match";
+}
+function identifyAgain(rs) {
+  const inp = $("mi-rs"); if (inp) inp.value = rs;
+  miningIdentify();
+}
+// Inline prediction: while typing a prefix, complete it with a likely reading, leaving the
+// guessed suffix selected. Typing replaces the selection (so the guess just refines), → /
+// End accepts it natively, Enter submits, Esc/Backspace drops it. Skipped on deletes so
+// editing stays free. This session's readings win (recurring deposits), then the catalog's
+// base RS values seed a guess before any have been entered.
+function identifyPredict(e) {
+  if (e && e.inputType && e.inputType.startsWith("delete")) return;
+  const inp = $("mi-rs"); if (!inp) return;
+  const typed = inp.value;
+  if (!typed) return;
+  const pool = [...IDENTIFY_HISTORY.map(h => String(h.rs)), ...(MINING_RS || []).map(String)];
+  const hit = pool.find(s => s.length > typed.length && s.startsWith(typed));
+  if (hit) { inp.value = hit; inp.setSelectionRange(typed.length, hit.length); }
+}
+function identifyKey(e) {
+  if (e.key === "Enter") { miningIdentify(); return; }
+  if (e.key === "Escape") {              // drop a predicted suffix without clearing the typed part
+    const inp = $("mi-rs");
+    if (inp && inp.selectionStart < inp.value.length) {
+      inp.value = inp.value.slice(0, inp.selectionStart);
+      e.preventDefault();
+    }
+  }
 }
 async function miningIdentify() {
   const v = parseFloat(($("mi-rs") || {}).value);
@@ -1903,7 +1959,18 @@ async function miningIdentify() {
       fetch(`/api/rock-lookup?rs=${v}`).then(r => r.json()),
       fetch(`/api/rock-decompose?rs=${v}`).then(r => r.json()),
     ]);
-    setHTML("mining-results", identifyResultHtml(v, look.candidates || [], dec.combos || []));
+    const candidates = look.candidates || [], combos = dec.combos || [];
+    // Record the reading and refresh the strip. A reading already in the history updates
+    // in place (re-running a chip mustn't reorder it); a new one is prepended (newest first).
+    const entry = { rs: v, summary: identifySummary(candidates, combos),
+      ok: candidates.length > 0 || combos.some(c => c.parts.length > 1) };
+    const at = IDENTIFY_HISTORY.findIndex(h => h.rs === v);
+    if (at >= 0) IDENTIFY_HISTORY[at] = entry;
+    else IDENTIFY_HISTORY = [entry, ...IDENTIFY_HISTORY].slice(0, IDENTIFY_HIST_MAX);
+    setHTML("mi-hist", identifyHistHtml());
+    // Clear + refocus so the next reading can be typed straight away.
+    const inp = $("mi-rs"); if (inp) { inp.value = ""; inp.focus(); }
+    setHTML("mining-results", identifyResultHtml(v, candidates, combos));
   } catch (e) { setHTML("mining-results", `<div class="empty">lookup failed</div>`); }
 }
 function identifyResultHtml(v, candidates, combos) {
@@ -1963,14 +2030,21 @@ async function miningFind() {
 }
 function findResultHtml(r) {
   if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
-  const sigs = (r.signatures || []).map(s => tag("RS " + num(s))).join(" ");
+  const sigs = (r.signatures || []).map(s => `<span class="mscan-rs">${num(s)}</span>`).join("");
   const rows = r.rocks.map(x => `<tr>
     <td class="lt-num">${num(x.rs)}</td><td>${esc(x.name)}</td>
     <td class="lt-num">${_pct(x.min_pct)}–${_pct(x.max_pct)}%</td>
     <td class="lt-num">${_chance(x.probability)}</td><td class="lt-num">${x.score}</td></tr>`).join("");
   return `<div class="card">
-    <div class="mrow"><span class="mk">scan for</span> <div class="mels">${sigs}</div></div>
-    ${logTable(th("RS", true) + th("Rock") + th("Yield %", true) + th("Chance", true) + th("Score", true), rows, "")}
+    <div class="mscan"><span class="mscan-k">Scan for</span>
+      <div class="mscan-vals">${sigs || '<span class="mn-dim">—</span>'}</div></div>
+    ${logTable(
+      th("RS", true, "Radar signature a single rock of this type reads") +
+      th("Rock", false, "The mineable rock / deposit type") +
+      th("Yield %", true, `Percentage of ${esc(r.mineral)} in the rock (min–max)`) +
+      th("Chance", true, "Probability a rock of this type actually contains it") +
+      th("Score", true, "Source ranking = probability × yield (higher is a better source)"),
+      rows, "")}
   </div>`;
 }
 async function miningIndex() {
@@ -1988,33 +2062,116 @@ function indexResultHtml(minerals) {
     <td>${m.rocks.slice(0, 4).map(x => esc(x.name)).join("; ")}${m.rocks.length > 4 ? ` <span class="mn-dim">…+${m.rocks.length - 4}</span>` : ""}</td>
   </tr>`).join("");
   return `<div class="card"><h3><span>All minerals → source rocks</span><span class="scu">${minerals.length}</span></h3>` +
-    logTable(th("Mineral") + th("RS to scan") + th("Best sources"), rows, "") + `</div>`;
+    logTable(
+      th("Mineral", false, "The refined mineral") +
+      th("RS to scan", false, "Radar signature value(s) whose rocks can contain it") +
+      th("Best sources", false, "The richest source rocks for this mineral"),
+      rows, "") + `</div>`;
 }
 
-// ---- Plan: blueprint (or manual minerals) → deposit coverage + sources ---- //
+// ---- Plan: blueprint → deposit coverage + sources ---- //
+// A searchable picker grouped by blueprint category (type, then size). Selecting an
+// item plans straight away, so there's no separate "plan" button. MINING_BLUEPRINTS is
+// the {name, category} catalog from /api/blueprints.
+const _BP_TYPE_ORDER = ["Vehicle Component", "Vehicle Weapons", "FPS Weapons", "FPS Armours"];
+// Split a category into its type + size (e.g. "Vehicle Component S3" → ["Vehicle Component","S3"]).
+function _bpSplit(category) {
+  const m = /^(.*?)\s+S(\d+)$/.exec(category || "");
+  return m ? [m[1], "S" + m[2]] : [category || "Other", ""];
+}
+// Group the catalog into ordered type → size → [names].
+function _bpGroups() {
+  const byType = new Map();
+  for (const b of MINING_BLUEPRINTS || []) {
+    const [type, size] = _bpSplit(b.category);
+    if (!byType.has(type)) byType.set(type, new Map());
+    const sizes = byType.get(type);
+    if (!sizes.has(size)) sizes.set(size, []);
+    sizes.get(size).push(b.name);
+  }
+  const typeKeys = [...byType.keys()].sort((a, b) => {
+    const ia = _BP_TYPE_ORDER.indexOf(a), ib = _BP_TYPE_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+  });
+  return typeKeys.map(type => {
+    const sizes = byType.get(type);
+    const sizeKeys = [...sizes.keys()].sort();   // "" sorts first, then S0, S1, …
+    return { type, count: [...sizes.values()].reduce((n, a) => n + a.length, 0),
+      sizes: sizeKeys.map(size => ({ size, names: sizes.get(size).sort((a, b) => a.localeCompare(b)) })) };
+  });
+}
+function blueprintMenuHtml() {
+  return _bpGroups().map(g => {
+    const body = g.sizes.map(s => {
+      const items = s.names.map(n =>
+        `<div class="bp-dd-item" data-search="${esc(n.toLowerCase())}"
+           onclick="bpPick(this.dataset.name)" data-name="${esc(n)}">${esc(n)}</div>`).join("");
+      const head = s.size && g.sizes.length > 1
+        ? `<div class="bp-dd-size" data-size>${s.size} <span class="mn-dim">${s.names.length}</span></div>` : "";
+      return head + items;
+    }).join("");
+    return `<div class="bp-dd-grp" data-grp><span>${esc(g.type)}</span><span class="mn-dim">${g.count}</span></div>${body}`;
+  }).join("");
+}
 function planToolHtml() {
   return `<div class="card mtool"><h3><span>Blueprint mining plan</span></h3>
     <div class="mform">
-      <input id="mp-bp" list="dl_blueprint" autocomplete="off" aria-label="Blueprint name"
-        placeholder="Blueprint name, e.g. Pulverizer LMG Magazine (120 Cap)"
-        onkeydown="if(event.key==='Enter')miningPlanFromBlueprint()">
-      <button class="primary" onclick="miningPlanFromBlueprint()">Plan from blueprint</button>
+      <div class="bp-dd">
+        <input id="mp-bp" autocomplete="off" aria-label="Search blueprints"
+          placeholder="Search blueprints by name…"
+          oninput="bpFilter(this.value)" onfocus="bpOpen(true)"
+          onblur="bpOpen(false)" onkeydown="bpKey(event)">
+        <div id="bp-dd-list" class="bp-dd-list" onmousedown="event.preventDefault()">${blueprintMenuHtml()}</div>
+      </div>
     </div>
-    <div class="mform col">
-      <label for="mp-list">…or list minerals yourself <span class="mn-dim">(one per line, or comma-separated)</span></label>
-      <textarea id="mp-list" rows="3" placeholder="Quantainium&#10;Bexalite&#10;Gold"></textarea>
-      <button onclick="miningPlan()">Build plan from minerals</button>
-    </div>
-    <p class="mhint">Pick a blueprint to pull its required minerals straight from the game files, or list
-      minerals yourself. Deposits are ranked by how many of the ingredients each can yield.</p>
+    <p class="mhint">Pick a blueprint — grouped by type and size — to pull its required minerals straight
+      from the game files. Deposits are ranked by how many of the ingredients each can yield.</p>
   </div>`;
+}
+function bpOpen(show) {
+  const el = $("bp-dd-list"); if (el) el.classList.toggle("open", !!show);
+}
+function bpPick(name) {
+  const inp = $("mp-bp"); if (inp) inp.value = name;
+  bpOpen(false);
+  miningPlanFromBlueprint(name);
+}
+// Filter items by a case-insensitive substring; hide group/size headers with no visible items.
+function bpFilter(q) {
+  const list = $("bp-dd-list"); if (!list) return;
+  list.classList.add("open");
+  const needle = (q || "").trim().toLowerCase();
+  for (const it of list.querySelectorAll(".bp-dd-item"))
+    it.style.display = !needle || it.dataset.search.includes(needle) ? "" : "none";
+  // A header is visible while any item within its scope shows: a size sub-header's scope
+  // ends at the next size or group header; a group header's at the next group header.
+  const kids = [...list.children];
+  for (let i = 0; i < kids.length; i++) {
+    const el = kids[i], isSize = el.hasAttribute("data-size");
+    if (!el.hasAttribute("data-grp") && !isSize) continue;
+    let any = false;
+    for (let j = i + 1; j < kids.length; j++) {
+      const n = kids[j], nGrp = n.hasAttribute("data-grp"), nSize = n.hasAttribute("data-size");
+      if (nGrp || (isSize && nSize)) break;     // left this header's scope
+      if (nSize) continue;                       // a size header inside a group's scope
+      if (n.style.display !== "none") { any = true; break; }
+    }
+    el.style.display = any ? "" : "none";
+  }
+}
+function bpKey(e) {
+  if (e.key === "Escape") { bpOpen(false); return; }
+  if (e.key !== "Enter") return;
+  const first = [...($("bp-dd-list") || {}).querySelectorAll?.(".bp-dd-item") || []]
+    .find(it => it.style.display !== "none");
+  if (first) bpPick(first.dataset.name);
 }
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;
   return m ? `${m}m${sec ? " " + sec + "s" : ""}` : `${sec}s`;
 };
-async function miningPlanFromBlueprint() {
-  const name = (($("mp-bp") || {}).value || "").trim();
+async function miningPlanFromBlueprint(name) {
+  name = (name || ($("mp-bp") || {}).value || "").trim();
   if (!name) { setHTML("mining-results", `<div class="empty">Pick a blueprint.</div>`); return; }
   setHTML("mining-results", `<div class="empty">loading blueprint…</div>`);
   try {
@@ -2034,21 +2191,13 @@ function recipeHtml(bp) {
     <td class="lt-num">${r.scu} SCU</td>
     <td class="lt-num">${r.min_quality > 0 ? "Q≥" + r.min_quality : "—"}</td></tr>`).join("");
   return `<div class="card"><h3><span>${esc(bp.name)}</span><span class="scu">${meta}</span></h3>
-    ${logTable(th("Slot") + th("Material") + th("Qty", true) + th("Min quality", true), rows, "No materials.")}
+    ${logTable(
+      th("Slot", false, "The recipe slot this material fills") +
+      th("Material", false, "The mineral or resource the slot requires") +
+      th("Qty", true, "Amount needed, in SCU") +
+      th("Min quality", true, "Minimum refined quality the material must meet (— = any)"),
+      rows, "No materials.")}
   </div>`;
-}
-async function miningPlan() {
-  const raw = ($("mp-list") || {}).value || "";
-  const minerals = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-  if (!minerals.length) { setHTML("mining-results", `<div class="empty">Enter at least one mineral.</div>`); return; }
-  setHTML("mining-results", `<div class="empty">planning…</div>`);
-  try {
-    const r = await fetch("/api/mining-plan", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ minerals }),
-    }).then(x => x.json());
-    setHTML("mining-results", planResultHtml(r));
-  } catch (e) { setHTML("mining-results", `<div class="empty">plan failed</div>`); }
 }
 function planResultHtml(r) {
   const targets = r.targets || [];
@@ -2065,8 +2214,12 @@ function planResultHtml(r) {
       <div>${best || '<span class="mn-dim">no source found</span>'}</div></div>`;
   }).join("");
   return `<div class="card"><h3><span>Best deposits — by coverage</span></h3>
-      ${logTable(th("Deposit") + th("Covers", true) + th("Ingredients") + th("RS"), covRows,
-        "No deposit yields any of these minerals.")}
+      ${logTable(
+        th("Deposit", false, "A rock deposit / cluster type you can mine") +
+        th("Covers", true, "How many of the blueprint's ingredients this deposit can yield") +
+        th("Ingredients", false, "Which of the wanted minerals it covers") +
+        th("RS", false, "Radar signature value(s) to scan for to find this deposit"),
+        covRows, "No deposit yields any of these minerals.")}
     </div>
     <div class="card"><h3><span>Per-ingredient sources</span></h3><div class="mplan-srcs">${srcs}</div></div>`;
 }

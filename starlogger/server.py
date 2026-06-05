@@ -11,9 +11,9 @@ from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_field, set_leg_states, write_override
 from .replay import build_timeline, snapshot_at
 from .settings import set_setting
-from .blueprints import blueprint_names, lookup_blueprint
+from .blueprints import blueprint_catalog, lookup_blueprint
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
-                        lookup_rs, mineral_index, mining_plan)
+                        lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .shipcargo import load_ship_cargo
 from .tradeflags import set_lost
 from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot
@@ -111,6 +111,11 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
             return jsonify({"ok": False, "error": "rs must be positive"}), 400
         return jsonify({"rs": rs, "combos": decompose_rs(rs)})
 
+    @app.get("/api/rock-signatures")
+    def api_rock_signatures():
+        # Distinct base RS values, seeding the Identify input's inline prediction.
+        return jsonify({"signatures": rock_signatures()})
+
     @app.get("/api/minerals")
     def api_minerals():
         # Distinct mineral names (autocomplete for the forward lookup + blueprint plan).
@@ -140,8 +145,8 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
 
     @app.get("/api/blueprints")
     def api_blueprints():
-        # Blueprint names for the planner's autocomplete.
-        return jsonify({"blueprints": blueprint_names()})
+        # {name, category} rows for the planner's grouped (type/size) picker.
+        return jsonify({"blueprints": blueprint_catalog()})
 
     @app.get("/api/blueprint")
     def api_blueprint():
