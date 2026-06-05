@@ -693,11 +693,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 
 /* ---- Mining tab (RS / composition tools) ---- */
 .mining{display:flex;flex-direction:column;gap:14px}
-.msubbar{display:flex;gap:6px;flex-wrap:wrap}
-.msub{background:transparent;color:var(--ink-2);border:1px solid var(--line);border-radius:3px;
-  padding:7px 14px;font-family:var(--display);font-size:13px;letter-spacing:.04em;cursor:pointer}
-.msub:hover{color:var(--ink);border-color:var(--line-2)}
-.msub.active{color:#04121d;background:var(--cyan);border-color:var(--cyan);font-weight:600}
+/* sub-tab strip reuses the Archive tab's .arch-tabs/.arch-tab styling */
 .mtool .mform{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:4px 16px 6px}
 .mtool .mform.col{flex-direction:column;align-items:stretch}
 .mtool .mform label{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
@@ -710,11 +706,13 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mining textarea{resize:vertical;width:100%}
 .mining input:focus,.mining textarea:focus{outline:none;border-color:var(--cyan);
   box-shadow:0 0 0 2px rgba(79,220,255,.18)}
-.mining button{background:transparent;border:1px solid var(--line-2);color:var(--ink);
+/* tool-card buttons only (scoped to .mtool so the .arch-tab sub-tab strip keeps its
+   own underlined styling instead of getting a box border) */
+.mtool button{background:transparent;border:1px solid var(--line-2);color:var(--ink);
   border-radius:2px;padding:8px 14px;font-family:var(--display);font-size:13px;cursor:pointer}
-.mining button:hover{border-color:var(--cyan);color:var(--cyan)}
-.mining button.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan);font-weight:600}
-.mining button.primary:hover{box-shadow:0 0 16px rgba(79,220,255,.5);color:#04121d}
+.mtool button:hover{border-color:var(--cyan);color:var(--cyan)}
+.mtool button.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan);font-weight:600}
+.mtool button.primary:hover{box-shadow:0 0 16px rgba(79,220,255,.5);color:#04121d}
 .mtool .mform.col button{align-self:flex-start}
 .mhint{margin:2px 16px 12px;color:var(--ink-2);font-size:12px;line-height:1.5}
 .mhint code{font-family:var(--mono);color:var(--cyan);font-size:11.5px}

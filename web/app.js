@@ -123,6 +123,32 @@ document.addEventListener("click", (e) => {
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
 if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
 
+// ---- mining mode: a mining vehicle swaps the cargo-ops tabs for Mining ---- //
+// When the snapshot reports the player in a mining vehicle (mining_ship — Prospector,
+// MOLE, ROC…), the cargo-hauling tabs make no sense, so loading/manifest/unloading/
+// routes are hidden and the Mining tab takes their slot right after Contracts. Driven
+// from renderAll on every snapshot; idempotent via MINING_LAYOUT so it only touches the
+// DOM (and renumbers the visible tabs) on an actual ship-type change.
+const HAUL_TABS = ["missions", "loading", "grid", "unloading", "routes", "history", "mining"];
+const MINE_TABS = ["missions", "mining", "history"];
+let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
+function applyTabLayout(mining) {
+  if (MINING_LAYOUT === mining) return;
+  MINING_LAYOUT = mining;
+  const order = mining ? MINE_TABS : HAUL_TABS;
+  document.querySelectorAll("#nav button").forEach(b => {
+    const i = order.indexOf(b.dataset.tab);
+    b.classList.toggle("hide", i < 0);
+    if (i >= 0) {
+      b.style.order = i;                                  // flex order: keep the slots contiguous
+      const span = b.querySelector("span");
+      if (span) span.textContent = String(i + 1).padStart(2, "0");  // renumber 01,02,03…
+    }
+  });
+  // If the active tab just got hidden, fall back to a sensible visible one.
+  if (!order.includes(TAB)) activateTab(mining ? "mining" : "missions");
+}
+
 // Close the Contract Log's Type-filter dropdown on any click outside it (the toggle
 // button and the menu itself live inside .th-menu-wrap, so those are ignored).
 document.addEventListener("click", (e) => {
@@ -788,6 +814,7 @@ const curData = () => (REPLAY_MODE ? REPLAY_SNAPSHOT : LAST);
 // Render every tab from one snapshot `d` (the live snapshot).
 function renderAll(d) {
   if (!d) return;
+  applyTabLayout(!!d.mining_ship);   // mining vehicle → swap cargo-ops tabs for Mining
   renderHeader(d);
   setHTML("datalists", datalistsHtml(d.catalog));
   // EDIT_CELL guards every cargo-ops screen so an open inline editor isn't clobbered
@@ -1656,8 +1683,10 @@ const _chance = (p) => (p == null ? "" : Math.round(p * 100) + "%");
 
 function renderMiningShell() {
   const subs = [["identify", "Identify rock"], ["find", "Find mineral"], ["plan", "Blueprint plan"]];
+  // Same underlined sub-tab strip as the Archive tab (.arch-tabs/.arch-tab), for a
+  // consistent secondary-nav look across the app.
   const bar = subs.map(([k, t]) =>
-    `<button class="msub${MINING_SUB === k ? " active" : ""}" onclick="miningSub('${k}')">${t}</button>`).join("");
+    `<button class="arch-tab${MINING_SUB === k ? " active" : ""}" onclick="miningSub('${k}')">${t}</button>`).join("");
   const tool = MINING_SUB === "identify" ? identifyToolHtml()
     : MINING_SUB === "find" ? findToolHtml() : planToolHtml();
   const datalist = `<datalist id="dl_mineral">${(MINING_MINERALS || [])
@@ -1665,7 +1694,7 @@ function renderMiningShell() {
     `<datalist id="dl_blueprint">${(MINING_BLUEPRINTS || [])
       .map(b => `<option value="${esc(b)}">`).join("")}</datalist>`;
   setHTML("mining", `${datalist}<div class="mining">
-    <div class="msubbar">${bar}</div>
+    <div class="arch-tabs">${bar}</div>
     ${tool}
     <div id="mining-results" class="mres"></div>
   </div>`);
