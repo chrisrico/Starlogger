@@ -14,9 +14,11 @@
 # Usage:
 #   sc-run.sh                          launch the game (tracker + sc-launch.sh)
 #   sc-run.sh shell|config|controllers   passthrough to stock sc-launch.sh
+#   WINEPREFIX=/path sc-run.sh          point at a non-default Star Citizen prefix
 set -uo pipefail
 
-export WINEPREFIX="$HOME/Games/star-citizen"
+: "${WINEPREFIX:=$HOME/Games/star-citizen}"
+export WINEPREFIX
 SC_LAUNCH="$WINEPREFIX/sc-launch.sh"
 user_cfg_dir="$WINEPREFIX/drive_c/Program Files/Roberts Space Industries/StarCitizen/LIVE"
 game_log="$user_cfg_dir/Game.log"

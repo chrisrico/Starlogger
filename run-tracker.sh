@@ -12,7 +12,7 @@ set -euo pipefail
 
 repo="$(dirname "$(readlink -f "$0")")"
 py="$repo/.venv/bin/python"
-: "${STARLOGGER_DATA_DIR:=$HOME/.local/share/starlogger}"
+: "${STARLOGGER_DATA_DIR:=${XDG_DATA_HOME:-$HOME/.local/share}/starlogger}"
 export STARLOGGER_DATA_DIR
 
 [ -x "$py" ] || { echo "run-tracker: venv missing ($py)" >&2; exit 0; }

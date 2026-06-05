@@ -43,10 +43,13 @@ The only runtime dependency is Flask. The ship cargo-grid database
 
 Leave it running while you play; the dashboard polls every few seconds and resets
 itself when you relaunch the game. It auto-detects the LIVE `Game.log` (on Windows,
-`%ProgramFiles%\Roberts Space Industries\StarCitizen\LIVE\Game.log`). Point it at a
-specific log with `--log PATH` or the `STARLOGGER_LOG` env var (the escape hatch for a
-non-default install drive/folder). `STARLOGGER_DATA_DIR` sets where the generated `*.json`
-data (and the downloaded extractor binary) are stored — defaults to the repo root.
+`%ProgramFiles%\Roberts Space Industries\StarCitizen\LIVE\Game.log`). On Linux, set
+`WINEPREFIX` to point at a non-default Wine/Proton prefix and the LIVE/PTU `Game.log`
+is derived from it. Point it at a specific log with `--log PATH` or the `STARLOGGER_LOG`
+env var (the escape hatch for a non-default install drive/folder). `STARLOGGER_DATA_DIR`
+sets where the generated `*.json` data (and the downloaded extractor binary) are stored —
+defaults to `$XDG_DATA_HOME/starlogger` (i.e. `~/.local/share/starlogger`) on Linux and
+`%LOCALAPPDATA%\starlogger` on Windows.
 
 ## Run it with the game
 
@@ -135,6 +138,7 @@ web/              dashboard front-end:
 assets/           social-preview.png · icon.png (repo/brand images)
 ```
 
-Generated data lives in `STARLOGGER_DATA_DIR` (repo root by default): `overrides.json`,
+Generated data lives in `STARLOGGER_DATA_DIR` (default `~/.local/share/starlogger`,
+or `$XDG_DATA_HOME/starlogger`; `%LOCALAPPDATA%\starlogger` on Windows): `overrides.json`,
 `sessions.json`, `settings.json`, `station_names.json`, `ships_cargo.json`, and the
 extractor in `bin/`.

@@ -10,10 +10,23 @@ IS_WINDOWS = sys.platform == "win32"
 PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PKG_DIR)
 
-# Generated data files live in DATA_DIR; defaults to the repo root for bare-metal
-# runs, but the containerized service points STARLOGGER_DATA_DIR at a persistent volume
-# so code (baked into the image) and data (on the host) stay separate.
-DATA_DIR = os.environ.get("STARLOGGER_DATA_DIR", BASE_DIR)
+# Generated data files live in DATA_DIR. STARLOGGER_DATA_DIR is the explicit override
+# (the containerized service points it at a persistent volume so code, baked into the
+# image, and data, on the host, stay separate). Otherwise it follows the XDG Base
+# Directory spec on Linux ($XDG_DATA_HOME/starlogger, default ~/.local/share/starlogger)
+# and %LOCALAPPDATA%\starlogger on Windows.
+def _default_data_dir() -> str:
+    if IS_WINDOWS:
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser(r"~\AppData\Local")
+        return os.path.join(base, "starlogger")
+    # XDG spec: honor $XDG_DATA_HOME only if set and absolute, else ~/.local/share.
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if not (xdg and os.path.isabs(xdg)):
+        xdg = os.path.expanduser("~/.local/share")
+    return os.path.join(xdg, "starlogger")
+
+
+DATA_DIR = os.environ.get("STARLOGGER_DATA_DIR") or _default_data_dir()
 
 WEB_DIR = os.path.join(BASE_DIR, "web")  # static assets always ship with the code
 OVERRIDES_PATH = os.path.join(DATA_DIR, "overrides.json")
@@ -44,12 +57,17 @@ USER_AGENT = (
 # Windows that's under %PROGRAMFILES%; on Linux it's inside the Wine/Proton prefix.
 # We probe every platform's candidates (a stray isfile() on the wrong OS is cheap and
 # the path just won't exist) -- STARLOGGER_LOG, when set, wins and is the escape hatch for
-# non-default install drives/folders.
+# non-default install drives/folders. When $WINEPREFIX is set we derive its LIVE/PTU log
+# (next-best after STARLOGGER_LOG, ahead of the hardcoded prefix guesses below).
 _PROGRAM_FILES = os.environ.get("PROGRAMFILES", r"C:\Program Files")
 _RSI = ("Roberts Space Industries", "StarCitizen")
+_WINEPREFIX = os.path.expanduser(os.environ["WINEPREFIX"]) if os.environ.get("WINEPREFIX") else None
 DEFAULT_LOG_CANDIDATES = [
     p for p in (
         os.path.expanduser(os.environ["STARLOGGER_LOG"]) if os.environ.get("STARLOGGER_LOG") else None,
+        # explicit Wine/Proton prefix via $WINEPREFIX (LIVE, then PTU)
+        os.path.join(_WINEPREFIX, "drive_c", "Program Files", *_RSI, "LIVE", "Game.log") if _WINEPREFIX else None,
+        os.path.join(_WINEPREFIX, "drive_c", "Program Files", *_RSI, "PTU", "Game.log") if _WINEPREFIX else None,
         # native Windows install (LIVE, then PTU)
         os.path.join(_PROGRAM_FILES, *_RSI, "LIVE", "Game.log"),
         os.path.join(_PROGRAM_FILES, *_RSI, "PTU", "Game.log"),
