@@ -734,6 +734,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mining{display:flex;flex-direction:column;gap:14px}
 /* each sub-tool + its results stack with the same gap as the tab as a whole */
 .msub{display:flex;flex-direction:column;gap:14px}
+.msub.hide{display:none}   /* outrank .msub's display:flex so a hidden sub-tab stays hidden */
 /* sub-tab strip reuses the Archive tab's .arch-tabs/.arch-tab styling */
 .mtool .mform{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:4px 16px 6px}
 .mining input{background:var(--void);border:1px solid var(--line-2);color:var(--ink);
