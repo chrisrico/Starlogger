@@ -140,6 +140,92 @@ def _sorted_groups(groups: dict) -> list:
     return out
 
 
+# ---- build_snapshot pieces (pure helpers; the orchestrator below wires them together) ---- #
+
+def _split_missions(state_missions: dict, overrides: dict):
+    """Apply each mission's override, keep only trade missions (the live dashboard is
+    cargo-ops only — couriers/combat go to the Archive instead), and partition into the
+    full list, the hidden (manually-deleted) ids, and the visible (non-hidden) subset."""
+    missions: list[Mission] = []
+    hidden_ids: set[str] = set()
+    for m in state_missions.values():
+        ov = overrides.get(m.mission_id)
+        eff = apply_override(m, ov) if ov else m
+        if not eff.is_trade:
+            continue
+        if ov and ov.get("hidden"):
+            hidden_ids.add(eff.mission_id)
+        missions.append(eff)
+    visible = [m for m in missions if m.mission_id not in hidden_ids]
+    return missions, hidden_ids, visible
+
+
+def _mission_label(mis: Mission) -> str:
+    """Mission display label; the reward disambiguates same-titled contracts."""
+    base = mis.title or mis.contract
+    return f"{base} ({mis.reward:,} aUEC)" if mis.reward else base
+
+
+def committed_scu(m: Mission) -> int:
+    """SCU an active mission still owes (not merely what's loaded). Prefer the uncompleted
+    Deliver quantities (authoritative, and they shrink as you deliver); fall back to the
+    Collect quantities for a mission accepted-but-not-yet-loaded with no Deliver qty logged."""
+    dp = sum(l.qty for l in m.legs.values()
+             if l.kind == "dropoff" and l.qty and l.state != "completed")
+    if dp:
+        return dp
+    return sum(l.qty for l in m.legs.values()
+               if l.kind == "pickup" and l.qty and l.state != "completed")
+
+
+def _mission_dict(mis: Mission, origin_of, dleg_loc, zone_names: dict,
+                  hidden_ids: set, overrides: dict) -> dict:
+    """Serialize one mission for the client: the dataclass plus derived origin/destinations,
+    flags, and a best-guess resolved name per leg (so the editor pre-fills its rows)."""
+    d = asdict(mis)
+    d["decoded"] = mis.decoded
+    d["origin"] = origin_of(mis)
+    d["cargo_types"] = mis.cargo_types
+    d["is_trade"] = mis.is_trade
+    d["hidden"] = mis.mission_id in hidden_ids
+    d["overridden"] = mis.mission_id in overrides
+    d["raw_override"] = overrides.get(mis.mission_id)
+    drops = [l for l in mis.legs.values() if l.kind == "dropoff"]
+    d["partial"] = bool(drops) and any(not (l.cargo and l.qty) for l in drops)
+    d["destinations"] = sorted({dleg_loc(l) for l in drops if dleg_loc(l)})
+    for ld in d["legs"].values():
+        z = ld.get("zone_host_id")
+        ld["name"] = ld.get("location") or (zone_names.get(z) if z else None) or ""
+    return d
+
+
+def _counts(visible: list, active: list, mission_dicts: list, hidden_ids: set) -> dict:
+    return {
+        "active": len(active),
+        "partial": sum(1 for d in mission_dicts
+                       if d["status"] == "active" and d["partial"] and not d["hidden"]),
+        "completed": sum(1 for m in visible if m.status == "completed"),
+        "abandoned": sum(1 for m in visible if m.status == "abandoned"),
+        "failed": sum(1 for m in visible if m.status in ("failed", "expired")),
+        "hidden": len(hidden_ids),
+        "total": len(visible),
+    }
+
+
+def _autocomplete_catalog(missions: list, zone_names: dict) -> dict:
+    """Editor autocomplete: known station names (zone map + p4k catalog + anything seen
+    this session) and cargo names (p4k commodity list + canonical fallback + live)."""
+    stations = set(zone_names.values()) | set(station_names())
+    cargo_names = set(patterns.COMMODITY_NAMES) | set(commodity_names())
+    for mis in missions:
+        for leg in mis.legs.values():
+            if leg.location:
+                stations.add(leg.location)
+            if leg.cargo:
+                cargo_names.add(leg.cargo)
+    return {"stations": sorted(stations), "cargo": sorted(cargo_names)}
+
+
 def build_snapshot(state: State, trade_only: bool = False) -> dict:
     overrides = get_overrides()
     cargo_db = load_ship_cargo()
@@ -151,23 +237,8 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
         # this session's freshly-learned names (the live truth wins on conflict).
         learn_station_names(state.zone_names)
         zone_names = {**get_station_names(), **state.zone_names}
-        missions: list[Mission] = []
-        hidden_ids: set[str] = set()
-        for m in state.missions.values():
-            ov = overrides.get(m.mission_id)
-            eff = apply_override(m, ov) if ov else m
-            # The live dashboard is cargo-ops only: non-trade missions (couriers,
-            # combat, etc.) never appear in loading/unloading/routes/manifest or
-            # the header counts. They're recorded in the Archive instead, where the
-            # Trade-only toggle decides whether to include them.
-            if not eff.is_trade:
-                continue
-            if ov and ov.get("hidden"):
-                hidden_ids.add(eff.mission_id)
-            missions.append(eff)
-        # hidden (manually deleted) missions stay listed but are excluded from the
-        # active/loading/unloading/route views and counts.
-        visible = [m for m in missions if m.mission_id not in hidden_ids]
+        # apply overrides, drop non-trade, split into hidden vs visible
+        missions, hidden_ids, visible = _split_missions(state.missions, overrides)
 
         # The route helpers below call dleg_loc(leg) with a leg only, but the shared
         # dleg_label needs the owning mission (for host_artifact_zones). objective_ids are
@@ -182,84 +253,27 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
         def origin_of(mis: Mission) -> str:
             return origin_label(mis, zone_names)
 
-        def mlabel(mis: Mission) -> str:
-            # include the reward so same-titled contracts are distinguishable
-            base = mis.title or mis.contract
-            return f"{base} ({mis.reward:,} aUEC)" if mis.reward else base
-
-        # ---- mission list (all missions, incl. hidden) ---- #
-        mission_dicts = []
-        for mis in sorted(missions, key=lambda x: x.accepted_at or ""):
-            d = asdict(mis)
-            d["decoded"] = mis.decoded
-            d["origin"] = origin_of(mis)
-            d["cargo_types"] = mis.cargo_types
-            d["is_trade"] = mis.is_trade
-            d["hidden"] = mis.mission_id in hidden_ids
-            d["overridden"] = mis.mission_id in overrides
-            d["raw_override"] = overrides.get(mis.mission_id)
-            drops = [l for l in mis.legs.values() if l.kind == "dropoff"]
-            d["partial"] = bool(drops) and any(not (l.cargo and l.qty) for l in drops)
-            d["destinations"] = sorted({dleg_loc(l) for l in drops if dleg_loc(l)})
-            # resolved station name per leg (known names only) so the editor can
-            # pre-fill its best guess instead of showing blank rows
-            for ld in d["legs"].values():
-                z = ld.get("zone_host_id")
-                ld["name"] = ld.get("location") or (zone_names.get(z) if z else None) or ""
-            mission_dicts.append(d)
+        # mission list (all missions, incl. hidden), sorted by acceptance time
+        mission_dicts = [_mission_dict(mis, origin_of, dleg_loc, zone_names, hidden_ids, overrides)
+                         for mis in sorted(missions, key=lambda x: x.accepted_at or "")]
 
         active = [m for m in visible if m.status == "active"]
 
-        load = _build_loading(active, origin_of, dleg_loc, mlabel)
-        unload, routes = _build_unloading_routes(active, origin_of, dleg_loc, mlabel)
+        load = _build_loading(active, origin_of, dleg_loc, _mission_label)
+        unload, routes = _build_unloading_routes(active, origin_of, dleg_loc, _mission_label)
         plan = plan_trip(active, origin_of, dleg_loc, current=state.location)
 
-        counts = {
-            "active": len(active),
-            "partial": sum(
-                1 for d in mission_dicts
-                if d["status"] == "active" and d["partial"] and not d["hidden"]
-            ),
-            "completed": sum(1 for m in visible if m.status == "completed"),
-            "abandoned": sum(1 for m in visible if m.status == "abandoned"),
-            "failed": sum(1 for m in visible if m.status in ("failed", "expired")),
-            "hidden": len(hidden_ids),
-            "total": len(visible),
-        }
-        # Committed cargo (not merely loaded): the SCU each active mission still
-        # owes. Prefer the delivery objectives' quantities (authoritative, and
-        # they shrink as you deliver); but a mission accepted yet not loaded often
-        # has no Deliver quantity logged, so fall back to its Collect (pickup)
-        # quantities, which carry the committed amount from the moment it's taken.
-        def _committed(m: Mission) -> int:
-            dp = sum(l.qty for l in m.legs.values()
-                     if l.kind == "dropoff" and l.qty and l.state != "completed")
-            if dp:
-                return dp
-            return sum(l.qty for l in m.legs.values()
-                       if l.kind == "pickup" and l.qty and l.state != "completed")
-        active_scu = sum(_committed(m) for m in active)
+        counts = _counts(visible, active, mission_dicts, hidden_ids)
+        active_scu = sum(committed_scu(m) for m in active)
         # Peak simultaneous hold usage (what actually has to fit at once). Cargo is
         # loaded at each mission's origin and dropped at its destination, so a
         # back-haul (A->B plus B->A) peaks at the larger leg, not their sum.
-        peak_scu = _peak_load(active, origin_of, dleg_loc, _committed, anchor=state.location)
+        peak_scu = _peak_load(active, origin_of, dleg_loc, committed_scu, anchor=state.location)
         # session income; when filtering to trade, sum the trade missions' rewards
         earned = sum(m.reward for m in visible if m.reward) if trade_only else state.total_awarded
 
         # manual commodity-terminal trades this session (buy/sell), with a rollup
         trades, trade_summary = build_session_trades(state)
-
-        # autocomplete catalog for the editor: station names (p4k catalog + persisted
-        # map + anything seen this session) and cargo names (p4k commodity list +
-        # canonical fallback + live).
-        stations = set(zone_names.values()) | set(station_names())
-        cargo_names = set(patterns.COMMODITY_NAMES) | set(commodity_names())
-        for mis in missions:
-            for leg in mis.legs.values():
-                if leg.location:
-                    stations.add(leg.location)
-                if leg.cargo:
-                    cargo_names.add(leg.cargo)
 
         # Effective ship: the game-detected ship always wins; otherwise fall back
         # to the user's manual pick (settings.json). This drives the capacity
@@ -304,7 +318,7 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
             "travels": build_session_travels(state),
             "lost_trades": lost_trade_ids(),
 
-            "catalog": {"stations": sorted(stations), "cargo": sorted(cargo_names)},
+            "catalog": _autocomplete_catalog(missions, zone_names),
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
 
