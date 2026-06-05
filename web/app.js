@@ -1714,10 +1714,33 @@ function updateReplayBar() {
 }
 
 // ---- poll loop ---- //
+// When the tracker process exits, /api/state stops answering. We opened this tab
+// for the user on launch, so we clean it up too: after DISCONNECT_CLOSE_MS of
+// continuous failure, close the tab. window.close() is only honored for
+// script-opened windows in some browsers (this one was opened by the OS), so if
+// the close is refused we fall back to an unambiguous "safe to close" overlay.
+const DISCONNECT_CLOSE_MS = 30000;
+let _lastOkTs = Date.now();
+let _closing = false;
+
+function handleDisconnect() {
+  if (_closing || Date.now() - _lastOkTs < DISCONNECT_CLOSE_MS) return;
+  _closing = true;
+  window.close();
+  // If we're still here a beat later, the browser refused the close.
+  setTimeout(() => {
+    document.body.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;height:100vh;' +
+      'font:600 16px/1.5 system-ui,sans-serif;color:#9aa;text-align:center;padding:24px">' +
+      'Tracker disconnected — this tab is safe to close.</div>';
+  }, 200);
+}
+
 async function refresh() {
   if (REPLAY_MODE) return;   // replay pauses live polling; exitReplay() resumes it
   try {
     const d = await (await fetch("/api/state", { cache: "no-store" })).json();
+    _lastOkTs = Date.now();
     LAST = d;
     renderAll(curData());                  // render every tab from the live snapshot
     if (TAB === "history") loadSessions();  // keep archive fresh while viewing
@@ -1730,7 +1753,11 @@ async function refresh() {
       ? ` · game <a class="pn-link" href="https://robertsspaceindustries.com/en/patch-notes" target="_blank" rel="noopener">${esc(d.game_version)} ↗</a>`
       : "";
     $("foot").innerHTML = `synced ${esc(new Date().toLocaleTimeString())} · ${esc(sess)}${ver} · ${esc(last)} · cargo db @ ${esc(d.ship_cargo_version || "?")}`;
-  } catch (e) { $("foot").textContent = "waiting for tracker… (" + e + ")"; }
+  } catch (e) {
+    const secs = Math.round((Date.now() - _lastOkTs) / 1000);
+    $("foot").textContent = `waiting for tracker… (${e}) · ${secs}s`;
+    handleDisconnect();
+  }
 }
 refresh();
 loadShipList();
