@@ -72,15 +72,27 @@
     };
   }
 
-  // 3D box (5 faces, bottom omitted) from corner (X,Y,base) px, size W×L×H px.
-  function faces(W, L, H, cls, bg, extra) {
+  // The 5 faces of a 3D box (bottom omitted), as one transform recipe shared by every box
+  // renderer below. It owns ONLY the Firefox-safe transforms + per-face dimensions; the
+  // caller's `faceHtml(i, fw, fh, transform)` supplies the markup/class/colour. Face order
+  // 0..4 = top, two depth walls, two side walls — see FACE_CLASS / the [top,yw,yw,xw,xw]
+  // colour arrays callers index by `i`.
+  function boxFaces(W, L, H, faceHtml) {
     return [
-      `<div class="${cls} cg-top${extra}" style="width:${W}px;height:${L}px;transform-origin:0 0;transform:translateZ(${H}px);${bg}"></div>`,
-      `<div class="${cls} cg-yf${extra}" style="width:${W}px;height:${H}px;transform-origin:0 0;transform:rotateX(90deg);${bg}"></div>`,
-      `<div class="${cls} cg-yf${extra}" style="width:${W}px;height:${H}px;transform-origin:0 0;transform:translateY(${L}px) rotateX(90deg);${bg}"></div>`,
-      `<div class="${cls} cg-xf${extra}" style="width:${H}px;height:${L}px;transform-origin:0 0;transform:rotateY(-90deg);${bg}"></div>`,
-      `<div class="${cls} cg-xf${extra}" style="width:${H}px;height:${L}px;transform-origin:0 0;transform:translateX(${W}px) rotateY(-90deg);${bg}"></div>`,
+      faceHtml(0, W, L, `translateZ(${H}px)`),
+      faceHtml(1, W, H, `rotateX(90deg)`),
+      faceHtml(2, W, H, `translateY(${L}px) rotateX(90deg)`),
+      faceHtml(3, H, L, `rotateY(-90deg)`),
+      faceHtml(4, H, L, `translateX(${W}px) rotateY(-90deg)`),
     ].join("");
+  }
+  const FACE_CLASS = ["cg-top", "cg-yf", "cg-yf", "cg-xf", "cg-xf"];
+
+  // 3D box (5 faces, bottom omitted) from corner (X,Y,base) px, size W×L×H px. One shared
+  // `bg` style + the cg-top/cg-yf/cg-xf face classes — used by the wireframe volume mode.
+  function faces(W, L, H, cls, bg, extra) {
+    return boxFaces(W, L, H, (i, fw, fh, tf) =>
+      `<div class="${cls} ${FACE_CLASS[i]}${extra}" style="width:${fw}px;height:${fh}px;transform-origin:0 0;transform:${tf};${bg}"></div>`);
   }
 
   // ---- volume mode (catalog): one wireframe box per sub-grid ----
@@ -109,13 +121,9 @@
     const top = `hsl(${hue},68%,58%)`, yw = `hsl(${hue},64%,45%)`, xw = `hsl(${hue},58%,33%)`;
     const ed = "rgba(0,0,0,.45)";
     const sty = (bgc) => `width:${S}px;height:${S}px;border:1px solid ${ed};background:${bgc}`;
-    const f = [
-      `<div class="cgc" style="${sty(top)};transform-origin:0 0;transform:translateZ(${S}px)"></div>`,
-      `<div class="cgc" style="${sty(yw)};transform-origin:0 0;transform:rotateX(90deg)"></div>`,
-      `<div class="cgc" style="${sty(yw)};transform-origin:0 0;transform:translateY(${S}px) rotateX(90deg)"></div>`,
-      `<div class="cgc" style="${sty(xw)};transform-origin:0 0;transform:rotateY(-90deg)"></div>`,
-      `<div class="cgc" style="${sty(xw)};transform-origin:0 0;transform:translateX(${S}px) rotateY(-90deg)"></div>`,
-    ].join("");
+    const col = [top, yw, yw, xw, xw];
+    const f = boxFaces(S, S, S, (i, fw, fh, tf) =>
+      `<div class="cgc" style="${sty(col[i])};transform-origin:0 0;transform:${tf}"></div>`);
     return `<div class="cg-box"${label ? ` title="${esc(label)}"` : ""} style="transform:translate3d(${x * S}px,${y * S}px,${z * S}px)">${f}</div>`;
   }
 
@@ -409,13 +417,9 @@
     const lines = `background-image:linear-gradient(to right,rgba(0,0,0,.22) 1px,transparent 1px),`
       + `linear-gradient(to bottom,rgba(0,0,0,.22) 1px,transparent 1px);background-size:${S}px ${S}px`;
     const st = (bgc, fw, fh) => `width:${fw}px;height:${fh}px;border:1px solid rgba(0,0,0,.5);background-color:${bgc};${lines}`;
-    const f = [
-      `<div class="cgc" style="${st(top, W, L)};transform-origin:0 0;transform:translateZ(${H}px)"></div>`,
-      `<div class="cgc" style="${st(yw, W, H)};transform-origin:0 0;transform:rotateX(90deg)"></div>`,
-      `<div class="cgc" style="${st(yw, W, H)};transform-origin:0 0;transform:translateY(${L}px) rotateX(90deg)"></div>`,
-      `<div class="cgc" style="${st(xw, H, L)};transform-origin:0 0;transform:rotateY(-90deg)"></div>`,
-      `<div class="cgc" style="${st(xw, H, L)};transform-origin:0 0;transform:translateX(${W}px) rotateY(-90deg)"></div>`,
-    ].join("");
+    const col = [top, yw, yw, xw, xw];
+    const f = boxFaces(W, L, H, (i, fw, fh, tf) =>
+      `<div class="cgc" style="${st(col[i], fw, fh)};transform-origin:0 0;transform:${tf}"></div>`);
     return `<div class="cg-box" data-gid="${b.gid == null ? "" : b.gid}" title="${esc(b.label)}" style="transform:translate3d(${bx * S}px,${by * S}px,${b.z * S}px)">${f}</div>`;
   }
 
