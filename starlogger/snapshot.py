@@ -37,12 +37,49 @@ def _unresolved(loc: str) -> bool:
     return loc.startswith("Unknown station") or loc in _PENDING
 
 
-def _resolve(zone_names: dict, zone: str | None) -> str:
+# ---- shared origin / destination / zone resolution -------------------------------- #
+# The host-artifact / pending / override rules below back BOTH the live snapshot and the
+# server's same-route sibling detection (server.py). They operate on an *effective*
+# (override-applied) Mission so the two call sites can't drift. See model.py for the
+# host_artifact_zones / has_pending_origin / origin_zone properties they lean on.
+
+def resolve_zone(zone_names: dict, zone: str | None) -> str:
+    """A zoneHostId's display name: the learned/overridden name, else a placeholder that
+    still shows the raw id when one exists, else a generic unknown."""
     if zone and zone in zone_names:
         return zone_names[zone]
     if zone:
         return f"Unknown station (zone {zone})"
     return "Unknown station"
+
+
+def origin_label(mis: Mission, zone_names: dict) -> str:
+    """A mission's displayed origin: an override origin (origin_name) wins, else
+    'Origin pending' when the only pickup is a host artifact, else the pickup zone
+    resolved through zone_names."""
+    if mis.origin_name:
+        return mis.origin_name
+    if mis.has_pending_origin:
+        return PENDING_ORIGIN
+    return resolve_zone(zone_names, mis.origin_zone)
+
+
+def dleg_label(mis: Mission, leg: Leg, zone_names: dict) -> str:
+    """A dropoff leg's displayed destination: deliver text (leg.location) wins; an
+    acceptance-host zone shared with the pickup isn't a real destination and shows as
+    pending until the game reveals it; else resolve the zone."""
+    if leg.location:
+        return leg.location
+    if leg.zone_host_id in mis.host_artifact_zones:
+        return PENDING_DEST
+    return resolve_zone(zone_names, leg.zone_host_id)
+
+
+def dest_signature(mis: Mission, zone_names: dict) -> tuple:
+    """A mission's destination signature: sorted, de-duplicated dropoff labels. Paired
+    with origin_label to identify same-route siblings."""
+    return tuple(sorted({dleg_label(mis, l, zone_names)
+                         for l in mis.legs.values() if l.kind == "dropoff"}))
 
 
 def _peak_load(active, origin_of, dleg_loc, committed_of, anchor=None) -> int:
@@ -132,31 +169,18 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
         # active/loading/unloading/route views and counts.
         visible = [m for m in missions if m.mission_id not in hidden_ids]
 
-        # Dropoff legs whose only location signal is the acceptance-host zone (shared
-        # with the mission's pickup) — not a real destination. Keyed by objective id
-        # (per-instance UUIDs, globally unique) so dleg_loc can suppress without a
-        # mission handle. Drops out the moment deliver text sets leg.location.
-        pending_drops = {
-            leg.objective_id
-            for mis in missions
-            for leg in mis.legs.values()
-            if leg.kind == "dropoff" and not leg.location
-            and leg.zone_host_id in mis.host_artifact_zones
-        }
+        # The route helpers below call dleg_loc(leg) with a leg only, but the shared
+        # dleg_label needs the owning mission (for host_artifact_zones). objective_ids are
+        # per-instance UUIDs (globally unique), so a leg->mission map lets the thin closure
+        # stay leg-only while delegating the host-artifact/pending rules to dleg_label.
+        leg_mis = {leg.objective_id: mis for mis in missions
+                   for leg in mis.legs.values()}
 
         def dleg_loc(leg: Leg) -> str:
-            if leg.location:
-                return leg.location
-            if leg.objective_id in pending_drops:
-                return PENDING_DEST
-            return _resolve(zone_names, leg.zone_host_id)
+            return dleg_label(leg_mis[leg.objective_id], leg, zone_names)
 
         def origin_of(mis: Mission) -> str:
-            if mis.origin_name:
-                return mis.origin_name
-            if mis.has_pending_origin:
-                return PENDING_ORIGIN
-            return _resolve(zone_names, mis.origin_zone)
+            return origin_label(mis, zone_names)
 
         def mlabel(mis: Mission) -> str:
             # include the reward so same-titled contracts are distinguishable

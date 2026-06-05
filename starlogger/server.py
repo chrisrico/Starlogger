@@ -8,7 +8,8 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from .archive import filter_sessions, load_sessions
 from .config import WEB_DIR
-from .overrides import get_overrides, set_leg_field, set_leg_states, write_override
+from .overrides import (apply_override, get_overrides, set_leg_field, set_leg_states,
+                        write_override)
 from .replay import build_timeline, snapshot_at
 from .settings import set_setting
 from .blueprints import blueprint_catalog, lookup_blueprint
@@ -16,47 +17,9 @@ from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_miner
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .shipcargo import load_ship_cargo
 from .tradeflags import set_lost
-from .snapshot import PENDING_DEST, PENDING_ORIGIN, build_snapshot
+from .snapshot import build_snapshot, dest_signature, origin_label
 from .state import State
 from .stations import get_station_names, set_station_name
-
-
-def _resolve_zone(zone_names, z) -> str:
-    if z and z in zone_names:
-        return zone_names[z]
-    if z:
-        return f"Unknown station (zone {z})"
-    return "Unknown station"
-
-
-def _origin_of(mis, ov, zone_names) -> str:
-    """A mission's displayed origin, matching snapshot.build_snapshot: an explicit
-    override origin wins, else 'Origin pending' when the only pickup is a host
-    artifact, else the pickup zone resolved through zone_names, else 'Unknown station'."""
-    o = (ov or {}).get("origin")
-    if o:
-        return o
-    if mis.has_pending_origin:
-        return PENDING_ORIGIN
-    return _resolve_zone(zone_names, mis.origin_zone)
-
-
-def _dleg_loc(mis, leg, zone_names) -> str:
-    """A dropoff leg's destination label, matching snapshot.dleg_loc: deliver text
-    wins; an acceptance-host zone (shared with the pickup) is not a real destination
-    and shows as pending until the game reveals it; else resolve the zone."""
-    if leg.location:
-        return leg.location
-    if leg.zone_host_id in mis.host_artifact_zones:
-        return PENDING_DEST
-    return _resolve_zone(zone_names, leg.zone_host_id)
-
-
-def _dests_of(mis, zone_names) -> tuple:
-    """A mission's destination signature (sorted dropoff station labels), matching
-    snapshot's `destinations`. Used with the origin to identify same-route siblings."""
-    return tuple(sorted({_dleg_loc(mis, l, zone_names)
-                         for l in mis.legs.values() if l.kind == "dropoff"}))
 
 
 def create_app(state: State, log_path: str | None = None) -> Flask:
@@ -233,9 +196,17 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
                 with state.lock:
                     zone_names = {**get_station_names(), **state.zone_names}
                     prev_ov = get_overrides()
-                    before = {oid: (_origin_of(m, prev_ov.get(oid), zone_names),
-                                    _dests_of(m, zone_names))
-                              for oid, m in state.missions.items() if m.status == "active"}
+                    # Key each active mission on its *displayed* (origin, destinations) under
+                    # the override currently in effect — the same effective-mission resolution
+                    # build_snapshot uses, so siblings match exactly what the dashboard shows.
+                    before = {}
+                    for oid, m in state.missions.items():
+                        if m.status != "active":
+                            continue
+                        ov = prev_ov.get(oid)
+                        eff = apply_override(m, ov) if ov else m
+                        before[oid] = (origin_label(eff, zone_names),
+                                       dest_signature(eff, zone_names))
 
             write_override(mid, override)
 
