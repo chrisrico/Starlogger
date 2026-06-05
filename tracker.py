@@ -187,6 +187,24 @@ def _port_in_use(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
+def _wait_to_bind(host: str, port: int, timeout: float = 20.0) -> bool:
+    """Something already serves host:port. Wait a bounded window for it to free,
+    then report whether we may bind. This disambiguates the two reasons the port is
+    busy at startup:
+      - a relaunch is tearing the *previous* session's server down (sc-launch's
+        `wineserver -k` kills the old game -> its sc-launch exits -> pdeathsig
+        releases :8765 within a second or two) -> the port frees -> take over;
+      - a healthy other instance is serving and isn't going anywhere -> the port
+        stays busy the whole window -> leave it alone.
+    Returns True once the port is free (bind/take over), False if it stayed busy."""
+    deadline = time.monotonic() + timeout
+    while _port_in_use(host, port):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+    return True
+
+
 def _open_browser_when_ready(host: str, port: int, url: str) -> None:
     """Daemon thread: wait for our own server to start accepting, then open it once.
     Best-effort -- on a headless box webbrowser.open returns False or raises; swallow it
@@ -247,8 +265,10 @@ def main() -> None:
         return
 
     # Only the live-serving path dedups + auto-opens; the one-shot/maintenance modes
-    # above have already returned.
-    if _port_in_use(args.host, args.port):
+    # above have already returned. If the port looks busy, wait briefly: a relaunch's
+    # wineserver -k is tearing the previous server down and will free it, whereas a
+    # healthy other instance holds it through the window (and we leave it be).
+    if _port_in_use(args.host, args.port) and not _wait_to_bind(args.host, args.port):
         print(f"Starlogger already running at http://{args.host}:{args.port} -- "
               f"not starting a second instance.")
         return

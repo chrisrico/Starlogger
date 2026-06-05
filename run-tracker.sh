@@ -7,7 +7,13 @@
 # Lifetime: `setpriv --pdeathsig` asks the kernel to send the tracker SIGTERM the
 # moment the calling process (sc-launch) dies -- normal exit, closed terminal, or
 # even SIGKILL -- so the caller needs no PID tracking, trap, or explicit kill.
-# Skips if something already serves :8765. Data dir: $STARLOGGER_DATA_DIR (default XDG).
+# Data dir: $STARLOGGER_DATA_DIR (default XDG).
+#
+# The "already serving?" decision lives in tracker.py (_wait_to_bind): on a relaunch
+# the previous session's server is about to be torn down by sc-launch's `wineserver -k`,
+# so a one-shot port check here would wrongly bail before that teardown frees :8765.
+# We hand off to Python, which waits out the handoff and takes over (or leaves a
+# genuinely healthy instance alone).
 set -euo pipefail
 
 repo="$(dirname "$(readlink -f "$0")")"
@@ -16,12 +22,6 @@ py="$repo/.venv/bin/python"
 export STARLOGGER_DATA_DIR
 
 [ -x "$py" ] || { echo "run-tracker: venv missing ($py)" >&2; exit 0; }
-
-# Already serving? Leave the running instance alone.
-if (exec 3<>/dev/tcp/127.0.0.1/8765) 2>/dev/null; then
-    echo "run-tracker: :8765 already in use -- not starting another" >&2
-    exit 0
-fi
 
 mkdir -p "$STARLOGGER_DATA_DIR"
 
