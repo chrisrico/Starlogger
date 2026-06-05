@@ -140,12 +140,39 @@ const _hash = location.hash.slice(1);
 if (LEGACY_HASH[_hash]) { LEGACY_HASH[_hash][1](); activateTab(LEGACY_HASH[_hash][0]); }
 else if (TABS.includes(_hash)) activateTab(_hash);
 
-// ---- mining mode: a mining vehicle swaps the cargo-ops tabs for Mining ---- //
-// When the snapshot reports the player in a mining vehicle (mining_ship — Prospector,
-// MOLE, ROC…), the cargo-hauling tabs make no sense, so the Cargo and Plan tabs are
-// hidden and the Mining tab takes their slot right after Contracts. Driven
-// from renderAll on every snapshot; idempotent via MINING_LAYOUT so it only touches the
-// DOM on an actual ship-type change.
+// ---- mining vs cargo mode ---- //
+// Mode normally follows the snapshot: a mining vehicle (mining_ship — Prospector, MOLE,
+// ROC…) hides the cargo-hauling tabs and shows Mining, and the header stats/gauge swap to
+// the mining-relevant set. The MODE switch in the header lets the user pin it: "auto"
+// follows detection; "cargo"/"mining" force a mode (e.g. to use the mining reference tools
+// on foot, or to plan a haul while still sat in a Prospector). Persisted across sessions.
+let MODE_OVERRIDE = localStorage.getItem("modeOverride") || "auto";   // auto | cargo | mining
+function effectiveMining(d) {
+  if (MODE_OVERRIDE === "mining") return true;
+  if (MODE_OVERRIDE === "cargo") return false;
+  return !!(d && d.mining_ship);                                      // auto → follow the ship
+}
+function setMode(m) {
+  if (MODE_OVERRIDE === m) return;
+  MODE_OVERRIDE = m;
+  localStorage.setItem("modeOverride", m);
+  const d = curData(); if (d) renderAll(d);                           // swap tabs + header at once
+}
+function modeSwitchHtml(d) {
+  const eff = effectiveMining(d) ? "mining" : "cargo";
+  return [["auto", "Auto"], ["cargo", "Cargo"], ["mining", "Mining"]].map(([k, t]) => {
+    const on = MODE_OVERRIDE === k;
+    const hint = (k === "auto") ? ` <small>${eff}</small>` : "";       // show what Auto resolved to
+    const title = k === "auto" ? "Follow the detected ship" : `Always use ${t} mode`;
+    return `<button class="modesw-opt${on ? " active" : ""}" aria-pressed="${on}"
+      title="${title}" onclick="setMode('${k}')">${t}${hint}</button>`;
+  }).join("");
+}
+
+// When the player is in (or the MODE switch forces) mining, the cargo-hauling tabs make no
+// sense, so the Cargo and Plan tabs are hidden and the Mining tab takes their slot right
+// after Contracts. Driven from renderAll on every snapshot; idempotent via MINING_LAYOUT so
+// it only touches the DOM on an actual mode change.
 const HAUL_TABS = ["missions", "cargo", "plan", "history"];
 const MINE_TABS = ["missions", "mining", "history"];
 let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
@@ -314,7 +341,18 @@ function statusHtml(d) {
   return pill + `<span class="ship">SHIP ${box}${scu}</span>`;
 }
 
-function readoutsHtml(d) {
+function readoutsHtml(d, mining) {
+  const stat = (k, v, cls) => `<div class="stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  if (mining) {
+    // No hauling-contract metrics here — they don't apply to a mining run. We have no
+    // live mining telemetry from the log, so surface the relevant context the snapshot
+    // does carry: vehicle, its refined-ore hold (if any), where you are, and who.
+    const items = [["Ship", esc(d.ship || "—"), d.ship ? "accent" : ""]];
+    if (d.ship_scu) items.push(["Ore Hold", `${num(d.ship_scu)} <small>SCU</small>`, ""]);
+    items.push(["Location", esc(d.location || "—"), d.location ? "accent" : ""]);
+    items.push(["Player", esc(d.player || "—"), ""]);
+    return items.map(([k, v, cls]) => stat(k, v, cls)).join("");
+  }
   const c = d.counts;
   const items = [
     ["Active", c.partial ? `${c.active} <span class="sub">${c.partial}⚠</span>` : c.active, "accent"],
@@ -327,11 +365,18 @@ function readoutsHtml(d) {
     ["Player", esc(d.player || "—"), ""],
   ];
   if (c.hidden) items.push(["Hidden", c.hidden, ""]);
-  return items.map(([k, v, cls]) =>
-    `<div class="stat ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  return items.map(([k, v, cls]) => stat(k, v, cls)).join("");
 }
 
-function gaugeHtml(d) {
+function gaugeHtml(d, mining) {
+  if (mining) {
+    // The "Cargo Load" gauge tracks hauling cargo, which is meaningless here; the mining
+    // vehicle's refined-ore hold has no fill we can read from the log, so show capacity
+    // only (or nothing, for hopper-only craft like the Prospector/ROC at scu 0).
+    if (!d.ship_scu) return "";
+    return `<span class="lbl">Ore Hold</span>
+      <span class="remain"><b>${num(d.ship_scu)}</b> SCU capacity</span>`;
+  }
   // peak simultaneous load (back-haul aware) is what must fit at once; fall back
   // to total outstanding if the server didn't send it.
   const load = (d.peak_scu != null ? d.peak_scu : d.active_scu) || 0, cap = d.ship_scu;
@@ -351,12 +396,16 @@ function gaugeHtml(d) {
 }
 
 function renderHeader(d) {
+  const mining = effectiveMining(d);
   // don't repaint the status bar while the ship search box is focused or its popup
   // is open — a poll landing mid-interaction would tear it down.
   const busy = SHIP_MENU_OPEN || (document.activeElement && document.activeElement.id === "shipSel");
   if (!busy) setHTML("status", statusHtml(d));
-  setHTML("stats", readoutsHtml(d));
-  setHTML("capacity", gaugeHtml(d));
+  setHTML("modeswitch", modeSwitchHtml(d));
+  setHTML("stats", readoutsHtml(d, mining));
+  const gauge = gaugeHtml(d, mining);
+  setHTML("capacity", gauge);
+  const cap = $("capacity"); if (cap) cap.classList.toggle("hide", !gauge);  // collapse when empty
 }
 
 // ---- autocomplete catalog (cargo + station names) ---- //
@@ -869,7 +918,7 @@ const curData = () => (REPLAY_MODE ? REPLAY_SNAPSHOT : LAST);
 // Render every tab from one snapshot `d` (the live snapshot).
 function renderAll(d) {
   if (!d) return;
-  applyTabLayout(!!d.mining_ship);   // mining vehicle → swap cargo-ops tabs for Mining
+  applyTabLayout(effectiveMining(d));   // detected mining ship (or the MODE switch) → Mining tabs
   renderHeader(d);
   setHTML("datalists", datalistsHtml(d.catalog));
   // EDIT_CELL guards every cargo-ops screen so an open inline editor isn't clobbered by
