@@ -1715,20 +1715,48 @@ function updateReplayBar() {
 
 // ---- poll loop ---- //
 // When the tracker process exits, /api/state stops answering. We opened this tab
-// for the user on launch, so we clean it up too: after DISCONNECT_CLOSE_MS of
-// continuous failure, close the tab. window.close() is only honored for
-// script-opened windows in some browsers (this one was opened by the OS), so if
-// the close is refused we fall back to an unambiguous "safe to close" overlay.
+// for the user on launch, so we offer to clean it up too: once we've been down for
+// DISCONNECT_GRACE_MS (long enough to rule out a brief restart blip) a toast counts
+// down from DISCONNECT_CLOSE_MS and then closes the tab — unless the user clicks
+// "Keep open". window.close() is only honored for script-opened windows in some
+// browsers (this one was opened by the OS); if it's refused we fall back to an
+// unambiguous "safe to close" overlay.
+const DISCONNECT_GRACE_MS = 4000;
 const DISCONNECT_CLOSE_MS = 30000;
 let _lastOkTs = Date.now();
-let _closing = false;
+let _dcTimer = null;     // 250ms ticker driving the countdown toast, null when idle
+let _keepOpen = false;   // user clicked "Keep open" -> never auto-close this session
 
-function handleDisconnect() {
-  if (_closing || Date.now() - _lastOkTs < DISCONNECT_CLOSE_MS) return;
-  _closing = true;
+function _dcBar() {
+  let el = $("dcbar");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "dcbar";
+    el.innerHTML = 'Tracker disconnected — closing in <b id="dc-secs"></b>s' +
+      '<button class="dc-keep">Keep open</button>';
+    el.querySelector(".dc-keep").addEventListener("click", () => {
+      _keepOpen = true;             // stop nagging for the rest of the session
+      clearDisconnect();
+    });
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function clearDisconnect() {        // reconnected, or the user opted out
+  if (_dcTimer) { clearInterval(_dcTimer); _dcTimer = null; }
+  const el = $("dcbar"); if (el) el.remove();
+}
+
+function _dcTick() {
+  const remain = Math.ceil((DISCONNECT_CLOSE_MS - (Date.now() - _lastOkTs)) / 1000);
+  const n = $("dc-secs"); if (n) n.textContent = Math.max(0, remain);
+  if (remain <= 0) { clearDisconnect(); _closeTab(); }
+}
+
+function _closeTab() {
   window.close();
-  // If we're still here a beat later, the browser refused the close.
-  setTimeout(() => {
+  setTimeout(() => {                // still here? the browser refused the close
     document.body.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:center;height:100vh;' +
       'font:600 16px/1.5 system-ui,sans-serif;color:#9aa;text-align:center;padding:24px">' +
@@ -1736,11 +1764,20 @@ function handleDisconnect() {
   }, 200);
 }
 
+function handleDisconnect() {
+  if (_keepOpen || _dcTimer) return;                       // opted out, or already counting
+  if (Date.now() - _lastOkTs < DISCONNECT_GRACE_MS) return; // ride out brief blips
+  _dcBar();
+  _dcTick();
+  _dcTimer = setInterval(_dcTick, 250);
+}
+
 async function refresh() {
   if (REPLAY_MODE) return;   // replay pauses live polling; exitReplay() resumes it
   try {
     const d = await (await fetch("/api/state", { cache: "no-store" })).json();
     _lastOkTs = Date.now();
+    if (_dcTimer) clearDisconnect();   // back online -> drop the countdown
     LAST = d;
     renderAll(curData());                  // render every tab from the live snapshot
     if (TAB === "history") loadSessions();  // keep archive fresh while viewing
