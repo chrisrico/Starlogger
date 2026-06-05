@@ -268,7 +268,8 @@ def main() -> None:
     # above have already returned. If the port looks busy, wait briefly: a relaunch's
     # wineserver -k is tearing the previous server down and will free it, whereas a
     # healthy other instance holds it through the window (and we leave it be).
-    if _port_in_use(args.host, args.port) and not _wait_to_bind(args.host, args.port):
+    took_over = _port_in_use(args.host, args.port)
+    if took_over and not _wait_to_bind(args.host, args.port):
         print(f"Starlogger already running at http://{args.host}:{args.port} -- "
               f"not starting a second instance.")
         return
@@ -294,7 +295,12 @@ def main() -> None:
     print(f"  dashboard: {url}")
     print("  Ctrl-C to stop")
 
-    if not (args.no_browser or os.environ.get("STARLOGGER_NO_BROWSER")):
+    # Auto-open the dashboard only on a fresh start. On a relaunch we take over the
+    # previous instance's port (above), so its tab keeps polling the same URL and just
+    # reconnects to us -- opening another would pile up a duplicate tab every relaunch.
+    if took_over:
+        print("  (took over a running instance -- its dashboard tab will reconnect)")
+    elif not (args.no_browser or os.environ.get("STARLOGGER_NO_BROWSER")):
         threading.Thread(target=_open_browser_when_ready,
                          args=(args.host, args.port, url), daemon=True).start()
     try:
