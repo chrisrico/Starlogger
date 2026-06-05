@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass
+from typing import Callable
 
 from .config import SHIP_CARGO_PATH
 from .jsonstore import atomic_write, load_cached
@@ -114,102 +116,107 @@ def known_ship_names(db: dict | None = None) -> set:
     return set((db or load_ship_cargo()).get("ships", {}))
 
 
+@dataclass
+class _Catalog:
+    """One rebuildable cache. ``rebuild(p4k, ver, reason)`` does the build + atomic save +
+    logging and raises on failure; the orchestrator gates it on ``_reason`` and isolates it."""
+    label: str
+    has_cache: Callable[[], bool]            # a usable cache already exists
+    cached_version: Callable[[], "str | None"]
+    rebuild: Callable[[str, "str | None", str], None]
+
+
+def _reason(cat: _Catalog, ver: str | None) -> str | None:
+    """Why ``cat`` needs rebuilding: missing cache, or a MAJOR game-version move; else None."""
+    if not cat.has_cache():
+        return "no cache"
+    if ver and major_version(ver) != major_version(cat.cached_version()):
+        return f"version {cat.cached_version() or '?'} -> {ver}"
+    return None
+
+
+def _build_catalogs(path: str) -> list:
+    """The catalogs the background loop keeps fresh, each gated/rebuilt the same way. The
+    reference/mineables/blueprints modules are imported lazily (only the loop needs them)."""
+    from . import blueprints, mineables, reference
+
+    def _ship(p4k, ver, reason):
+        print(f"[ship cargo] rebuilding from local install ({reason}) -- niced, ~minutes")
+        ships = build_ship_cargo(p4k)
+        if ships:
+            save_ship_cargo(ships, game_version=ver)
+            print(f"[ship cargo] rebuilt {len(ships)} ships ({reason})")
+
+    def _reference(p4k, ver, reason):
+        ref = scdata.build_reference_data(p4k)
+        reference.save_reference(
+            ref["commodities"], ref["location_codes"],
+            commodity_names=ref["commodity_names"],
+            station_names=ref["station_names"], game_version=ver)
+        print(f"[reference] built {len(ref['commodity_names'])} commodities + "
+              f"{len(ref['station_names'])} stations ({reason})")
+
+    def _mineables(p4k, ver, reason):
+        print(f"[mineables] rebuilding from local install ({reason}) -- niced, ~minutes")
+        rocks = scdata.build_mineables_from_p4k(p4k)
+        if rocks:
+            mineables.save_mineables(rocks, game_version=ver)
+            print(f"[mineables] built {len(rocks)} mineable rocks ({reason})")
+
+    def _blueprints(p4k, ver, reason):
+        print(f"[blueprints] rebuilding from local install ({reason}) -- niced, ~minutes")
+        bps = scdata.build_blueprints_from_p4k(p4k)
+        if bps:
+            blueprints.save_blueprints(bps, game_version=ver)
+            print(f"[blueprints] built {len(bps)} blueprints ({reason})")
+
+    return [
+        _Catalog("ship cargo",
+                 lambda: bool(load_ship_cargo(path).get("ships")),
+                 lambda: load_ship_cargo(path).get("game_version"), _ship),
+        # Commodity + station reference data; cheap to build, gated like the rest.
+        _Catalog("reference",
+                 lambda: bool(reference.load_commodities()) and bool(reference.location_codes()),
+                 reference.commodities_version, _reference),
+        # Mineable-rock RS + composition (full DataCore extract; own file/trigger).
+        _Catalog("mineables",
+                 lambda: bool(mineables.load_mineables().get("rocks")),
+                 mineables.mineables_version, _mineables),
+        # Crafting blueprints + requirements (same full-extract source as mineables).
+        _Catalog("blueprints",
+                 lambda: bool(blueprints.load_blueprints().get("blueprints")),
+                 blueprints.blueprints_version, _blueprints),
+    ]
+
+
+def _refresh_once(catalogs: list, ver: str | None, log_path: str | None) -> None:
+    """One pass: find the stale catalogs, locate Data.p4k once, rebuild each (a failure in
+    one doesn't stop the others). Callable on its own, which is what the tests drive."""
+    stale = [(c, r) for c in catalogs if (r := _reason(c, ver))]
+    if not stale:
+        return
+    p4k = scdata.find_p4k(log_path)
+    if not p4k:
+        print("[ship cargo] skip refresh: Data.p4k not found next to Game.log")
+        return
+    for cat, reason in stale:
+        try:
+            cat.rebuild(p4k, ver, reason)
+        except Exception as e:  # keep the old cache, retry next check
+            print(f"[{cat.label}] rebuild failed: {e}")
+
+
 def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
                  path: str = SHIP_CARGO_PATH) -> None:
-    """Rebuild the cache only on a MAJOR game-version change (or if missing), reading
-    the local install. Runs the heavy StarBreaker extraction niced in the background
-    (see scdata); the tracker keeps serving the old file until the atomic replace."""
+    """Rebuild the local caches only on a MAJOR game-version change (or if missing), reading
+    the local install. Runs the heavy StarBreaker extraction niced in the background (see
+    scdata); the tracker keeps serving the old files until each atomic replace."""
     for _ in range(20):  # ~10s for the tailer to parse the version header
         if state.game_version or stop.is_set():
             break
         stop.wait(0.5)
 
+    catalogs = _build_catalogs(path)
     while not stop.is_set():
-        ver = state.game_version
-        cached = load_ship_cargo(path)
-        cached_ver = cached.get("game_version")
-        if not cached.get("ships"):
-            reason = "no cache"
-        elif ver and major_version(ver) != major_version(cached_ver):
-            reason = f"version {cached_ver or '?'} -> {ver}"
-        else:
-            reason = None
-
-        # Commodity + station reference data (commodity GUID->name + cargo-name list;
-        # station code->name + station list). Cheap to build (one global.ini extract +
-        # one dcb query), gated like ship cargo: rebuild when missing or the major
-        # version moved on. Independent of `reason` so a fresh data dir with current
-        # ships still gets it.
-        from . import reference
-        if not reference.load_commodities() or not reference.location_codes():
-            ref_reason = "no cache"
-        elif ver and major_version(ver) != major_version(reference.commodities_version()):
-            ref_reason = f"version {reference.commodities_version() or '?'} -> {ver}"
-        else:
-            ref_reason = None
-
-        # Mineable-rock RS + composition. Built from a full DataCore extract (its own
-        # file/trigger -- the RS value can't be pulled via the cheap reference query),
-        # gated like ship cargo: rebuild when missing or the major version moved on.
-        from . import mineables
-        if not mineables.load_mineables().get("rocks"):
-            min_reason = "no cache"
-        elif ver and major_version(ver) != major_version(mineables.mineables_version()):
-            min_reason = f"version {mineables.mineables_version() or '?'} -> {ver}"
-        else:
-            min_reason = None
-
-        # Crafting blueprints + requirements. Same full-extract source/trigger as
-        # mineables; own file (blueprints.json). Feeds the Mining tab's blueprint planner.
-        from . import blueprints
-        if not blueprints.load_blueprints().get("blueprints"):
-            bp_reason = "no cache"
-        elif ver and major_version(ver) != major_version(blueprints.blueprints_version()):
-            bp_reason = f"version {blueprints.blueprints_version() or '?'} -> {ver}"
-        else:
-            bp_reason = None
-
-        if reason or ref_reason or min_reason or bp_reason:
-            p4k = scdata.find_p4k(log_path)
-            if not p4k:
-                print("[ship cargo] skip refresh: Data.p4k not found next to Game.log")
-            else:
-                if reason:
-                    try:
-                        print(f"[ship cargo] rebuilding from local install ({reason}) -- niced, ~minutes")
-                        ships = build_ship_cargo(p4k)
-                        if ships:
-                            save_ship_cargo(ships, game_version=ver)
-                            print(f"[ship cargo] rebuilt {len(ships)} ships ({reason})")
-                    except Exception as e:  # keep old cache, retry next check
-                        print(f"[ship cargo] rebuild failed: {e}")
-                if ref_reason:
-                    try:
-                        ref = scdata.build_reference_data(p4k)
-                        reference.save_reference(
-                            ref["commodities"], ref["location_codes"],
-                            commodity_names=ref["commodity_names"],
-                            station_names=ref["station_names"], game_version=ver)
-                        print(f"[reference] built {len(ref['commodity_names'])} commodities + "
-                              f"{len(ref['station_names'])} stations ({ref_reason})")
-                    except Exception as e:
-                        print(f"[reference] build failed: {e}")
-                if min_reason:
-                    try:
-                        print(f"[mineables] rebuilding from local install ({min_reason}) -- niced, ~minutes")
-                        rocks = scdata.build_mineables_from_p4k(p4k)
-                        if rocks:
-                            mineables.save_mineables(rocks, game_version=ver)
-                            print(f"[mineables] built {len(rocks)} mineable rocks ({min_reason})")
-                    except Exception as e:
-                        print(f"[mineables] build failed: {e}")
-                if bp_reason:
-                    try:
-                        print(f"[blueprints] rebuilding from local install ({bp_reason}) -- niced, ~minutes")
-                        bps = scdata.build_blueprints_from_p4k(p4k)
-                        if bps:
-                            blueprints.save_blueprints(bps, game_version=ver)
-                            print(f"[blueprints] built {len(bps)} blueprints ({bp_reason})")
-                    except Exception as e:
-                        print(f"[blueprints] build failed: {e}")
+        _refresh_once(catalogs, state.game_version, log_path)
         stop.wait(300)  # re-check for a version bump (e.g. after a patch + relaunch)
