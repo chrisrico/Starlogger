@@ -16,6 +16,9 @@ class Leg:
     have: int = 0
     location: str | None = None  # resolved name when known
     zone_host_id: str | None = None
+    # marker geometry from the log — UNUSABLE for routing or station identity: it's
+    # shared placeholder geometry (~55 distinct points across 73 zones; the same tuple
+    # is reused as the pickup for many zones), so never nearest-match on it.
     pos: tuple[float, float, float] | None = None
     state: str = "pending"  # "pending" | "completed"
 
