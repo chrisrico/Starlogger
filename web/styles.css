@@ -23,6 +23,9 @@
   --display:"Chakra Petch",ui-sans-serif,system-ui,sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
   --cut:10px; /* corner notch size */
+  --input-bg:#070d18;                          /* shared dark fill for every input/select/combobox */
+  --focus-ring:0 0 0 2px rgba(79,220,255,.22); /* shared cyan focus ring for form controls */
+  --panel-shadow:0 12px 30px rgba(0,0,0,.5);   /* shared drop shadow for floating panels/menus */
 }
 
 *{box-sizing:border-box}
@@ -145,18 +148,25 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
 .status .ship .cap{color:var(--cyan)}
 /* searchable ship combobox */
 .shipbox{position:relative;display:inline-block}
-.status .shipsel{width:200px;background:rgba(0,0,0,.5);color:var(--ink);
-  border:1px solid var(--line-2);border-radius:2px;font-family:var(--mono);font-size:12px;
+.status .shipsel{width:200px;border-radius:2px;font-size:12px;
   padding:4px 8px;letter-spacing:.02em}
 .status .shipsel::placeholder{color:var(--ink-3);letter-spacing:.04em}
 .status .shipsel:hover{border-color:var(--cyan)}
-.status .shipsel:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 8px rgba(79,220,255,.3)}
+/* shared form controls — one dark field + cyan focus ring for every input/select/combobox.
+   Per-context rules elsewhere set only their own width/padding/font-size/radius. */
+.editor input,.editor select,.mining input,.cg-search,.status .shipsel,.tc-sel{
+  background:var(--input-bg);color:var(--ink);border:1px solid var(--line-2);font-family:var(--mono)}
+.editor input:focus,.editor select:focus,.mining input:focus,.cg-search:focus,
+.status .shipsel:focus,.tc-sel:focus,.edc-in:focus{outline:none;border-color:var(--cyan);
+  box-shadow:var(--focus-ring)}
+/* shared floating-panel chrome — ship combobox, the Type filter menu, the blueprint picker */
+.shipmenu,.th-menu,.bp-dd-list{background:var(--panel-2);border:1px solid var(--line-2);
+  border-radius:3px;box-shadow:var(--panel-shadow);overflow-y:auto}
 .shipmenu{display:none;position:absolute;top:calc(100% + 3px);right:0;z-index:60;
   /* size to the widest row (independent of the narrow input), capped so it can't
      run off-screen — keeps long "name · MANUFACTURER" rows from squishing */
-  width:max-content;min-width:240px;max-width:400px;max-height:320px;overflow-y:auto;
-  background:var(--panel);border:1px solid var(--line-2);
-  box-shadow:0 10px 28px rgba(0,0,0,.55);font-family:var(--mono);font-size:12px}
+  width:max-content;min-width:240px;max-width:400px;max-height:320px;
+  font-family:var(--mono);font-size:12px}
 .shipmenu.open{display:block}
 .shipopt{display:flex;justify-content:space-between;align-items:baseline;gap:18px;
   padding:6px 11px;cursor:pointer;color:var(--ink);border-left:2px solid transparent}
@@ -263,10 +273,9 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
 .edc.is-unknown .edc-unkn{color:var(--amber);font-style:italic}
 .edc.is-unknown .edc-pen{opacity:.9;color:var(--amber)}
 .edc.editing{display:inline-flex}
-.edc-in{background:#070d18;color:var(--ink);border:1px solid var(--cyan);border-radius:2px;
+.edc-in{background:var(--input-bg);color:var(--ink);border:1px solid var(--cyan);border-radius:2px;
   padding:3px 7px;font-family:var(--mono);font-size:12.5px;min-width:0;max-width:18ch}
 .edc-in[type=number]{max-width:7ch;text-align:right}
-.edc-in:focus{outline:none;box-shadow:0 0 0 2px rgba(79,220,255,.25)}
 
 .row{display:flex;justify-content:space-between;gap:10px;padding:9px 16px;border-bottom:1px solid rgba(86,206,255,.07);align-items:baseline}
 .row:last-child{border-bottom:0}
@@ -346,7 +355,8 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
 /* label pinned to the left (out of flow) so the checkboxes center in the full bar */
 .filt-lbl{position:absolute;left:16px;top:50%;transform:translateY(-50%);
   font-family:var(--display);text-transform:uppercase;letter-spacing:.14em;font-size:10px;color:var(--ink-3)}
-.lt-tag{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;
+/* small mono status/system pill — shared by archive log tags and quantum-travel system tags */
+.lt-tag,.qt-sys{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;
   padding:1px 6px;border:1px solid var(--line-2);border-radius:2px;color:var(--ink-3);white-space:nowrap}
 .lt-tag.good{color:var(--green);border-color:rgba(92,227,154,.4)}
 .lt-tag.warn{color:var(--amber);border-color:rgba(245,184,92,.4)}
@@ -364,8 +374,7 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
 .th-menu-btn:hover{color:var(--ink-2)}
 .th-menu-btn.on{color:var(--cyan)}
 .th-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:6;min-width:172px;display:block;
-  background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:6px;
-  box-shadow:0 10px 28px rgba(0,0,0,.55);text-transform:none;letter-spacing:normal}
+  padding:6px;text-transform:none;letter-spacing:normal}
 .th-menu-act{display:flex;gap:6px;padding:2px 2px 6px;margin-bottom:4px;border-bottom:1px solid var(--line)}
 .th-menu-act button{flex:1;font-family:var(--mono);font-size:10px;color:var(--ink-2);
   background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:3px 0;cursor:pointer}
@@ -473,8 +482,6 @@ tr:hover .lt-replay .lt-act{opacity:1}
 .lt-shop{color:var(--ink-2);white-space:nowrap}
 .lt-status{white-space:nowrap}
 .qt-leg{color:var(--ink-3)}
-.qt-sys{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;
-  padding:1px 6px;border-radius:2px;border:1px solid var(--line-2);color:var(--ink-3);white-space:nowrap}
 .qt-sys.s-pyro{color:var(--amber);border-color:rgba(245,184,92,.4)}
 .qt-sys.s-stanton{color:var(--cyan);border-color:rgba(79,220,255,.4)}
 .qt-sys.s-jumppoint{color:var(--green);border-color:rgba(92,227,154,.4);background:rgba(92,227,154,.06)}
@@ -604,13 +611,21 @@ footer{color:var(--ink-3);text-align:center;padding:22px;font-size:11px;font-fam
 .tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 
 /* ---- buttons / editor ---- */
-td button,.editor button{font-family:var(--display);font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-  font-size:12px;background:rgba(86,206,255,.06);color:var(--ink);border:1px solid var(--line-2);
-  border-radius:2px;padding:6px 13px;cursor:pointer;transition:all .14s}
-td button:hover,.editor button:hover{background:rgba(79,220,255,.16);border-color:var(--cyan);color:#fff}
+/* shared button base — cargo-ops tables, the mission editor, and the mining tool cards */
+td button,.editor button,.mtool button{font-family:var(--display);font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;font-size:12px;background:rgba(86,206,255,.06);color:var(--ink);
+  border:1px solid var(--line-2);border-radius:2px;padding:6px 13px;cursor:pointer;transition:all .14s}
+td button:hover,.editor button:hover,.mtool button:hover{background:rgba(79,220,255,.16);
+  border-color:var(--cyan);color:#fff}
 .rowact{display:flex;gap:7px}
-td button.danger{border-color:rgba(255,94,116,.4);color:var(--red);background:rgba(255,94,116,.05)}
-td button.danger:hover{background:rgba(255,94,116,.18);border-color:var(--red);color:#fff}
+/* shared danger / primary variants (any button context) */
+td button.danger,.editor button.danger{border-color:rgba(255,94,116,.45);color:var(--red);
+  background:rgba(255,94,116,.06)}
+td button.danger:hover,.editor button.danger:hover{background:rgba(255,94,116,.18);
+  border-color:var(--red);color:#fff}
+.editor button.primary,.mtool button.primary{background:var(--cyan);color:#04121d;
+  border-color:var(--cyan);font-weight:600}
+.editor button.primary:hover,.mtool button.primary:hover{box-shadow:0 0 16px rgba(79,220,255,.5);color:#04121d}
 tr.hiddenrow{opacity:.45}
 tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .editor{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:18px;
@@ -620,14 +635,8 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .ef label{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
 .ef label .sub{text-transform:none;letter-spacing:0}
 .ef code{font-family:var(--mono);color:var(--cyan);font-size:11px}
-.editor input,.editor select{background:#070d18;color:var(--ink);border:1px solid var(--line-2);
-  border-radius:2px;padding:7px 9px;font-family:var(--mono);font-size:12.5px}
-.editor input:focus,.editor select:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 2px rgba(79,220,255,.18)}
+.editor input,.editor select{border-radius:2px;padding:7px 9px;font-size:12.5px}
 .ef.btns{flex-direction:row;gap:9px;flex-wrap:wrap;margin-top:4px}
-.editor button.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan)}
-.editor button.primary:hover{box-shadow:0 0 16px rgba(79,220,255,.5);color:#04121d}
-.editor button.danger{border-color:rgba(255,94,116,.5);color:var(--red);background:rgba(255,94,116,.06)}
-.editor button.danger:hover{background:rgba(255,94,116,.18);border-color:var(--red);color:#fff}
 
 /* ---- leg table inside editor ---- */
 .legtable{width:100%;border-collapse:collapse;margin-bottom:8px;background:transparent;border:0}
@@ -686,11 +695,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .cg-sw{width:12px;height:12px;border-radius:2px;border:1px solid rgba(0,0,0,.4);flex:none}
 .cg-sw-free{background:transparent;border:1px dashed rgba(86,206,255,.4)}
 /* select control — used by the ship-grids page (/grids.html) toolbar */
-.tc-sel{background:rgba(0,0,0,.4);border:1px solid var(--line-2);color:var(--ink);
-  font-family:var(--mono);font-size:12px;padding:5px 9px;border-radius:3px;cursor:pointer;
+.tc-sel{font-size:12px;padding:5px 9px;border-radius:3px;cursor:pointer;
   min-width:130px;max-width:340px}
 .tc-sel:hover:not(:disabled){border-color:var(--cyan)}
-.tc-sel:focus{outline:none;border-color:var(--cyan)}
 .tc-sel:disabled{opacity:.5;cursor:default}
 /* elevator staging + load-order sequence */
 .elev-lbl{font-family:var(--display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
@@ -717,9 +724,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 /* all-ships debug page (/grids.html) */
 .cg-page{padding:22px;max-width:1280px;margin:0 auto}
 .cg-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-bottom:18px}
-.cg-search{flex:1;min-width:220px;background:rgba(0,0,0,.45);border:1px solid var(--line-2);
-  color:var(--ink);font-family:var(--mono);font-size:13px;padding:9px 12px}
-.cg-search:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 10px rgba(79,220,255,.3)}
+.cg-search{flex:1;min-width:220px;font-size:13px;padding:9px 12px}
 .cg-count{font-family:var(--mono);font-size:12px;color:var(--ink-3);white-space:nowrap}
 .cg-ship{margin-bottom:22px}
 .cg-ship > h3{margin:0 0 4px;padding:11px 15px;display:flex;justify-content:space-between;
@@ -737,12 +742,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .msub.hide{display:none}   /* outrank .msub's display:flex so a hidden sub-tab stays hidden */
 /* sub-tab strip reuses the Archive tab's .arch-tabs/.arch-tab styling */
 .mtool .mform{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:4px 16px 6px}
-.mining input{background:var(--void);border:1px solid var(--line-2);color:var(--ink);
-  border-radius:2px;padding:8px 10px;font-family:var(--mono);font-size:13px}
+.mining input{border-radius:2px;padding:8px 10px;font-size:13px}
 .mining input[type=number]{width:140px}
 .mining input#mf-name{min-width:200px}
-.mining input:focus{outline:none;border-color:var(--cyan);
-  box-shadow:0 0 0 2px rgba(79,220,255,.18)}
 /* blueprint picker: search input + grouped (type/size) dropdown */
 /* the card normally clips descendants (clip-path corners); while the dropdown is open,
    release the clip so the menu can overflow AND lift the whole card above the result
@@ -751,8 +753,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .bp-dd{position:relative;flex:1;min-width:280px}
 .bp-dd input#mp-bp{width:100%;box-sizing:border-box}
 .bp-dd-list{display:none;position:absolute;z-index:30;top:calc(100% + 4px);left:0;right:0;
-  max-height:340px;overflow-y:auto;background:var(--panel-2);border:1px solid var(--line-2);
-  border-radius:3px;box-shadow:0 12px 30px rgba(0,0,0,.45)}
+  max-height:340px}
 .bp-dd-list.open{display:block}
 /* sticky section header; the top border is the horizontal rule between sections */
 .bp-dd-grp{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;gap:10px;
@@ -790,13 +791,8 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mtool .mi-chip.miss{opacity:.6}
 .mtool .mi-chip.miss b{color:var(--ink-2)}
 .mtool .mi-chip:hover{border-color:var(--cyan);background:rgba(79,220,255,.08)}
-/* tool-card buttons only (scoped to .mtool so the .arch-tab sub-tab strip keeps its
-   own underlined styling instead of getting a box border) */
-.mtool button{background:transparent;border:1px solid var(--line-2);color:var(--ink);
-  border-radius:2px;padding:8px 14px;font-family:var(--display);font-size:13px;cursor:pointer}
-.mtool button:hover{border-color:var(--cyan);color:var(--cyan)}
-.mtool button.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan);font-weight:600}
-.mtool button.primary:hover{box-shadow:0 0 16px rgba(79,220,255,.5);color:#04121d}
+/* mining tool-card buttons share the app button base (scoped to .mtool, not bare `button`,
+   so the .arch-tab sub-tab strip keeps its own underlined styling) — see the button base above */
 .mhint{margin:2px 16px 12px;color:var(--ink-2);font-size:12px;line-height:1.5}
 .mhint code{font-family:var(--mono);color:var(--cyan);font-size:11.5px}
 .mres{display:flex;flex-direction:column;gap:12px}
