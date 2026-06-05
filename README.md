@@ -34,28 +34,24 @@ The only runtime dependency is Flask. The ship cargo-grid database
 ## Run
 
 ```bash
-.venv/bin/python tracker.py            # Linux: auto-detect Game.log, serve :8765
-.venv\Scripts\python tracker.py        # Windows: same (or double-click run-tracker.bat)
-.venv/bin/python tracker.py --port 9000
-.venv/bin/python tracker.py --once     # parse once, print JSON, exit
-.venv/bin/python tracker.py --rebuild  # backfill the archive from logbackups/
-.venv/bin/python tracker.py --no-browser  # serve without auto-opening the browser
+.venv/bin/python tracker.py        # Linux: auto-detect Game.log, serve :8765
+.venv\Scripts\python tracker.py    # Windows: same (or double-click run-tracker.bat)
 ```
 
-On launch the dashboard **auto-opens in your default browser**. If an instance is
-already serving the port, launching again just exits cleanly ("already running …")
-instead of opening a second tab or crashing — so re-launching the game won't pile up
-windows. Disable auto-open with `--no-browser` or `STARLOGGER_NO_BROWSER=1`.
+The dashboard **auto-opens in your browser**; launching again while it's already
+serving just exits ("already running …") instead of stacking windows. Leave it
+running while you play — it polls every few seconds and resets when you relaunch the
+game. The LIVE `Game.log` is auto-detected (Windows:
+`%ProgramFiles%\…\StarCitizen\LIVE\Game.log`; Linux: derived from `WINEPREFIX`).
 
-Leave it running while you play; the dashboard polls every few seconds and resets
-itself when you relaunch the game. It auto-detects the LIVE `Game.log` (on Windows,
-`%ProgramFiles%\Roberts Space Industries\StarCitizen\LIVE\Game.log`). On Linux, set
-`WINEPREFIX` to point at a non-default Wine/Proton prefix and the LIVE/PTU `Game.log`
-is derived from it. Point it at a specific log with `--log PATH` or the `STARLOGGER_LOG`
-env var (the escape hatch for a non-default install drive/folder). `STARLOGGER_DATA_DIR`
-sets where the generated `*.json` data (and the downloaded extractor binary) are stored —
-defaults to `$XDG_DATA_HOME/starlogger` (i.e. `~/.local/share/starlogger`) on Linux and
-`%LOCALAPPDATA%\starlogger` on Windows.
+**Flags & env vars:**
+
+- `--port N` — serve on a different port
+- `--log PATH` / `STARLOGGER_LOG` — use a specific `Game.log` (non-default install)
+- `--no-browser` / `STARLOGGER_NO_BROWSER=1` — don't auto-open the browser
+- `--once` — parse once, print JSON, exit; `--rebuild` — backfill the archive from `logbackups/`
+- `STARLOGGER_DATA_DIR` — where generated `*.json` + the extractor binary live (default
+  `$XDG_DATA_HOME/starlogger` ≈ `~/.local/share/starlogger`; `%LOCALAPPDATA%\starlogger` on Windows)
 
 ## Run it with the game
 
@@ -103,14 +99,12 @@ a ship you pick in the **SHIP** box at the top. The all-ships grid reference is 
 ## Ship cargo data
 
 `ships_cargo.json` (per-ship SCU, deck-accurate grid geometry, names, manufacturer,
-role) is read **straight from the game's own `Data.p4k`** — no third-party site.
-The tracker drives [StarBreaker](https://github.com/diogotr7/StarBreaker), a Rust
-extractor it downloads once (SHA-256-pinned, the right Linux or Windows build for
-your OS) into `STARLOGGER_DATA_DIR/bin`, and rebuilds the database only when the game's
-**major version changes**, at background priority so it never disturbs the game.
-This needs the game installed with `Data.p4k` next to `Game.log`; if it isn't found
-the tracker just keeps using the committed `ships_cargo.json` (so most users never
-run the extractor).
+role) is read **straight from the game's own `Data.p4k`** — no third-party site —
+via [StarBreaker](https://github.com/diogotr7/StarBreaker), a Rust extractor the
+tracker downloads once (SHA-256-pinned, per-OS) into `STARLOGGER_DATA_DIR/bin`. It
+rebuilds only when the game's **major version changes**, at background priority. If
+`Data.p4k` isn't found next to `Game.log`, the committed `ships_cargo.json` is used —
+so most users never run the extractor.
 
 ## Fixing recovered data
 
