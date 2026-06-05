@@ -1627,14 +1627,18 @@ setInterval(refresh, 3000);
 // ============================================================================ //
 let MINING_SUB = "identify";       // identify | find | plan
 let MINING_MINERALS = null;        // cached mineral names for the autocomplete
+let MINING_BLUEPRINTS = null;      // cached blueprint names for the autocomplete
 let MINING_INIT = false;
 
 async function initMining() {
   if (!MINING_INIT) {
     MINING_INIT = true;
-    try {
-      MINING_MINERALS = (await (await fetch("/api/minerals", { cache: "no-store" })).json()).minerals || [];
-    } catch (e) { MINING_MINERALS = []; }
+    const grab = async (url, key) => {
+      try { return (await (await fetch(url, { cache: "no-store" })).json())[key] || []; }
+      catch (e) { return []; }
+    };
+    [MINING_MINERALS, MINING_BLUEPRINTS] = await Promise.all([
+      grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints")]);
   }
   renderMiningShell();
 }
@@ -1650,7 +1654,9 @@ function renderMiningShell() {
   const tool = MINING_SUB === "identify" ? identifyToolHtml()
     : MINING_SUB === "find" ? findToolHtml() : planToolHtml();
   const datalist = `<datalist id="dl_mineral">${(MINING_MINERALS || [])
-    .map(m => `<option value="${esc(m)}">`).join("")}</datalist>`;
+      .map(m => `<option value="${esc(m)}">`).join("")}</datalist>` +
+    `<datalist id="dl_blueprint">${(MINING_BLUEPRINTS || [])
+      .map(b => `<option value="${esc(b)}">`).join("")}</datalist>`;
   setHTML("mining", `${datalist}<div class="mining">
     <div class="msubbar">${bar}</div>
     ${tool}
@@ -1784,16 +1790,50 @@ function indexResultHtml(minerals) {
     logTable(th("Mineral") + th("RS to scan") + th("Best sources"), rows, "") + `</div>`;
 }
 
-// ---- Plan: wanted minerals → deposit coverage + per-ingredient sources ---- //
+// ---- Plan: blueprint (or manual minerals) → deposit coverage + sources ---- //
 function planToolHtml() {
   return `<div class="card mtool"><h3><span>Blueprint mining plan</span></h3>
-    <div class="mform col">
-      <label for="mp-list">Wanted minerals <span class="mn-dim">(one per line, or comma-separated)</span></label>
-      <textarea id="mp-list" rows="4" placeholder="Quantainium&#10;Bexalite&#10;Gold"></textarea>
-      <button class="primary" onclick="miningPlan()">Build plan</button>
+    <div class="mform">
+      <input id="mp-bp" list="dl_blueprint" autocomplete="off" aria-label="Blueprint name"
+        placeholder="Blueprint name, e.g. Pulverizer LMG Magazine (120 Cap)"
+        onkeydown="if(event.key==='Enter')miningPlanFromBlueprint()">
+      <button class="primary" onclick="miningPlanFromBlueprint()">Plan from blueprint</button>
     </div>
-    <p class="mhint">Ranks rock deposits by how many of your ingredients each can yield, so one stop
-      covers more of the list.</p>
+    <div class="mform col">
+      <label for="mp-list">…or list minerals yourself <span class="mn-dim">(one per line, or comma-separated)</span></label>
+      <textarea id="mp-list" rows="3" placeholder="Quantainium&#10;Bexalite&#10;Gold"></textarea>
+      <button onclick="miningPlan()">Build plan from minerals</button>
+    </div>
+    <p class="mhint">Pick a blueprint to pull its required minerals straight from the game files, or list
+      minerals yourself. Deposits are ranked by how many of the ingredients each can yield.</p>
+  </div>`;
+}
+const _miningDur = (s) => {
+  s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;
+  return m ? `${m}m${sec ? " " + sec + "s" : ""}` : `${sec}s`;
+};
+async function miningPlanFromBlueprint() {
+  const name = (($("mp-bp") || {}).value || "").trim();
+  if (!name) { setHTML("mining-results", `<div class="empty">Pick a blueprint.</div>`); return; }
+  setHTML("mining-results", `<div class="empty">loading blueprint…</div>`);
+  try {
+    const bp = await fetch(`/api/blueprint?name=${encodeURIComponent(name)}`).then(r => r.json());
+    if (bp.ok === false) { setHTML("mining-results", `<div class="empty">No blueprint “${esc(name)}”.</div>`); return; }
+    const plan = await fetch("/api/mining-plan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ minerals: bp.minerals || [] }),
+    }).then(r => r.json());
+    setHTML("mining-results", recipeHtml(bp) + planResultHtml(plan));
+  } catch (e) { setHTML("mining-results", `<div class="empty">plan failed</div>`); }
+}
+function recipeHtml(bp) {
+  const meta = [esc(bp.category || ""), bp.craft_seconds ? _miningDur(bp.craft_seconds) : ""].filter(Boolean).join(" · ");
+  const rows = (bp.requirements || []).map(r => `<tr>
+    <td>${esc(r.slot || "")}</td><td><b>${esc(r.resource)}</b></td>
+    <td class="lt-num">${r.scu} SCU</td>
+    <td class="lt-num">${r.min_quality > 0 ? "Q≥" + r.min_quality : "—"}</td></tr>`).join("");
+  return `<div class="card"><h3><span>${esc(bp.name)}</span><span class="scu">${meta}</span></h3>
+    ${logTable(th("Slot") + th("Material") + th("Qty", true) + th("Min quality", true), rows, "No materials.")}
   </div>`;
 }
 async function miningPlan() {

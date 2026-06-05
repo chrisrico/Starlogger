@@ -704,6 +704,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
   border-radius:2px;padding:8px 10px;font-family:var(--mono);font-size:13px}
 .mining input[type=number]{width:140px}
 .mining input#mf-name{min-width:200px}
+.mining input#mp-bp{flex:1;min-width:280px}
 .mining textarea{resize:vertical;width:100%}
 .mining input:focus,.mining textarea:focus{outline:none;border-color:var(--cyan);
   box-shadow:0 0 0 2px rgba(79,220,255,.18)}

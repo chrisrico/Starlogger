@@ -147,7 +147,17 @@ def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
         else:
             min_reason = None
 
-        if reason or ref_reason or min_reason:
+        # Crafting blueprints + requirements. Same full-extract source/trigger as
+        # mineables; own file (blueprints.json). Feeds the Mining tab's blueprint planner.
+        from . import blueprints
+        if not blueprints.load_blueprints().get("blueprints"):
+            bp_reason = "no cache"
+        elif ver and major_version(ver) != major_version(blueprints.blueprints_version()):
+            bp_reason = f"version {blueprints.blueprints_version() or '?'} -> {ver}"
+        else:
+            bp_reason = None
+
+        if reason or ref_reason or min_reason or bp_reason:
             p4k = scdata.find_p4k(log_path)
             if not p4k:
                 print("[ship cargo] skip refresh: Data.p4k not found next to Game.log")
@@ -181,4 +191,13 @@ def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
                             print(f"[mineables] built {len(rocks)} mineable rocks ({min_reason})")
                     except Exception as e:
                         print(f"[mineables] build failed: {e}")
+                if bp_reason:
+                    try:
+                        print(f"[blueprints] rebuilding from local install ({bp_reason}) -- niced, ~minutes")
+                        bps = scdata.build_blueprints_from_p4k(p4k)
+                        if bps:
+                            blueprints.save_blueprints(bps, game_version=ver)
+                            print(f"[blueprints] built {len(bps)} blueprints ({bp_reason})")
+                    except Exception as e:
+                        print(f"[blueprints] build failed: {e}")
         stop.wait(300)  # re-check for a version bump (e.g. after a patch + relaunch)

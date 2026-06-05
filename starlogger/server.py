@@ -11,6 +11,7 @@ from .config import WEB_DIR
 from .overrides import get_overrides, set_leg_field, set_leg_states, write_override
 from .replay import build_timeline, snapshot_at
 from .settings import set_setting
+from .blueprints import blueprint_names, lookup_blueprint
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan)
 from .shipcargo import load_ship_cargo
@@ -136,6 +137,22 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
         if not isinstance(minerals, list):
             return jsonify({"ok": False, "error": "minerals must be a list"}), 400
         return jsonify(mining_plan([str(m) for m in minerals]))
+
+    @app.get("/api/blueprints")
+    def api_blueprints():
+        # Blueprint names for the planner's autocomplete.
+        return jsonify({"blueprints": blueprint_names()})
+
+    @app.get("/api/blueprint")
+    def api_blueprint():
+        # One blueprint's recipe (requirements + minerals) by name; 404 if unknown.
+        name = request.args.get("name", "")
+        if not name.strip():
+            return jsonify({"ok": False, "error": "name is required"}), 400
+        bp = lookup_blueprint(name)
+        if not bp:
+            return jsonify({"ok": False, "error": "no such blueprint"}), 404
+        return jsonify(bp)
 
     @app.post("/api/select-ship")
     def api_select_ship():

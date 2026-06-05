@@ -25,6 +25,10 @@ REFERENCE_PATH = os.path.join(DATA_DIR, "reference.json")
 # extract (its own file/trigger, like ships_cargo.json -- the data can't be pulled
 # via the cheap query path reference.json uses). See mineables.py.
 MINEABLES_PATH = os.path.join(DATA_DIR, "mineables.json")
+# Crafting blueprints + their material requirements, from the same full DataCore
+# extract (links a blueprint -> the minerals it needs -> the rocks that yield them).
+# See blueprints.py.
+BLUEPRINTS_PATH = os.path.join(DATA_DIR, "blueprints.json")
 TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")

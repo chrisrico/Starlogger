@@ -17,6 +17,7 @@ rock class(es), the inferred cluster size, and each class's makeup. RS is class-
 
 from __future__ import annotations
 
+import re
 import time
 
 from .config import MINEABLES_PATH
@@ -100,6 +101,29 @@ def lookup_rs(rs_value: float, tol: float = 0.5, max_count: int = 500,
     return out
 
 
+# Mineral-name reconciliation. The same mineral is spelled differently across the
+# game's datasets: mineable elements ("Aluminium Ore", "Quantainium Raw"), blueprint
+# resources ("Aluminum", "Quantanium"), deposits ("Pressurized Ice"). Normalise to a
+# bare key (drop spaces/case, the Ore/Raw/Deposit suffix, and known spelling variants)
+# so a mineral matches across all of them.
+_MINERAL_ALIASES = {"aluminum": "aluminium", "quantanium": "quantainium"}
+
+
+def _mineral_key(name: str) -> str:
+    k = re.sub(r"[^a-z0-9]", "", (name or "").lower())
+    for suf in ("ore", "raw", "deposit"):
+        if k.endswith(suf) and len(k) > len(suf):
+            k = k[:-len(suf)]
+    return _MINERAL_ALIASES.get(k, k)
+
+
+def _mineral_matches(query: str, element: str) -> bool:
+    """True if `query` names the same mineral as `element` (spelling-tolerant; allows a
+    partial like 'gold' to match 'Gold Ore')."""
+    qk, ek = _mineral_key(query), _mineral_key(element)
+    return bool(qk) and (qk in ek or ek in qk)
+
+
 def _yield_score(part: dict) -> float:
     """A rough "how good a source is this" score for one mineral in a rock: spawn
     probability x the midpoint of its percentage range. Used to rank sources."""
@@ -131,13 +155,12 @@ def lookup_mineral(name: str, path: str = MINEABLES_PATH) -> dict:
     ``{mineral, signatures: [rs...], rocks: [source-row...]}`` with rocks ranked by yield
     score (richest source first), so you know both *what number* to scan for and *which
     rock* is the best source."""
-    q = (name or "").strip().lower()
-    if not q:
+    if not (name or "").strip():
         return {"mineral": name, "signatures": [], "rocks": []}
     rows, sigs = [], set()
     for r in catalog(path):
         for e in r["composition"]:
-            if q in (e.get("element") or "").lower():
+            if _mineral_matches(name, e.get("element")):
                 rows.append(_source_row(r, e))
                 sigs.add(r["rs"])
     rows.sort(key=lambda x: (-x["score"], x["rs"], x["deposit_name"]))
@@ -237,9 +260,8 @@ def mining_plan(minerals: list, path: str = MINEABLES_PATH) -> dict:
     for r in catalog(path):
         deposit = r["deposit_name"] or r["name"]
         for e in r["composition"]:
-            el = (e.get("element") or "").lower()
             for t in targets:
-                if t.lower() in el:
+                if _mineral_matches(t, e.get("element")):
                     d = cov.setdefault(deposit, {"covers": set(), "rs": set(), "score": 0.0})
                     d["covers"].add(t)
                     d["rs"].add(r["rs"])
