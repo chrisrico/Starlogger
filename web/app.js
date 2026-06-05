@@ -1963,14 +1963,17 @@ async function miningIdentify() {
       fetch(`/api/rock-decompose?rs=${v}`).then(r => r.json()),
     ]);
     const candidates = look.candidates || [], combos = dec.combos || [];
-    // Record the reading and refresh the strip. A reading already in the history updates
-    // in place (re-running a chip mustn't reorder it); a new one is prepended (newest first).
-    const entry = { rs: v, summary: identifySummary(candidates, combos),
-      ok: candidates.length > 0 || combos.some(c => c.parts.length > 1) };
-    const at = IDENTIFY_HISTORY.findIndex(h => h.rs === v);
-    if (at >= 0) IDENTIFY_HISTORY[at] = entry;
-    else IDENTIFY_HISTORY = [entry, ...IDENTIFY_HISTORY].slice(0, IDENTIFY_HIST_MAX);
-    setHTML("mi-hist", identifyHistHtml());
+    // Only a valid reading (matches one or more rocks) is kept in the strip — a miss isn't
+    // recorded. A reading already in the history updates in place (re-running a chip mustn't
+    // reorder it); a new one is prepended (newest first).
+    const ok = candidates.length > 0 || combos.some(c => c.parts.length > 1);
+    if (ok) {
+      const entry = { rs: v, summary: identifySummary(candidates, combos), ok: true };
+      const at = IDENTIFY_HISTORY.findIndex(h => h.rs === v);
+      if (at >= 0) IDENTIFY_HISTORY[at] = entry;
+      else IDENTIFY_HISTORY = [entry, ...IDENTIFY_HISTORY].slice(0, IDENTIFY_HIST_MAX);
+      setHTML("mi-hist", identifyHistHtml());
+    }
     // Clear + refocus so the next reading can be typed straight away.
     const inp = $("mi-rs"); if (inp) { inp.value = ""; inp.focus(); }
     setHTML(mres(), identifyResultHtml(v, candidates, combos));
@@ -2099,16 +2102,16 @@ function _bpSections() {
 function blueprintMenuHtml() {
   return _bpSections().map(s => {
     const items = s.items.map(b => {
-      // Vehicle weapons span sizes within a model line — tag each with its size.
+      // Vehicle weapons span sizes within a model line — tag each with its size, shown
+      // leading the name (left) so the column of sizes reads at a glance.
       const sz = s.type === "Vehicle Weapons" && b.size != null ? `<span class="bp-dd-sz">S${b.size}</span>` : "";
       return `<div class="bp-dd-item" data-search="${esc(b.name.toLowerCase())}"
-         onclick="bpPick(this.dataset.name)" data-name="${esc(b.name)}"><span>${esc(b.name)}</span>${sz}</div>`;
+         onclick="bpPick(this.dataset.name)" data-name="${esc(b.name)}">${sz}<span>${esc(b.name)}</span></div>`;
     }).join("");
     const label = `<span class="bp-dd-type">${esc(s.type)}</span>` +
       (s.detail ? ` <span class="bp-dd-detail">${esc(s.detail)}</span>` : "");
     return `<div class="bp-dd-sec">
-      <div class="bp-dd-grp"><span class="bp-dd-lbl">${label}</span>` +
-      `<span class="mn-dim">${s.items.length}</span></div>${items}</div>`;
+      <div class="bp-dd-grp"><span class="bp-dd-lbl">${label}</span></div>${items}</div>`;
   }).join("");
 }
 function planToolHtml() {

@@ -774,7 +774,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .bp-dd-lbl{display:flex;gap:7px;align-items:baseline;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .bp-dd-type{color:var(--ink-3);flex:0 0 auto}
 .bp-dd-detail{color:var(--cyan);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bp-dd-item{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+.bp-dd-item{display:flex;align-items:baseline;gap:9px;
   padding:5px 12px 5px 18px;font-family:var(--mono);font-size:12.5px;color:var(--ink-1);cursor:pointer}
 .bp-dd-item:hover{background:rgba(var(--cyan-rgb),.12);color:var(--cyan)}
 .bp-dd-sz{flex:0 0 auto;color:var(--ink-3);font-size:11px}
