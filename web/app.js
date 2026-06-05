@@ -84,8 +84,16 @@ const th = (label, num) => `<th${num ? ' class="lt-num"' : ""}>${label}</th>`;
 // A small uppercased status/category pill (the .lt-tag family).
 const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
 
+// ---- Cargo / Plan sub-tabs ---- //
+// Loading+Unloading live under the Cargo tab; Routes+Manifest under the Plan tab,
+// each behind an .arch-tabs segmented control. The active sub persists in localStorage.
+// CARGO_SUB defaults to "" (auto): the active phase is inferred from the snapshot
+// (current location / cargo aboard) until the user picks one explicitly — see cargoDefault.
+let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "pickup" · "dropoff"
+let PLAN_SUB = localStorage.getItem("planSub") || "route";    // "route" · "hold"
+
 // ---- tabs (with URL-hash deep-linking) ---- //
-const TABS = ["loading", "unloading", "routes", "missions", "grid", "history", "mining"];
+const TABS = ["cargo", "plan", "missions", "history", "mining"];
 function activateTab(name) {
   if (!TABS.includes(name)) return;
   TAB = name;
@@ -124,15 +132,21 @@ const _collapseBtn = $("navtoggle");
 if (_collapseBtn) _collapseBtn.onclick = () => setCollapsed(!$("sidebar").classList.contains("collapsed"));
 
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
-if (TABS.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
+// Honour deep-links, including legacy ones from before the Cargo/Plan merge: #loading /
+// #unloading → Cargo (pre-selecting the phase); #routes / #grid → Plan.
+const LEGACY_HASH = { loading: ["cargo", () => CARGO_SUB = "pickup"], unloading: ["cargo", () => CARGO_SUB = "dropoff"],
+                      routes: ["plan", () => PLAN_SUB = "route"], grid: ["plan", () => PLAN_SUB = "hold"] };
+const _hash = location.hash.slice(1);
+if (LEGACY_HASH[_hash]) { LEGACY_HASH[_hash][1](); activateTab(LEGACY_HASH[_hash][0]); }
+else if (TABS.includes(_hash)) activateTab(_hash);
 
 // ---- mining mode: a mining vehicle swaps the cargo-ops tabs for Mining ---- //
 // When the snapshot reports the player in a mining vehicle (mining_ship — Prospector,
-// MOLE, ROC…), the cargo-hauling tabs make no sense, so loading/manifest/unloading/
-// routes are hidden and the Mining tab takes their slot right after Contracts. Driven
+// MOLE, ROC…), the cargo-hauling tabs make no sense, so the Cargo and Plan tabs are
+// hidden and the Mining tab takes their slot right after Contracts. Driven
 // from renderAll on every snapshot; idempotent via MINING_LAYOUT so it only touches the
 // DOM on an actual ship-type change.
-const HAUL_TABS = ["missions", "loading", "grid", "unloading", "routes", "history"];
+const HAUL_TABS = ["missions", "cargo", "plan", "history"];
 const MINE_TABS = ["missions", "mining", "history"];
 let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
 function applyTabLayout(mining) {
@@ -460,9 +474,51 @@ async function postJSON(url, body) {
 function rerenderEdits() {
   if (!LAST) return;
   const d = curData(); if (!d) return;
-  setHTML("loading", groupCards(d.loading, "loading", d));
-  setHTML("unloading", groupCards(d.unloading, "unloading", d));
-  setHTML("routes", routeCards(d.routes, d));
+  setHTML("cargo", cargoView(d));
+  setHTML("plan", planView2(d));
+}
+
+// ---- Cargo tab: Loading (pickup) ⇄ Unloading (dropoff) behind a segmented control ---- //
+// With no explicit choice (CARGO_SUB ""), default to the phase the logs imply: at a
+// drop-off station → Dropoff; at a pickup station → Pickup; otherwise by cargo aboard.
+function cargoDefault(d) {
+  const loc = d && d.location;
+  if (loc) {
+    if ((d.unloading || []).some(g => g.location === loc)) return "dropoff";
+    if ((d.loading || []).some(g => g.location === loc)) return "pickup";
+  }
+  return (d && d.active_scu > 0) ? "dropoff" : "pickup";
+}
+const cargoSubActive = (d) => CARGO_SUB || cargoDefault(d);
+function cargoSub(k) {
+  if (CARGO_SUB === k) return;
+  CARGO_SUB = k;
+  localStorage.setItem("cargoSub", k);
+  const d = curData(); if (d) setHTML("cargo", cargoView(d));
+}
+function cargoView(d) {
+  const sub = cargoSubActive(d);
+  const bar = [["pickup", "Loading"], ["dropoff", "Unloading"]].map(([k, t]) =>
+    `<button class="arch-tab${sub === k ? " active" : ""}" onclick="cargoSub('${k}')">${t}</button>`).join("");
+  const body = sub === "dropoff"
+    ? groupCards(d.unloading, "unloading", d)
+    : groupCards(d.loading, "loading", d);
+  return `<div class="arch-tabs">${bar}</div>${body}`;
+}
+
+// ---- Plan tab: Routes (itinerary + rollup) ⇄ Manifest (3D hold packing) ---- //
+function planSub(k) {
+  if (PLAN_SUB === k) return;
+  PLAN_SUB = k;
+  localStorage.setItem("planSub", k);
+  const d = curData(); if (d) setHTML("plan", planView2(d));
+}
+function planView2(d) {
+  const sub = PLAN_SUB === "hold" ? "hold" : "route";
+  const bar = [["route", "Routes"], ["hold", "Manifest"]].map(([k, t]) =>
+    `<button class="arch-tab${sub === k ? " active" : ""}" onclick="planSub('${k}')">${t}</button>`).join("");
+  const body = sub === "hold" ? gridView(d) : routeCards(d.routes, d);
+  return `<div class="arch-tabs">${bar}</div>${body}`;
 }
 
 function groupCards(groups, kind, d) {
@@ -816,14 +872,11 @@ function renderAll(d) {
   applyTabLayout(!!d.mining_ship);   // mining vehicle → swap cargo-ops tabs for Mining
   renderHeader(d);
   setHTML("datalists", datalistsHtml(d.catalog));
-  // EDIT_CELL guards every cargo-ops screen so an open inline editor isn't clobbered
-  // by the 3s poll; DRAG_DEST guards a route drag in progress.
-  if (!EDIT_CELL) {
-    setHTML("loading", groupCards(d.loading, "loading", d));
-    setHTML("unloading", groupCards(d.unloading, "unloading", d));
-  }
-  if (!EDIT_CELL && DRAG_DEST == null) setHTML("routes", routeCards(d.routes, d));
-  if (!GRID_HOVER) setHTML("grid", gridView(d));  // don't wipe the hold highlight mid-hover
+  // EDIT_CELL guards every cargo-ops screen so an open inline editor isn't clobbered by
+  // the 3s poll; DRAG_DEST guards a route drag; GRID_HOVER guards the hold highlight. Plan
+  // renders only its active sub, so combining all three keeps either sub stable mid-interaction.
+  if (!EDIT_CELL) setHTML("cargo", cargoView(d));
+  if (!EDIT_CELL && DRAG_DEST == null && !GRID_HOVER) setHTML("plan", planView2(d));
   if (EDIT === null) setHTML("missions", missionsTable(d.missions));  // don't clobber an open editor
 }
 

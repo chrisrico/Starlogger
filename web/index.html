@@ -21,14 +21,10 @@
     <nav id="nav">
       <button data-tab="missions" class="active" title="Contracts">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h6l4 4v12H8z"/><path d="M14 4v4h4"/><path d="M10.5 12h5M10.5 15.5h5"/></svg><span class="lbl">Contracts</span></button>
-      <button data-tab="loading" title="Loading">
-        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10"/><path d="M8 9.5 12 13.5 16 9.5"/><path d="M5 16v3h14v-3"/></svg><span class="lbl">Loading</span></button>
-      <button data-tab="grid" title="Manifest">
-        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg><span class="lbl">Manifest</span></button>
-      <button data-tab="unloading" title="Unloading">
-        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 13.5v-10"/><path d="M8 7.5 12 3.5 16 7.5"/><path d="M5 16v3h14v-3"/></svg><span class="lbl">Unloading</span></button>
-      <button data-tab="routes" title="Routes">
-        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M8 7.1 15.8 11M8 16.9 15.8 13"/></svg><span class="lbl">Routes</span></button>
+      <button data-tab="cargo" title="Cargo">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/></svg><span class="lbl">Cargo</span></button>
+      <button data-tab="plan" title="Plan">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M8 7.1 15.8 11M8 16.9 15.8 13"/></svg><span class="lbl">Plan</span></button>
       <button data-tab="history" title="Archive">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="4" rx="1"/><path d="M5.5 9v9.5h13V9"/><path d="M10 13h4"/></svg><span class="lbl">Archive</span></button>
       <button data-tab="mining" class="hide" title="Mining">
@@ -51,10 +47,8 @@
     <div id="replaybar" class="hide"></div>
     <main>
       <div id="missions" class="tab"></div>
-      <div id="loading" class="tab hide"></div>
-      <div id="unloading" class="tab hide"></div>
-      <div id="routes" class="tab hide"></div>
-      <div id="grid" class="tab hide"></div>
+      <div id="cargo" class="tab hide"></div>
+      <div id="plan" class="tab hide"></div>
       <div id="history" class="tab hide"></div>
       <div id="mining" class="tab hide"></div>
     </main>
