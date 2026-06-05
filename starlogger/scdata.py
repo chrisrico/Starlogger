@@ -1088,16 +1088,20 @@ def build_blueprints(records_root: str, loc: dict) -> list:
         # camel-split but keep acronym runs and size codes intact ("FPSWeapons" ->
         # "FPS Weapons"; "VehicleComponentS2" -> "Vehicle Component S2").
         cat = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", cat)
-        out.append({
+        entry = {
             "name": name,
             "category": cat,
             "crafts": os.path.basename(ec)[:-5] if ec else "",
             "craft_seconds": _craft_seconds(bp),
-            "grade": cmeta["grade"],
-            "grade_num": cmeta["grade_num"],
             "requirements": reqs,
             "minerals": sorted({r["resource"] for r in reqs}),
-        })
+        }
+        # Grade only varies for vehicle components; weapons and FPS items are uniformly
+        # Grade A, so emitting it there is noise -- only the component filter consumes it.
+        if cat.startswith("Vehicle Component"):
+            entry["grade"] = cmeta["grade"]
+            entry["grade_num"] = cmeta["grade_num"]
+        out.append(entry)
     out.sort(key=lambda b: (b["name"], b["category"]))
     return out
 
