@@ -1059,6 +1059,47 @@ function hlElev(gid) {
     b.classList.toggle("hl-on", gid != null && b.dataset.gid === String(gid)));
 }
 
+const NEAR = { rear: "rear", front: "front", left: "left", right: "right" };
+// Human label for a ship's cargo-hatch access (banded front/rear/side, or all-access).
+function accessLabel(access) {
+  if (!access.axis) return "all-access · external grid / cargo lift";
+  return access.axis === "width"
+    ? (access.both ? "side-loading · left + right hatches" : "side-loading · " + NEAR[access.near] + " hatch")
+    : (access.both ? "front + rear hatches" : NEAR[access.near] + " hatch");
+}
+// Legend by DESTINATION (deduped across every elevator's boxes), summing SCU, + a Free chip.
+function cargoLegend(order, cap, placedScu) {
+  const dests = []; const seenD = {};
+  order.forEach(g => g.boxes.forEach(b => {
+    let e = seenD[b.dest];
+    if (!e) { e = seenD[b.dest] = { dest: b.dest, hue: b.hue, scu: 0 }; dests.push(e); }
+    e.scu += b.scu;
+  }));
+  return `<div class="cg-legend">` + dests.map(x =>
+    `<span class="cg-leg"><span class="cg-sw" style="background:hsl(${x.hue},64%,52%)"></span>${esc(x.dest)} <b>${num(x.scu)}</b> SCU</span>`).join("")
+    + (cap ? `<span class="cg-leg"><span class="cg-sw cg-sw-free"></span>Free <b>${num(Math.max(0, cap - placedScu))}</b> SCU</span>` : "")
+    + `</div>`;
+}
+// Load-order list. For banded ships the PHYSICAL sequence is the reverse of the band order —
+// load the deepest (last-delivered) cargo first so the first delivery ends up at the hatch.
+// gid still indexes `order` (where each group was packed). Open ships: any order.
+function loadSeqHtml(order, banded, access) {
+  const rows = order.map((g, i) => ({ g, gid: i }));
+  const seqRows = banded ? [...rows].reverse() : rows;
+  const seqNote = banded
+    ? `load deepest (last delivered) first, so the first delivery ends up right at the ${NEAR[access.near]} hatch · hover to locate in the hold`
+    : `every box is reachable here, so order doesn't matter · hover to locate in the hold`;
+  return `<div class="loadseq"><span class="ls-lbl">Load order <span class="sub">(${seqNote})</span></span>
+    <ol>${seqRows.map(({ g, gid }) =>
+      `<li tabindex="0" onmouseenter="hlElev(${gid})" onmouseleave="hlElev(null)" onfocus="hlElev(${gid})" onblur="hlElev(null)"><span class="cg-sw" style="background:hsl(${g.hue},64%,52%)"></span>
+        <span class="ls-dest">${esc(g.dest)}</span> <span class="ls-cargo sub">${esc(g.cargo)}</span>
+        ${g.shared ? '<span class="ls-alone" title="carries a cargo type split across elevators — load this one fully before the next">⚠ shared</span>' : ""}
+        <span class="ls-scu sub">${num(g.scu)} SCU</span></li>`).join("")}</ol></div>`;
+}
+// The 3D hold render wrapped in #holdwrap (the hover-highlight target).
+function holdHtml(d, packed, access) {
+  return `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed, layout: d.ship_layout, access }) + `</div>`;
+}
 function gridView(d) {
   if (!d.ship) return standby("No Ship Detected",
     "Board a ship in-game — or pick one from the SHIP box — and its cargo grid appears here.",
@@ -1076,21 +1117,15 @@ function gridView(d) {
   // reachable, so load order is irrelevant.
   const access = (typeof accessFor === "function") ? accessFor(d.ship) : { open: true };
   const banded = !!access.axis;
-  const NEAR = { rear: "rear", front: "front", left: "left", right: "right" };
-  const accessLabel = banded
-    ? (access.axis === "width"
-        ? (access.both ? "side-loading · left + right hatches" : "side-loading · " + NEAR[access.near] + " hatch")
-        : (access.both ? "front + rear hatches" : NEAR[access.near] + " hatch"))
-    : "all-access · external grid / cargo lift";
 
   const head = `<div class="archbar">
     <span class="arch-title">${esc(d.ship)} · ${num(totalScu)} / ${num(cap)} SCU</span>
-    <span class="sub">${accessLabel} · ${banded ? "loaded front-to-back" : "load order doesn't matter"}</span></div>`;
+    <span class="sub">${accessLabel(access)} · ${banded ? "loaded front-to-back" : "load order doesn't matter"}</span></div>`;
 
   if (!groups.length) {
     const msg = "No cargo to load yet — accept hauling contracts and your picked-up cargo stages here by destination.";
     return head + `<div class="sub" style="margin:6px 2px 14px">${msg}</div>`
-      + `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed: { placed: [] }, layout: d.ship_layout, access }) + `</div>`;
+      + holdHtml(d, { placed: [] }, access);
   }
 
   // Banded ships pack front-to-back: order groups first-delivered-first so group 0
@@ -1101,43 +1136,15 @@ function gridView(d) {
   const shipPacked = packGroups(d.ship_grid, order, banded ? access : null);
   const overScu = shipPacked.overflow.reduce((a, b) => a + b.scu, 0);
 
-  // legend is by DESTINATION (deduped across every elevator's boxes), summing SCU.
-  const dests = []; const seenD = {};
-  order.forEach(g => g.boxes.forEach(b => {
-    let e = seenD[b.dest];
-    if (!e) { e = seenD[b.dest] = { dest: b.dest, hue: b.hue, scu: 0 }; dests.push(e); }
-    e.scu += b.scu;
-  }));
-  const legend = `<div class="cg-legend">` + dests.map(x =>
-    `<span class="cg-leg"><span class="cg-sw" style="background:hsl(${x.hue},64%,52%)"></span>${esc(x.dest)} <b>${num(x.scu)}</b> SCU</span>`).join("")
-    + (cap ? `<span class="cg-leg"><span class="cg-sw cg-sw-free"></span>Free <b>${num(Math.max(0, cap - shipPacked.placedScu))}</b> SCU</span>` : "")
-    + `</div>`;
-
+  const legend = cargoLegend(order, cap, shipPacked.placedScu);
   const over = overScu
     ? `<div class="note">⚠ ${num(overScu)} SCU won't fit this ${num(cap)} SCU hold — you'll need another run.</div>` : "";
-
   const ambig = order.some(g => g.shared)
     ? `<div class="note">⚠ A cargo type is bound for more than one destination — its boxes look identical. Load each elevator marked <b>⚠ shared</b> <b>fully</b> before raising the next, so the twins don't get mixed up.</div>` : "";
-
-  // Load order. For banded ships the PHYSICAL sequence is the reverse of the band
-  // order — load the deepest (last-delivered) cargo first so the first delivery ends
-  // up right at the hatch. gid still indexes `order` (where each group was packed).
-  const rows = order.map((g, i) => ({ g, gid: i }));
-  const seqRows = banded ? [...rows].reverse() : rows;
-  const seqNote = banded
-    ? `load deepest (last delivered) first, so the first delivery ends up right at the ${NEAR[access.near]} hatch · hover to locate in the hold`
-    : `every box is reachable here, so order doesn't matter · hover to locate in the hold`;
-  const seq = `<div class="loadseq"><span class="ls-lbl">Load order <span class="sub">(${seqNote})</span></span>
-    <ol>${seqRows.map(({ g, gid }) =>
-      `<li tabindex="0" onmouseenter="hlElev(${gid})" onmouseleave="hlElev(null)" onfocus="hlElev(${gid})" onblur="hlElev(null)"><span class="cg-sw" style="background:hsl(${g.hue},64%,52%)"></span>
-        <span class="ls-dest">${esc(g.dest)}</span> <span class="ls-cargo sub">${esc(g.cargo)}</span>
-        ${g.shared ? '<span class="ls-alone" title="carries a cargo type split across elevators — load this one fully before the next">⚠ shared</span>' : ""}
-        <span class="ls-scu sub">${num(g.scu)} SCU</span></li>`).join("")}</ol></div>`;
-
+  const seq = loadSeqHtml(order, banded, access);
   const shipLbl = `<div class="elev-lbl">Ship hold <span class="sub">— ${banded ? "packed front-to-back" : "packed in load order"} · hover a load-order row to highlight its boxes</span></div>`;
 
-  return head + legend + over + ambig + seq + shipLbl
-    + `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed: shipPacked, layout: d.ship_layout, access }) + `</div>`;
+  return head + legend + over + ambig + seq + shipLbl + holdHtml(d, shipPacked, access);
 }
 
 // ---- editor actions ---- //
