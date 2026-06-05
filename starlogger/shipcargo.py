@@ -10,7 +10,6 @@ unchanged); each entry also carries its ``class`` (the DataCore entity class, e.
 
 from __future__ import annotations
 
-import re
 import threading
 import time
 
@@ -99,27 +98,16 @@ def ship_layout(name: str | None, db: dict | None = None) -> str | None:
     return hit.get("layout") if hit else None
 
 
-# Mining vehicles the cargo-grid catalog can't classify by role: they carry no
-# standard cargo grid, so they're absent from ships_cargo.json (the MOLE, which does,
-# is caught by its 'Medium Mining' role below instead). Matched as whole tokens
-# against the friendly name and the log's entity class, so "roc" can't hit "Reclaimer".
-_MINING_TOKENS = {"prospector", "roc"}
-
-
 def is_mining_ship(name: str | None, internal: str | None = None,
                    db: dict | None = None) -> bool:
-    """True when the effective ship/vehicle is used for mining — by the cargo DB's
-    role (e.g. the MOLE's 'Medium Mining'; salvage roles deliberately don't count),
-    or by a known surface miner the grid catalog doesn't carry (the Prospector, the
-    Greycat ROC / ROC-DS). Drives the dashboard's mining-vs-hauling tab layout."""
+    """True when the effective ship/vehicle is used for mining, per the cargo DB's
+    explicit ``mining`` flag (or, equivalently, a role mentioning mining — e.g. the
+    MOLE's 'Medium Mining'; salvage roles deliberately don't count). Every mining
+    vehicle, grid-bearing or not, is catalogued with this flag by scdata.build_ships
+    (the Prospector, Golem, Greycat ROC / ROC-DS and ATLS GEO have no cargo grid).
+    Drives the dashboard's mining-vs-hauling tab layout."""
     hit = _lookup(name, db) or _lookup(internal, db)
-    if hit and "mining" in (hit.get("role") or "").lower():
-        return True
-    tokens: set[str] = set()
-    for s in (name, internal):
-        if s:
-            tokens |= {t for t in re.split(r"[\s_/-]+", s.lower()) if t}
-    return bool(tokens & _MINING_TOKENS)
+    return bool(hit and (hit.get("mining") or "mining" in (hit.get("role") or "").lower()))
 
 
 def known_ship_names(db: dict | None = None) -> set:

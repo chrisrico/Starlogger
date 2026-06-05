@@ -80,7 +80,7 @@ _VARIANT_RE = re.compile(
     r"|_ea_|s3bombs|wikelo|renegade|_collector|civilian|_temp$|gamemaster|invictus"
     # redundant duplicates of a base ship already in the catalogue (variant skins,
     # PU/tier/edition records) — verified against the survey, base ship is kept.
-    r"|_pu$|_tier_\d|_temp_|nointerior|_military$|_executive|_drug_\d|_gs_se$)",
+    r"|_pu$|_tier_\d|_temp_|temporary|nointerior|_military$|_executive|_drug_\d|_gs_se$)",
     re.I,
 )
 
@@ -495,34 +495,48 @@ def _loc_text(val: str, loc: dict) -> str:
 # Ship enumeration + orchestration
 # --------------------------------------------------------------------------- #
 def _ship_meta(record_path: str, loc: dict) -> dict:
-    """Pull career/role from a ship record (best-effort; both are @loc refs)."""
+    """Pull career/role from a ship record (best-effort; both are @loc refs). Ships and
+    ground vehicles carry ``vehicleCareer``/``vehicleRole``; the ATLS exosuits (modelled
+    as "actors") use plain ``career``/``role`` instead, so accept either, preferring the
+    vehicle-prefixed keys."""
     meta = {}
     try:
         rv = json.load(open(record_path))["_RecordValue_"]
     except (OSError, ValueError, KeyError):
         return meta
 
+    found: dict = {}
+
     def walk(o):
         if isinstance(o, dict):
             for k, v in o.items():
-                if k == "vehicleCareer":
-                    meta.setdefault("career", _loc_text(v, loc))
-                elif k == "vehicleRole":
-                    meta.setdefault("role", _loc_text(v, loc))
-                else:
-                    walk(v)
+                if k in ("vehicleCareer", "vehicleRole", "career", "role"):
+                    found.setdefault(k, v)
+                walk(v)
         elif isinstance(o, list):
             for v in o:
                 walk(v)
     walk(rv)
+    career = found.get("vehicleCareer", found.get("career"))
+    role = found.get("vehicleRole", found.get("role"))
+    if career is not None:
+        meta["career"] = _loc_text(career, loc)
+    if role is not None:
+        meta["role"] = _loc_text(role, loc)
     return meta
 
 
-def base_ship_classes(records_root: str) -> list:
-    """All non-variant spaceship entity classes."""
+def _is_mining_role(meta: dict) -> bool:
+    """A vehicle is a miner when its (localised) role mentions mining -- e.g. the MOLE's
+    'Medium Mining', the Prospector's 'Light Mining', the ATLS GEO's 'Mining'. Salvage
+    roles deliberately don't count."""
+    return "mining" in (meta.get("role") or "").lower()
+
+
+def _vehicle_classes(records_root: str, rel: str) -> list:
+    """All non-variant vehicle entity classes under ``<records_root>/**/<rel>``."""
     out = []
-    for p in glob.glob(os.path.join(records_root, "**", "entities", "spaceships", "*.json"),
-                       recursive=True):
+    for p in glob.glob(os.path.join(records_root, "**", rel, "*.json"), recursive=True):
         stem = os.path.basename(p)[:-5]
         if _VARIANT_RE.search(stem):
             continue
@@ -532,6 +546,11 @@ def base_ship_classes(records_root: str) -> list:
             continue
         out.append((cls, p))
     return out
+
+
+def base_ship_classes(records_root: str) -> list:
+    """All non-variant spaceship entity classes."""
+    return _vehicle_classes(records_root, "entities/spaceships")
 
 
 def extract_records(workdir: str, p4k: str, sb: str) -> str:
@@ -1017,7 +1036,7 @@ def resolve_ship_groups(cls: str, p4k: str, sb: str, grid_index: dict,
         pass
     scu = SCU_OVERRIDES.get(cls, sum(grid_cells_scu(grid_index, c) for c in grids))
     if scu <= 0:
-        return 0, []
+        return 0, [], "synth"   # grid-less (e.g. a mining vehicle); caller decides to keep
 
     cells = None
     if cls not in SCU_OVERRIDES:
@@ -1074,10 +1093,24 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
 
         ships: dict[str, dict] = {}
         bases = base_ship_classes(recs)
-        for i, (cls, rec_path) in enumerate(bases):
-            progress(f"resolving {i + 1}/{len(bases)}: {cls}")
+        # Mining vehicles that live outside entities/spaceships and carry no cargo grid:
+        # the ROC / ROC-DS (ground vehicles) and the ATLS GEO (an "actor" exosuit). The
+        # dashboard still needs them flagged as miners, so pull in the mining ones only --
+        # non-mining ground vehicles and exosuits stay out of the cargo catalogue.
+        extra = [(cls, p)
+                 for rel in ("entities/groundvehicles", "actor/actors")
+                 for cls, p in _vehicle_classes(recs, rel)
+                 if _is_mining_role(_ship_meta(p, loc))]
+        vehicles = bases + extra
+        for i, (cls, rec_path) in enumerate(vehicles):
+            progress(f"resolving {i + 1}/{len(vehicles)}: {cls}")
+            meta = _ship_meta(rec_path, loc)
+            mining = _is_mining_role(meta)
             scu, groups, layout = resolve_ship_groups(cls, p4k, sb, grid_index, workdir)
-            if scu <= 0:
+            # Keep cargo ships; also keep mining vehicles even with no cargo grid so the
+            # UI can flag them (the MOLE has a grid; the Prospector / Golem / ROC / ATLS
+            # GEO don't).
+            if scu <= 0 and not mining:
                 continue
             name, name_full = display_name(cls, loc)
             mfr_short, mfr_full = manufacturer(cls, loc)
@@ -1091,7 +1124,9 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                 "layout": layout,
                 "groups": groups,
             }
-            entry.update(_ship_meta(rec_path, loc))
+            entry.update(meta)
+            if mining:
+                entry["mining"] = True
             entry.update(_NAME_FIXUPS.get(cls, {}))   # hand-fix names that lack localisation
             # On a model+variant name clash keep the larger-capacity one.
             if cls not in ships or scu > ships[cls]["scu"]:
