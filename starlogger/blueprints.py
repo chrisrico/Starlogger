@@ -132,9 +132,9 @@ def _armor_set(name: str) -> str:
 
 
 def _keep_component(b: dict) -> bool:
-    """Vehicle components are shown Grade A only. Grade isn't in the catalog yet (pending a
-    p4k-build change that exposes it); until each component carries a ``grade`` we keep them
-    all. TODO(grade): once ``grade`` lands, this drops everything but Grade A automatically."""
+    """Vehicle components are shown Grade A only. Each blueprint carries the crafted item's
+    ``grade`` letter (from the p4k build); a missing grade is kept defensively (e.g. an item
+    whose record had no AttachDef)."""
     g = b.get("grade")
     return g is None or str(g).strip().upper() in ("A", "GRADE A")
 

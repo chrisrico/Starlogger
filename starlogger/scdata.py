@@ -1046,7 +1046,7 @@ def build_blueprints(records_root: str, loc: dict) -> list:
     material list (slot/resource/scu/min_quality); ``minerals`` is the distinct resource
     names for feeding the mining planner. Placeholders/unnamed blueprints are skipped."""
     ent_index = _index_by_basename(records_root, "entities")
-    name_cache: dict[str, str] = {}
+    meta_cache: dict[str, dict] = {}   # entity basename -> {name, grade, grade_num}
     out = []
     for p in glob.glob(os.path.join(records_root, "**", "crafting", "blueprints",
                                     "crafting", "**", "*.json"), recursive=True):
@@ -1061,13 +1061,26 @@ def build_blueprints(records_root: str, loc: dict) -> list:
             continue
         ec = (bp.get("processSpecificData") or {}).get("entityClass") or ""
         base = os.path.basename(ec).lower() if ec else ""
-        if base not in name_cache:
+        if base not in meta_cache:
+            # The crafted item's record gives both its display name and (for components /
+            # weapons) its grade, from the same SAttachableComponentParams.AttachDef.Grade
+            # the ships build reads -- so resolve both in one open.
+            meta = {"name": "", "grade": None, "grade_num": None}
             ep = ent_index.get(base)
-            try:
-                name_cache[base] = _loc_name(json.load(open(ep))["_RecordValue_"], loc) if ep else ""
-            except (OSError, ValueError, KeyError):
-                name_cache[base] = ""
-        name = name_cache[base]
+            if ep:
+                try:
+                    rv = json.load(open(ep))["_RecordValue_"]
+                    meta["name"] = _loc_name(rv, loc)
+                    ad = _find_struct(rv, "SAttachableComponentParams")
+                    g = ((ad or {}).get("AttachDef") or {}).get("Grade")
+                    if g is not None:
+                        meta["grade_num"] = g
+                        meta["grade"] = _GRADE_LETTER.get(g)
+                except (OSError, ValueError, KeyError):
+                    pass
+            meta_cache[base] = meta
+        cmeta = meta_cache[base]
+        name = cmeta["name"]
         if not name or "PLACEHOLDER" in name.upper():
             continue
         cat = (bp.get("category") or {}).get("_RecordName_", "")
@@ -1080,6 +1093,8 @@ def build_blueprints(records_root: str, loc: dict) -> list:
             "category": cat,
             "crafts": os.path.basename(ec)[:-5] if ec else "",
             "craft_seconds": _craft_seconds(bp),
+            "grade": cmeta["grade"],
+            "grade_num": cmeta["grade_num"],
             "requirements": reqs,
             "minerals": sorted({r["resource"] for r in reqs}),
         })
