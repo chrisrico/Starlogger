@@ -71,16 +71,18 @@ overwrite `sc-launch.sh` on update; keep a copy.)
 
 ## Dashboard
 
-Six tabs (deep-linked via the URL hash):
+Four tabs (deep-linked via the URL hash); **Cargo** and **Plan** each hold two
+views behind a segmented toggle:
 
-- **Loading** — per pickup station: total SCU and the cargo to load, with each
-  parcel's destination. Legs grey out once picked up.
-- **Manifest** — the **cargo-grid loader**: an isometric 3-D view of your ship's
-  hold packed in delivery order (first-out on top), with a **load sequence** of
-  elevators to bring up. Each bay is labelled (Rear, Mid, Nose, Module 1…) and a
-  **▲ FWD** marker shows the bow.
-- **Unloading** — per destination: total SCU and cargo to drop, with its origin.
-- **Routes** — origin → destination pairs aggregated into an ordered trip.
+- **Cargo** — **Loading** (per pickup station: total SCU and the cargo to load,
+  with each parcel's destination; legs grey out once picked up) ⇄ **Unloading**
+  (per destination: total SCU and cargo to drop, with its origin). Opens on the
+  phase your current location implies.
+- **Plan** — **Routes** (origin → destination pairs aggregated into an ordered
+  trip) ⇄ **Manifest**, the **cargo-grid loader**: an isometric 3-D view of your
+  ship's hold packed in delivery order (first-out on top), with a **load
+  sequence** of elevators to bring up. Each bay is labelled (Rear, Mid, Nose,
+  Module 1…) and a **▲ FWD** marker shows the bow.
 - **Contracts** — full mission table with per-row **Edit** / **Delete**.
 - **Archive** — pooled, cross-session logs: a **Contract Log** (with a high-level
   type filter), **Trade Loads** (manual buy/sell P&L plus your best trade routes),
