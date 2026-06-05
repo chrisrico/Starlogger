@@ -1815,9 +1815,9 @@ setInterval(refresh, 3000);
 // Mining tab — RS (radar signature) + composition tools. Self-contained and
 // independent of the live /api/state poll: it reads the p4k-derived mineables
 // catalog via /api/{rock-lookup,rock-decompose,mineral-lookup,mineral-index,
-// mining-plan}. The shell (sub-tab bar + the active tool's inputs + an empty
-// #mining-results) is rendered once per sub-tab switch; submitting a query only
-// repaints #mining-results, so the inputs keep focus/value.
+// mining-plan}. All three sub-tools (and their own #mres-<sub> results) are built
+// once; switching sub-tabs only toggles which is visible, so each keeps its inputs,
+// results, and scroll. Submitting a query repaints just that sub's #mres-<sub>.
 // ============================================================================ //
 let MINING_SUB = "identify";       // identify | find | plan
 let MINING_MINERALS = null;        // cached mineral names for the autocomplete
@@ -1838,27 +1838,37 @@ async function initMining() {
       grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints"),
       grab("/api/rock-signatures", "signatures")]);
   }
-  renderMiningShell();
+  // Build once, only after the catalogs have loaded; switching subs then just toggles.
+  if (MINING_BLUEPRINTS !== null && !$("msub-identify")) renderMiningShell();
 }
-function miningSub(sub) { MINING_SUB = sub; renderMiningShell(); }
+// Switch sub-tabs by toggling visibility — never rebuild, so each sub keeps its state.
+function miningSub(sub) {
+  MINING_SUB = sub;
+  if (!$("msub-" + sub)) { renderMiningShell(); return; }
+  document.querySelectorAll("#mining .arch-tab").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
+  document.querySelectorAll("#mining .msub").forEach(el => el.classList.toggle("hide", el.id !== "msub-" + sub));
+}
+// The active sub's results container — every tool repaints into its own #mres-<sub>.
+const mres = () => "mres-" + MINING_SUB;
 
 const _pct = (x) => (x == null ? "?" : Math.round(x));
 const _chance = (p) => (p == null ? "" : Math.round(p * 100) + "%");
 
 function renderMiningShell() {
-  const subs = [["identify", "Identify rock"], ["find", "Find mineral"], ["plan", "Blueprint plan"]];
+  const subs = [["identify", "Identify rock", identifyToolHtml], ["find", "Find mineral", findToolHtml],
+                ["plan", "Blueprint plan", planToolHtml]];
   // Same underlined sub-tab strip as the Archive tab (.arch-tabs/.arch-tab), for a
   // consistent secondary-nav look across the app.
   const bar = subs.map(([k, t]) =>
-    `<button class="arch-tab${MINING_SUB === k ? " active" : ""}" onclick="miningSub('${k}')">${t}</button>`).join("");
-  const tool = MINING_SUB === "identify" ? identifyToolHtml()
-    : MINING_SUB === "find" ? findToolHtml() : planToolHtml();
+    `<button class="arch-tab${MINING_SUB === k ? " active" : ""}" data-sub="${k}" onclick="miningSub('${k}')">${t}</button>`).join("");
+  // Each sub-tool + its own results live in a .msub section; only the active one shows.
+  const sections = subs.map(([k, , toolFn]) =>
+    `<div class="msub${MINING_SUB === k ? "" : " hide"}" id="msub-${k}">${toolFn()}<div id="mres-${k}" class="mres"></div></div>`).join("");
   const datalist = `<datalist id="dl_mineral">${(MINING_MINERALS || [])
       .map(m => `<option value="${esc(m)}">`).join("")}</datalist>`;
   setHTML("mining", `${datalist}<div class="mining">
     <div class="arch-tabs">${bar}</div>
-    ${tool}
-    <div id="mining-results" class="mres"></div>
+    ${sections}
   </div>`);
 }
 
@@ -1945,8 +1955,8 @@ function identifyKey(e) {
 }
 async function miningIdentify() {
   const v = parseFloat(($("mi-rs") || {}).value);
-  if (!(v > 0)) { setHTML("mining-results", `<div class="empty">Enter a positive RS reading.</div>`); return; }
-  setHTML("mining-results", `<div class="empty">scanning…</div>`);
+  if (!(v > 0)) { setHTML(mres(), `<div class="empty">Enter a positive RS reading.</div>`); return; }
+  setHTML(mres(), `<div class="empty">scanning…</div>`);
   try {
     const [look, dec] = await Promise.all([
       fetch(`/api/rock-lookup?rs=${v}`).then(r => r.json()),
@@ -1963,8 +1973,8 @@ async function miningIdentify() {
     setHTML("mi-hist", identifyHistHtml());
     // Clear + refocus so the next reading can be typed straight away.
     const inp = $("mi-rs"); if (inp) { inp.value = ""; inp.focus(); }
-    setHTML("mining-results", identifyResultHtml(v, candidates, combos));
-  } catch (e) { setHTML("mining-results", `<div class="empty">lookup failed</div>`); }
+    setHTML(mres(), identifyResultHtml(v, candidates, combos));
+  } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
 }
 function identifyResultHtml(v, candidates, combos) {
   if (!candidates.length && !combos.length)
@@ -2014,12 +2024,12 @@ function findToolHtml() {
 }
 async function miningFind() {
   const name = (($("mf-name") || {}).value || "").trim();
-  if (!name) { setHTML("mining-results", `<div class="empty">Enter or pick a mineral.</div>`); return; }
-  setHTML("mining-results", `<div class="empty">searching…</div>`);
+  if (!name) { setHTML(mres(), `<div class="empty">Enter or pick a mineral.</div>`); return; }
+  setHTML(mres(), `<div class="empty">searching…</div>`);
   try {
     const r = await fetch(`/api/mineral-lookup?name=${encodeURIComponent(name)}`).then(x => x.json());
-    setHTML("mining-results", findResultHtml(r));
-  } catch (e) { setHTML("mining-results", `<div class="empty">lookup failed</div>`); }
+    setHTML(mres(), findResultHtml(r));
+  } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
 }
 function findResultHtml(r) {
   if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
@@ -2041,11 +2051,11 @@ function findResultHtml(r) {
   </div>`;
 }
 async function miningIndex() {
-  setHTML("mining-results", `<div class="empty">loading…</div>`);
+  setHTML(mres(), `<div class="empty">loading…</div>`);
   try {
     const r = await fetch("/api/mineral-index").then(x => x.json());
-    setHTML("mining-results", indexResultHtml(r.minerals || []));
-  } catch (e) { setHTML("mining-results", `<div class="empty">load failed</div>`); }
+    setHTML(mres(), indexResultHtml(r.minerals || []));
+  } catch (e) { setHTML(mres(), `<div class="empty">load failed</div>`); }
 }
 function indexResultHtml(minerals) {
   if (!minerals.length) return `<div class="empty">No mineral data.</div>`;
@@ -2063,47 +2073,42 @@ function indexResultHtml(minerals) {
 }
 
 // ---- Plan: blueprint → deposit coverage + sources ---- //
-// A searchable picker grouped by blueprint category (type, then size). Selecting an
-// item plans straight away, so there's no separate "plan" button. MINING_BLUEPRINTS is
-// the {name, category} catalog from /api/blueprints.
+// A searchable picker whose options are grouped into sections: the server tags each
+// blueprint with its main {type} and a {detail} (component size, weapon model line, FPS
+// weapon type, or armour set), and we lay those out as rule-separated sections with a
+// sticky header carrying the full "type · detail". Selecting an item plans — no button.
 const _BP_TYPE_ORDER = ["Vehicle Component", "Vehicle Weapons", "FPS Weapons", "FPS Armours"];
-// Split a category into its type + size (e.g. "Vehicle Component S3" → ["Vehicle Component","S3"]).
-function _bpSplit(category) {
-  const m = /^(.*?)\s+S(\d+)$/.exec(category || "");
-  return m ? [m[1], "S" + m[2]] : [category || "Other", ""];
-}
-// Group the catalog into ordered type → size → [names].
-function _bpGroups() {
-  const byType = new Map();
+// Group the catalog into ordered sections keyed by (type, detail); within a section items
+// are ordered by size then name (so a weapon model line reads S1→S6).
+function _bpSections() {
+  const byKey = new Map();
   for (const b of MINING_BLUEPRINTS || []) {
-    const [type, size] = _bpSplit(b.category);
-    if (!byType.has(type)) byType.set(type, new Map());
-    const sizes = byType.get(type);
-    if (!sizes.has(size)) sizes.set(size, []);
-    sizes.get(size).push(b.name);
+    const key = b.type + "\u0000" + (b.detail || "");
+    if (!byKey.has(key)) byKey.set(key, { type: b.type, detail: b.detail || "", items: [] });
+    byKey.get(key).items.push(b);
   }
-  const typeKeys = [...byType.keys()].sort((a, b) => {
-    const ia = _BP_TYPE_ORDER.indexOf(a), ib = _BP_TYPE_ORDER.indexOf(b);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
-  });
-  return typeKeys.map(type => {
-    const sizes = byType.get(type);
-    const sizeKeys = [...sizes.keys()].sort();   // "" sorts first, then S0, S1, …
-    return { type, count: [...sizes.values()].reduce((n, a) => n + a.length, 0),
-      sizes: sizeKeys.map(size => ({ size, names: sizes.get(size).sort((a, b) => a.localeCompare(b)) })) };
-  });
+  const ord = (t) => { const i = _BP_TYPE_ORDER.indexOf(t); return i < 0 ? 99 : i; };
+  return [...byKey.values()]
+    .sort((a, b) => ord(a.type) - ord(b.type) || a.type.localeCompare(b.type) ||
+      a.detail.localeCompare(b.detail))
+    .map(s => {
+      s.items.sort((x, y) => (x.size ?? 99) - (y.size ?? 99) || x.name.localeCompare(y.name));
+      return s;
+    });
 }
 function blueprintMenuHtml() {
-  return _bpGroups().map(g => {
-    const body = g.sizes.map(s => {
-      const items = s.names.map(n =>
-        `<div class="bp-dd-item" data-search="${esc(n.toLowerCase())}"
-           onclick="bpPick(this.dataset.name)" data-name="${esc(n)}">${esc(n)}</div>`).join("");
-      const head = s.size && g.sizes.length > 1
-        ? `<div class="bp-dd-size" data-size>${s.size} <span class="mn-dim">${s.names.length}</span></div>` : "";
-      return head + items;
+  return _bpSections().map(s => {
+    const items = s.items.map(b => {
+      // Vehicle weapons span sizes within a model line — tag each with its size.
+      const sz = s.type === "Vehicle Weapons" && b.size != null ? `<span class="bp-dd-sz">S${b.size}</span>` : "";
+      return `<div class="bp-dd-item" data-search="${esc(b.name.toLowerCase())}"
+         onclick="bpPick(this.dataset.name)" data-name="${esc(b.name)}"><span>${esc(b.name)}</span>${sz}</div>`;
     }).join("");
-    return `<div class="bp-dd-grp" data-grp><span>${esc(g.type)}</span><span class="mn-dim">${g.count}</span></div>${body}`;
+    const label = `<span class="bp-dd-type">${esc(s.type)}</span>` +
+      (s.detail ? ` <span class="bp-dd-detail">${esc(s.detail)}</span>` : "");
+    return `<div class="bp-dd-sec">
+      <div class="bp-dd-grp"><span class="bp-dd-lbl">${label}</span>` +
+      `<span class="mn-dim">${s.items.length}</span></div>${items}</div>`;
   }).join("");
 }
 function planToolHtml() {
@@ -2122,34 +2127,30 @@ function planToolHtml() {
   </div>`;
 }
 function bpOpen(show) {
-  const el = $("bp-dd-list"); if (el) el.classList.toggle("open", !!show);
+  const el = $("bp-dd-list"); if (!el) return;
+  el.classList.toggle("open", !!show);
+  // The card clips descendants via clip-path; drop it while the menu is open so the
+  // dropdown can overflow past the card edge.
+  const card = el.closest(".card"); if (card) card.classList.toggle("dd-open", !!show);
 }
 function bpPick(name) {
   const inp = $("mp-bp"); if (inp) inp.value = name;
   bpOpen(false);
   miningPlanFromBlueprint(name);
 }
-// Filter items by a case-insensitive substring; hide group/size headers with no visible items.
+// Filter items by a case-insensitive substring; hide whole sections with no visible items.
 function bpFilter(q) {
   const list = $("bp-dd-list"); if (!list) return;
   list.classList.add("open");
   const needle = (q || "").trim().toLowerCase();
-  for (const it of list.querySelectorAll(".bp-dd-item"))
-    it.style.display = !needle || it.dataset.search.includes(needle) ? "" : "none";
-  // A header is visible while any item within its scope shows: a size sub-header's scope
-  // ends at the next size or group header; a group header's at the next group header.
-  const kids = [...list.children];
-  for (let i = 0; i < kids.length; i++) {
-    const el = kids[i], isSize = el.hasAttribute("data-size");
-    if (!el.hasAttribute("data-grp") && !isSize) continue;
+  for (const sec of list.querySelectorAll(".bp-dd-sec")) {
     let any = false;
-    for (let j = i + 1; j < kids.length; j++) {
-      const n = kids[j], nGrp = n.hasAttribute("data-grp"), nSize = n.hasAttribute("data-size");
-      if (nGrp || (isSize && nSize)) break;     // left this header's scope
-      if (nSize) continue;                       // a size header inside a group's scope
-      if (n.style.display !== "none") { any = true; break; }
+    for (const it of sec.querySelectorAll(".bp-dd-item")) {
+      const show = !needle || it.dataset.search.includes(needle);
+      it.style.display = show ? "" : "none";
+      if (show) any = true;
     }
-    el.style.display = any ? "" : "none";
+    sec.classList.toggle("hide", !any);
   }
 }
 function bpKey(e) {
@@ -2165,17 +2166,17 @@ const _miningDur = (s) => {
 };
 async function miningPlanFromBlueprint(name) {
   name = (name || ($("mp-bp") || {}).value || "").trim();
-  if (!name) { setHTML("mining-results", `<div class="empty">Pick a blueprint.</div>`); return; }
-  setHTML("mining-results", `<div class="empty">loading blueprint…</div>`);
+  if (!name) { setHTML(mres(), `<div class="empty">Pick a blueprint.</div>`); return; }
+  setHTML(mres(), `<div class="empty">loading blueprint…</div>`);
   try {
     const bp = await fetch(`/api/blueprint?name=${encodeURIComponent(name)}`).then(r => r.json());
-    if (bp.ok === false) { setHTML("mining-results", `<div class="empty">No blueprint “${esc(name)}”.</div>`); return; }
+    if (bp.ok === false) { setHTML(mres(), `<div class="empty">No blueprint “${esc(name)}”.</div>`); return; }
     const plan = await fetch("/api/mining-plan", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ minerals: bp.minerals || [] }),
     }).then(r => r.json());
-    setHTML("mining-results", recipeHtml(bp) + planResultHtml(plan));
-  } catch (e) { setHTML("mining-results", `<div class="empty">plan failed</div>`); }
+    setHTML(mres(), recipeHtml(bp) + planResultHtml(plan));
+  } catch (e) { setHTML(mres(), `<div class="empty">plan failed</div>`); }
 }
 function recipeHtml(bp) {
   const meta = [esc(bp.category || ""), bp.craft_seconds ? _miningDur(bp.craft_seconds) : ""].filter(Boolean).join(" · ");

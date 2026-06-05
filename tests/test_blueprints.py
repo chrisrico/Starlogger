@@ -88,6 +88,26 @@ def test_lookup_blueprint_by_name(tmp_path):
     assert blueprints.lookup_blueprint("nothing", path=path) is None
 
 
+def test_blueprint_section_derivation():
+    # picker grouping helpers: size, weapon kind, model-line label, armour set, grade gate
+    assert blueprints._size_num("Vehicle Component S3") == 3
+    assert blueprints._size_num("FPS Weapons") is None
+    assert blueprints._vc_subtype("shld_behr_s03_5ca_scitem") == "Shield"
+    assert blueprints._vc_subtype("wep_tractorbeam_s1_utility_1") == "Tractor Beam"  # shared kind
+    assert blueprints._vweapon_kind("kbar_ballisticcannon_s2") == "Cannon"
+    assert blueprints._vweapon_kind("hrst_laserrepeater_s3") == "Repeater"
+    assert blueprints._line_label(["Omnisky III Cannon", "Omnisky VI Cannon"], "Cannon") == "Omnisky"
+    assert blueprints._line_label(["Deadbolt I Cannon", "Deadbolt II Cannon"], "Cannon") == "Deadbolt"
+    # coded line with no shared word falls back to the common char-prefix
+    assert blueprints._line_label(["CF-117 Bulldog Repeater", "CF-227 Badger Repeater"], "Repeater") == "CF"
+    assert blueprints._armor_set("ADP Arms Black") == "ADP"
+    assert blueprints._armor_set("A23 Flight Helmet Woodland") == "A23 Flight"
+    # Grade A only, but keep components until a grade is present (pending p4k change)
+    assert blueprints._keep_component({}) is True
+    assert blueprints._keep_component({"grade": "A"}) is True
+    assert blueprints._keep_component({"grade": "B"}) is False
+
+
 def test_mineral_name_reconciliation():
     # spelling variants + Ore/Raw suffixes resolve to the same mineral
     assert _mineral_matches("Aluminum", "Aluminium Ore")
