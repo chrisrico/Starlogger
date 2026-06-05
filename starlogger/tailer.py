@@ -43,6 +43,9 @@ def tail_loop(path: str, state: State, stop: threading.Event) -> None:
                     pos = f.tell()
             except OSError:
                 pass
+        # Flush a live archive upsert at most once per read batch (coalesces a burst of
+        # completions/trades into one write; no-op unless something finished).
+        state.maybe_archive()
         time.sleep(0.5)
 
 

@@ -201,6 +201,7 @@ def main() -> None:
 
     state = State()
     state.on_session_end = archive_session  # snapshot a session before it's cleared
+    state.on_archive = archive_session      # live upsert as contracts/trades finish
 
     if args.once:
         parse_whole_file(log_path, state)

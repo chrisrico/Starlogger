@@ -9,6 +9,10 @@ from . import patterns
 from .model import Leg, Mission, Trade
 from .planner import classify_station
 
+# A mission in one of these states is finished -- the trigger for a live archive
+# upsert (see _update_archive_dirty / maybe_archive).
+_TERMINAL_STATUSES = ("completed", "failed", "abandoned", "expired")
+
 
 class State:
     """Thread-safe mission store. `feed(line)` ingests one log line."""
@@ -40,6 +44,14 @@ class State:
         # called with `self` right before a session is cleared (login/logout/relaunch),
         # so the ending session can be archived. Set by the entry point.
         self.on_session_end = None
+        # live archive upsert: on_archive(self) re-snapshots the CURRENT (still-running)
+        # session whenever something finishes, so a completed contract / trade lands in
+        # the Archive immediately rather than only at session end. Coalesced: a dirty
+        # flag is set as terminal-mission/trade/award counts change, and the tailer
+        # flushes it at most once per read batch (see maybe_archive). Set by the entry point.
+        self.on_archive = None
+        self._archive_dirty = False
+        self._archive_sig = (0, 0, 0)  # (#trades, awarded, #finished missions)
         # most recent zoneHostId epoch (high bits) seen; deliberately survives
         # reset() since the server build spans sessions. on_epoch_change(prev, new)
         # fires when it changes (a new server build) so the service can prune
@@ -81,6 +93,12 @@ class State:
             self.location = None
             self.in_seat = False
             self.ships_used.clear()
+            # the ending session was just archived (above); the cleared session has no
+            # finished work, so reset the dirty tracking to match -- otherwise the next
+            # fed line would see the signature "change" back to zero and re-flush an
+            # empty session.
+            self._archive_dirty = False
+            self._archive_sig = (0, 0, 0)
             if full:
                 self.player = None
                 self.session_started_at = None
@@ -96,22 +114,52 @@ class State:
         with self.lock:
             if ts:
                 self.last_event_ts = ts
+            self._dispatch(line, ts)
+            self._update_archive_dirty()
 
-            if self._session_boundary(line, ts):
-                return
-            if self._shutdown(line, ts):
-                return
-            if self.session_started_at is None and ts:
-                self.session_started_at = ts
-            if self._version(line):
-                return
-            if self._ship(line, ts):
-                return
-            if self._trade(line, ts):
-                return
-            if self._travel(line, ts):
-                return
-            self._mission(line, ts)
+    def _dispatch(self, line: str, ts: str | None) -> None:
+        if self._session_boundary(line, ts):
+            return
+        if self._shutdown(line, ts):
+            return
+        if self.session_started_at is None and ts:
+            self.session_started_at = ts
+        if self._version(line):
+            return
+        if self._ship(line, ts):
+            return
+        if self._trade(line, ts):
+            return
+        if self._travel(line, ts):
+            return
+        self._mission(line, ts)
+
+    def _update_archive_dirty(self) -> None:
+        """Flag the session for a live archive upsert when its finished work changes --
+        a mission reaching a terminal state, a new trade, or an award. Mere acceptance or
+        in-progress objective updates don't move the signature, so we don't write for them.
+        Called under self.lock at the end of every fed line."""
+        sig = (len(self.trades), self.total_awarded,
+               sum(1 for m in self.missions.values() if m.status in _TERMINAL_STATUSES))
+        if sig != self._archive_sig:
+            self._archive_sig = sig
+            self._archive_dirty = True
+
+    def maybe_archive(self) -> None:
+        """Flush a pending live archive upsert (called once per tailer read batch, so a
+        burst of completions in one batch is a single write). No-op unless something
+        finished. Runs the write outside the lock -- the tailer thread that calls this is
+        the only writer, so there's no concurrent mutation to guard against."""
+        with self.lock:
+            ready = (self._archive_dirty and self.on_archive
+                     and (self.missions or self.total_awarded or self.trades))
+            self._archive_dirty = False
+            cb = self.on_archive if ready else None
+        if cb:
+            try:
+                cb(self)
+            except Exception as e:
+                print(f"[archive] live upsert failed: {e}")
 
     # -- handlers -------------------------------------------------------- #
     def _session_boundary(self, line: str, ts: str | None) -> bool:
