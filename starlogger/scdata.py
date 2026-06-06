@@ -106,6 +106,53 @@ _NAME_FIXUPS = {
 }
 
 
+def _load_json(path: str):
+    """Resource-safe ``json.load``. The extractors walk tens of thousands of record
+    files, so leaking a descriptor per read (the old ``json.load(open(p))`` form)
+    adds up. Raises the same OSError/ValueError the call sites already guard against."""
+    with open(path) as f:
+        return json.load(f)
+
+
+# --------------------------------------------------------------------------- #
+# Nested-record traversal -- DataCore records are arbitrarily deep dict/list trees,
+# so several extractors need the same depth-first recursion. These two cover it:
+# _deep_walk for "visit every node" and _deep_search for "first matching node".
+# --------------------------------------------------------------------------- #
+def _deep_walk(o, visit) -> None:
+    """Call ``visit(node)`` on every dict nested anywhere in ``o`` (depth-first)."""
+    if isinstance(o, dict):
+        visit(o)
+        for v in o.values():
+            _deep_walk(v, visit)
+    elif isinstance(o, list):
+        for v in o:
+            _deep_walk(v, visit)
+
+
+def _deep_search(o, probe):
+    """First truthy ``probe(node)`` over every dict nested in ``o`` (depth-first), else None."""
+    if isinstance(o, dict):
+        r = probe(o)
+        if r:
+            return r
+        for v in o.values():
+            r = _deep_search(v, probe)
+            if r:
+                return r
+    elif isinstance(o, list):
+        for v in o:
+            r = _deep_search(v, probe)
+            if r:
+                return r
+    return None
+
+
+def _deep_find(o, key: str, want) -> dict | None:
+    """First dict in a nested structure whose ``o[key] == want``."""
+    return _deep_search(o, lambda d: d if d.get(key) == want else None)
+
+
 # --------------------------------------------------------------------------- #
 # Binary management
 # --------------------------------------------------------------------------- #
@@ -203,7 +250,7 @@ def build_grid_index(records_root: str) -> dict:
     for p in glob.glob(os.path.join(records_root, "**", "inventorycontainers", "**", "*.json"),
                        recursive=True):
         try:
-            rv = json.load(open(p))["_RecordValue_"]
+            rv = _load_json(p)["_RecordValue_"]
         except (OSError, ValueError, KeyError):
             continue
         dim = rv.get("interiorDimensions")
@@ -216,7 +263,7 @@ def build_grid_index(records_root: str) -> dict:
         if "cargogrid" not in bn and "cargo_grid" not in bn:
             continue
         try:
-            d = json.load(open(p))
+            d = _load_json(p)
         except (OSError, ValueError):
             continue
         name = d.get("_RecordName_", "")
@@ -249,11 +296,6 @@ def _find_container_ref(o) -> str | None:
     return None
 
 
-def _find_struct(o, type_name: str):
-    """First nested struct whose ``_Type_`` is ``type_name`` (depth-first), or None."""
-    return _deep_find(o, "_Type_", type_name)
-
-
 def build_component_index(records_root: str) -> dict:
     """Map a ship-component item class (lower) -> {slot, size, grade, grade_num} for the
     four headline components (power plant / cooler / shield / quantum drive), read from
@@ -263,13 +305,13 @@ def build_component_index(records_root: str) -> dict:
         pat = os.path.join(records_root, "**", "entities", "scitem", "ships", sub, "**", "*.json")
         for p in glob.glob(pat, recursive=True):
             try:
-                d = json.load(open(p))
+                d = _load_json(p)
             except (OSError, ValueError):
                 continue
             name = d.get("_RecordName_", "")
             if "." not in name:
                 continue
-            ad = _find_struct(d.get("_RecordValue_"), "SAttachableComponentParams")
+            ad = _deep_find(d.get("_RecordValue_"), "_Type_", "SAttachableComponentParams")
             ad = (ad or {}).get("AttachDef") or {}
             slot = _COMPONENT_SLOTS.get(ad.get("Type"))
             if not slot:
@@ -561,22 +603,17 @@ def _record_vehicle_name(rec_path: str | None, loc: dict) -> str:
     if not rec_path:
         return ""
     try:
-        rv = json.load(open(rec_path))["_RecordValue_"]
+        rv = _load_json(rec_path)["_RecordValue_"]
     except (OSError, ValueError, KeyError):
         return ""
     found: dict = {}
 
-    def walk(o):
-        if isinstance(o, dict):
-            for k, v in o.items():
-                if (k in _NAME_REF_KEYS and isinstance(v, str)
-                        and v.lower().startswith("@vehicle_name")):
-                    found.setdefault(k, v)
-                walk(v)
-        elif isinstance(o, list):
-            for v in o:
-                walk(v)
-    walk(rv)
+    def visit(o):
+        for k, v in o.items():
+            if (k in _NAME_REF_KEYS and isinstance(v, str)
+                    and v.lower().startswith("@vehicle_name")):
+                found.setdefault(k, v)
+    _deep_walk(rv, visit)
     for k in _NAME_REF_KEYS:
         txt = _loc_text(found[k], loc).strip() if k in found else ""
         if txt:
@@ -622,7 +659,7 @@ def _ship_meta(record_path: str, loc: dict) -> dict:
     vehicle-prefixed keys."""
     meta = {}
     try:
-        rv = json.load(open(record_path))["_RecordValue_"]
+        rv = _load_json(record_path)["_RecordValue_"]
     except (OSError, ValueError, KeyError):
         return meta
 
@@ -662,7 +699,7 @@ def _vehicle_classes(records_root: str, rel: str) -> list:
         if _VARIANT_RE.search(stem):
             continue
         try:
-            cls = json.load(open(p))["_RecordName_"].split(".", 1)[1]
+            cls = _load_json(p)["_RecordName_"].split(".", 1)[1]
         except (OSError, ValueError, KeyError, IndexError):
             continue
         out.append((cls, p))
@@ -855,7 +892,7 @@ def _index_by_basename(records_root: str, *subdirs: str) -> dict:
 def _record_value(path: str | None) -> dict:
     """A record file's ``_RecordValue_`` dict, or {} (missing file / not a record)."""
     try:
-        return json.load(open(path))["_RecordValue_"]
+        return _load_json(path)["_RecordValue_"]
     except (OSError, ValueError, KeyError, TypeError):
         return {}
 
@@ -864,7 +901,7 @@ def _record_token_name(path: str) -> str:
     """Friendly name from a record's ``_RecordName_`` token (``MineableElement.Iron_Ore``
     -> "Iron Ore"); falls back to the filename stem. CamelCase + underscores split."""
     try:
-        rn = json.load(open(path)).get("_RecordName_", "")
+        rn = _load_json(path).get("_RecordName_", "")
     except (OSError, ValueError):
         rn = ""
     tok = rn.split(".", 1)[1] if "." in rn else (rn or os.path.basename(path)[:-5])
@@ -902,7 +939,7 @@ def _composition(preset_path: str, elem_index: dict, loc: dict,
                  elem_cache: dict) -> dict:
     """Parse a MineableComposition preset into {deposit_name, min_distinct, elements}."""
     try:
-        cv = json.load(open(preset_path))["_RecordValue_"]
+        cv = _load_json(preset_path)["_RecordValue_"]
     except (OSError, ValueError, KeyError):
         return {"deposit_name": "", "min_distinct": 0, "elements": []}
     elements = []
@@ -989,7 +1026,7 @@ def build_mineables(records_root: str, loc: dict) -> list:
     for p in glob.glob(os.path.join(records_root, "**", "entities", "mineable", "*.json"),
                        recursive=True):
         try:
-            d = json.load(open(p))
+            d = _load_json(p)
             rv = d["_RecordValue_"]
             cls = d["_RecordName_"].split(".", 1)[1]
         except (OSError, ValueError, KeyError, IndexError):
@@ -1057,43 +1094,12 @@ def _craft_seconds(bp: dict) -> int:
                + (tv.get("minutes") or 0) * 60 + (tv.get("seconds") or 0))
 
 
-def _deep_find(o, key: str, want) -> dict | None:
-    """First dict in a nested structure whose ``o[key] == want``."""
-    if isinstance(o, dict):
-        if o.get(key) == want:
-            return o
-        for v in o.values():
-            r = _deep_find(v, key, want)
-            if r is not None:
-                return r
-    elif isinstance(o, list):
-        for v in o:
-            r = _deep_find(v, key, want)
-            if r is not None:
-                return r
-    return None
-
-
 def _loc_name(rv: dict, loc: dict) -> str:
     """Crafted item's display name: the localised ``Localization.Name`` on a component."""
-    def walk(o):
-        if isinstance(o, dict):
-            lz = o.get("Localization")
-            if isinstance(lz, dict):
-                t = _loc_text(lz.get("Name"), loc)
-                if t:
-                    return t
-            for v in o.values():
-                r = walk(v)
-                if r:
-                    return r
-        elif isinstance(o, list):
-            for v in o:
-                r = walk(v)
-                if r:
-                    return r
-        return ""
-    return walk(rv)
+    def probe(o):
+        lz = o.get("Localization")
+        return _loc_text(lz.get("Name"), loc) if isinstance(lz, dict) else ""
+    return _deep_search(rv, probe) or ""
 
 
 def _recipe_costs(bp: dict) -> list:
@@ -1133,7 +1139,7 @@ def build_blueprints(records_root: str, loc: dict) -> list:
     for p in glob.glob(os.path.join(records_root, "**", "crafting", "blueprints",
                                     "crafting", "**", "*.json"), recursive=True):
         try:
-            bp = json.load(open(p))["_RecordValue_"]["blueprint"]
+            bp = _load_json(p)["_RecordValue_"]["blueprint"]
         except (OSError, ValueError, KeyError):
             continue
         if bp.get("_Type_") != "CraftingBlueprint":
@@ -1151,9 +1157,9 @@ def build_blueprints(records_root: str, loc: dict) -> list:
             ep = ent_index.get(base)
             if ep:
                 try:
-                    rv = json.load(open(ep))["_RecordValue_"]
+                    rv = _load_json(ep)["_RecordValue_"]
                     meta["name"] = _loc_name(rv, loc)
-                    ad = _find_struct(rv, "SAttachableComponentParams")
+                    ad = _deep_find(rv, "_Type_", "SAttachableComponentParams")
                     g = ((ad or {}).get("AttachDef") or {}).get("Grade")
                     if g is not None:
                         meta["grade_num"] = g
@@ -1231,7 +1237,7 @@ def build_contract_taxonomy(records_root: str, loc: dict) -> list:
     for p in glob.glob(os.path.join(records_root, "**", "contracttemplates", "*.json"),
                        recursive=True):
         try:
-            d = json.load(open(p))
+            d = _load_json(p)
             cv = d["_RecordValue_"]
             name = d["_RecordName_"].split(".", 1)[1]
         except (OSError, ValueError, KeyError, IndexError):
@@ -1271,7 +1277,7 @@ def build_cargo_manifests(records_root: str, loc: dict) -> list:
     for p in glob.glob(os.path.join(records_root, "**", "cargomanifest", "*.json"),
                        recursive=True):
         try:
-            d = json.load(open(p))
+            d = _load_json(p)
             cv = d["_RecordValue_"]
             name = d["_RecordName_"].split(".", 1)[1]
         except (OSError, ValueError, KeyError, IndexError):
