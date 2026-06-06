@@ -1,0 +1,220 @@
+"""Flask route contract for starlogger/server.py.
+
+The server layer (arg parsing, validation, status codes, JSON shape, pass-through)
+had no tests. The downstream functions each have their own tests, so here they're
+stubbed at the server-module boundary and we assert the HTTP contract only.
+
+Run: python -m pytest tests/test_server.py
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from starlogger import server
+from starlogger.state import State
+
+
+@pytest.fixture
+def client(monkeypatch):
+    """A test client with every downstream dependency stubbed to a harmless default,
+    so each route is exercised in isolation. Individual tests re-stub where they need
+    to capture arguments or force a branch."""
+    stubs = {
+        "build_snapshot": lambda st, **kw: {"missions": [], "kw": kw},
+        "load_ship_cargo": lambda: {"ships": {}, "game_version": "4.8"},
+        "load_mineables": lambda: {"count": 2, "game_version": "4.8", "rocks": [1, 2]},
+        "lookup_rs": lambda rs: [{"class": "x"}],
+        "decompose_rs": lambda rs: [{"combo": "y"}],
+        "rock_signatures": lambda: [100.0, 200.0],
+        "all_minerals": lambda: ["Quartz", "Titanium"],
+        "lookup_mineral": lambda name: {"name": name, "rocks": []},
+        "mineral_index": lambda: {"Quartz": ["RockA"]},
+        "mining_plan": lambda mins: {"plan": mins},
+        "load_contracts": lambda: {"templates": []},
+        "blueprint_catalog": lambda: [{"name": "BP", "category": "C"}],
+        "lookup_blueprint": lambda name: {"name": name} if name == "Known" else None,
+        "set_setting": lambda k, v: None,
+        "filter_sessions": lambda s, **kw: {"sessions": [], "kw": kw},
+        "load_sessions": lambda: [],
+        "build_timeline": lambda key, lp: {"checkpoints": []} if key == "good" else None,
+        "snapshot_with_overlay": lambda key, lp, at, ov: {"missions": []} if key == "good" else None,
+        "state_at": lambda key, lp, at: State() if key == "good" else None,
+        "seed_overlay": lambda: {"edits": []},
+        "apply_replay_op": lambda overlay, op, st: None,
+        "apply_override_with_siblings": lambda data, st, mid, ov: {},
+        "read_json": lambda path, typ: {},
+        "atomic_write": lambda path, data: None,
+        "set_lost": lambda tid, lost: None,
+        "set_station_name": lambda zone, name: None,
+        "set_leg_states": lambda legs, done: None,
+        "set_leg_field": lambda mid, oid, field, value: None,
+    }
+    for name, fn in stubs.items():
+        monkeypatch.setattr(server, name, fn)
+    app = server.create_app(State(), log_path="/fake/Game.log")
+    app.testing = True
+    return app.test_client()
+
+
+# --- simple GETs ----------------------------------------------------------- #
+
+def test_index_serves_html(client):
+    r = client.get("/")
+    assert r.status_code == 200
+
+
+def test_state_passes_trade_flag(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(server, "build_snapshot", lambda st, **kw: seen.update(kw) or {"ok": 1})
+    assert client.get("/api/state").status_code == 200
+    assert seen == {"trade_only": False}
+    client.get("/api/state?trade=1")
+    assert seen == {"trade_only": True}
+
+
+def test_ships(client):
+    assert client.get("/api/ships").get_json()["game_version"] == "4.8"
+
+
+# --- mining GETs with arg validation --------------------------------------- #
+
+def test_rock_lookup_no_rs_returns_catalog(client):
+    j = client.get("/api/rock-lookup").get_json()
+    assert j["count"] == 2 and j["rocks"] == [1, 2]
+
+
+def test_rock_lookup_validates_rs(client):
+    assert client.get("/api/rock-lookup?rs=abc").status_code == 400
+    assert client.get("/api/rock-lookup?rs=-5").status_code == 400
+    j = client.get("/api/rock-lookup?rs=42").get_json()
+    assert j["rs"] == 42 and j["candidates"] == [{"class": "x"}]
+
+
+def test_rock_decompose_validates_rs(client):
+    assert client.get("/api/rock-decompose").status_code == 400        # missing
+    assert client.get("/api/rock-decompose?rs=0").status_code == 400   # not positive
+    assert client.get("/api/rock-decompose?rs=10").get_json()["combos"] == [{"combo": "y"}]
+
+
+def test_rock_signatures_and_minerals(client):
+    assert client.get("/api/rock-signatures").get_json()["signatures"] == [100.0, 200.0]
+    assert client.get("/api/minerals").get_json()["minerals"] == ["Quartz", "Titanium"]
+    assert client.get("/api/mineral-index").get_json()["minerals"] == {"Quartz": ["RockA"]}
+
+
+def test_mineral_lookup_requires_name(client):
+    assert client.get("/api/mineral-lookup?name=%20").status_code == 400
+    assert client.get("/api/mineral-lookup?name=Quartz").get_json()["name"] == "Quartz"
+
+
+def test_mining_plan_requires_list(client):
+    assert client.post("/api/mining-plan", json={"minerals": "nope"}).status_code == 400
+    assert client.post("/api/mining-plan", json={}).status_code == 400
+    r = client.post("/api/mining-plan", json={"minerals": ["Quartz"]})
+    assert r.get_json()["plan"] == ["Quartz"]
+
+
+# --- contracts / blueprints ------------------------------------------------ #
+
+def test_contracts_and_blueprints(client):
+    assert client.get("/api/contracts").get_json() == {"templates": []}
+    assert client.get("/api/blueprints").get_json()["blueprints"][0]["name"] == "BP"
+
+
+def test_blueprint_lookup(client):
+    assert client.get("/api/blueprint?name=%20").status_code == 400
+    assert client.get("/api/blueprint?name=Unknown").status_code == 404
+    assert client.get("/api/blueprint?name=Known").get_json()["name"] == "Known"
+
+
+# --- select-ship validation ------------------------------------------------ #
+
+def test_select_ship_validates_type(client):
+    assert client.post("/api/select-ship", json={"ship": 123}).status_code == 400
+    assert client.post("/api/select-ship", json={"ship": "Hull C"}).get_json()["ok"] is True
+    assert client.post("/api/select-ship", json={"ship": None}).get_json()["ok"] is True
+
+
+# --- sessions + replay ----------------------------------------------------- #
+
+def test_sessions_passes_filters(client):
+    j = client.get("/api/sessions?trade=1&unfinished=1").get_json()
+    assert j["kw"] == {"trade_only": True, "show_unfinished": True}
+
+
+def test_replay_timeline(client):
+    assert client.get("/api/replay/timeline").status_code == 400          # key required
+    assert client.get("/api/replay/timeline?key=gone").get_json() == {"available": False}
+    j = client.get("/api/replay/timeline?key=good").get_json()
+    assert j["available"] is True and "checkpoints" in j
+
+
+def test_replay_state(client):
+    assert client.get("/api/replay/state").status_code == 400              # key required
+    assert client.get("/api/replay/state?key=good&at=x").status_code == 400  # bad at
+    assert client.get("/api/replay/state?key=gone&at=0").status_code == 404
+    assert client.get("/api/replay/state?key=good&at=3").get_json() == {"missions": []}
+
+
+def test_replay_edit(client, monkeypatch):
+    assert client.post("/api/replay/edit", json={"at": "x"}).status_code == 400
+    assert client.post("/api/replay/edit", json={"key": "good"}).status_code == 400   # op missing
+    assert client.post("/api/replay/edit",
+                       json={"key": "gone", "op": {"kind": "x"}}).status_code == 404
+    ok = client.post("/api/replay/edit", json={"key": "good", "op": {"kind": "hide"}, "at": 1})
+    assert ok.get_json()["ok"] is True and "snapshot" in ok.get_json()
+
+    def boom(overlay, op, st):
+        raise ValueError("bad op")
+    monkeypatch.setattr(server, "apply_replay_op", boom)
+    r = client.post("/api/replay/edit", json={"key": "good", "op": {"kind": "x"}})
+    assert r.status_code == 400 and "bad op" in r.get_json()["error"]
+
+
+# --- live edit / persistence endpoints ------------------------------------- #
+
+def test_override_validation(client):
+    assert client.post("/api/override", json={}).status_code == 400               # mission_id
+    assert client.post("/api/override",
+                       json={"mission_id": "m1", "override": "nope"}).status_code == 400
+    assert client.post("/api/override",
+                       json={"mission_id": "m1", "override": {"hidden": True}}).get_json()["ok"] is True
+
+
+def test_trade_lost_validation(client):
+    assert client.post("/api/trade-lost", json={}).status_code == 400
+    assert client.post("/api/trade-lost", json={"trade_id": "t1"}).get_json()["ok"] is True
+
+
+def test_station_name_validation(client):
+    assert client.post("/api/station-name", json={}).status_code == 400            # zone
+    assert client.post("/api/station-name", json={"zone": 123, "name": 5}).status_code == 400
+    assert client.post("/api/station-name",
+                       json={"zone": "67890", "name": "Cordys"}).get_json()["ok"] is True
+
+
+def test_leg_state_validation(client):
+    assert client.post("/api/leg-state", json={"legs": []}).status_code == 400
+    assert client.post("/api/leg-state",
+                       json={"legs": [{"mission_id": "m1"}]}).status_code == 400   # no oid
+    # single-leg shorthand
+    assert client.post("/api/leg-state",
+                       json={"mission_id": "m1", "oid": "o1", "done": True}).get_json()["ok"] is True
+
+
+def test_leg_field_validation(client):
+    assert client.post("/api/leg-field", json={"mission_id": "m1"}).status_code == 400  # oid
+    assert client.post("/api/leg-field",
+                       json={"mission_id": "m1", "oid": "o1", "field": "bogus"}).status_code == 400
+    assert client.post("/api/leg-field",
+                       json={"mission_id": "m1", "oid": "o1", "field": "qty",
+                             "value": "abc"}).status_code == 400
+    assert client.post("/api/leg-field",
+                       json={"mission_id": "m1", "oid": "o1", "field": "cargo",
+                             "value": "Quartz"}).get_json()["ok"] is True
