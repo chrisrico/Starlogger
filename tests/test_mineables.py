@@ -98,12 +98,15 @@ def test_build_mineables_extracts_rs_and_composition(tmp_path):
 
 def _entity_mech(rs: float, comp_ref: str, gp_ref: str) -> dict:
     """An entity value with the M1 mechanics components: MineableParams.globalParams +
-    filledFactor and the SMineableHealthComponentParams hardness map."""
+    filledFactor and the SMineableHealthComponentParams hardness map. `damageStrength` is
+    a Vec4 in the real data (a falloff curve), so it must be dropped, not surfaced."""
     return {"Components": [
         {"_Type_": "MineableParams", "composition": comp_ref,
          "globalParams": gp_ref, "filledFactor": 0.85},
         {"_Type_": "SMineableHealthComponentParams",
-         "damageMapParamsCenter": {"damageStrength": 12.5, "laserDamageFullValue": 150.0}},
+         "damageMapParamsCenter": {
+             "damageStrength": {"_Type_": "Vec4", "x": 0.0, "y": 0.01, "z": 1.0, "w": 0.01},
+             "laserDamageFullValue": 150.0}},
         {"_Type_": "SSCSignatureSystemParams",
          "radarProperties": {"baseSignatureParams": {
              "signatures": [0.0, 0.0, 0.0, 0.0, rs, 0.0, 0.0, 0.0]}}},
@@ -134,17 +137,21 @@ def test_build_mineables_extracts_mechanics(tmp_path):
            "MiningGlobalParamsShip.MiningGlobalParamsShip",
            {"_Type_": "MiningGlobalParamsShip", "resistanceCurveFactor": 0.5,
             "optimalWindowSize": 2.5, "optimalWindowMaxSize": 4.0,
-            "mineableInstabilityParams": 0.3, "defaultMass": 100.0, "cSCUPerVolume": 0.08})
+            # a struct in the real data; we surface its wave period as `instability`
+            "mineableInstabilityParams": {"_Type_": "MineableInstabilityParams",
+                                          "instabilityWavePeriod": 3.0,
+                                          "instabilityWaveVariance": 1.0},
+            "defaultMass": 100.0, "cSCUPerVolume": 0.08})
 
     by_cls = {r["class"]: r for r in scdata.build_mineables(root, {"type_granite": "Granite"})}
 
     m = by_cls["GraniteMineableRock_Titanium"]["mechanics"]
     assert m["laser_power"] == 150.0        # per-rock hardness (health component)
-    assert m["damage_strength"] == 12.5
+    assert "damage_strength" not in m       # Vec4 curve is dropped, not dumped raw
     assert m["resistance"] == 0.5           # shared balance (global params, via ref)
     assert m["window_size"] == 2.5
     assert m["window_max"] == 4.0
-    assert m["instability"] == 0.3
+    assert m["instability"] == 3.0          # the instability struct's wave period
     assert m["mass"] == 100.0
     assert m["scu_per_volume"] == 0.08
     assert m["filled_factor"] == 0.85

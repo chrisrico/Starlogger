@@ -739,12 +739,13 @@ def build_location_names(loc: dict) -> dict:
 
 def _group_category(g: dict, loc: dict) -> str:
     """A ResourceTypeGroup's display category (Metal, Gas, …). Prefers the localised
-    ``displayName``; falls back to a camel-split of a name/tag token; '' when neither."""
+    ``displayName``; falls back to a camel-split of a name/tag token; '' when neither or
+    when it's a dev placeholder (e.g. "<= PLACEHOLDER =>")."""
     cat = _loc_text(g.get("displayName"), loc)
-    if cat:
-        return cat
-    tok = g.get("tag") or g.get("name") or g.get("groupName") or ""
-    return camel_split(str(tok).replace("_", " ")).strip()
+    if not cat:
+        tok = g.get("tag") or g.get("name") or g.get("groupName") or ""
+        cat = camel_split(str(tok).replace("_", " ")).strip()
+    return "" if "placeholder" in cat.lower() else cat
 
 
 def _resource_maps(rec: dict, loc: dict) -> tuple[dict, set, dict]:
@@ -925,33 +926,42 @@ def _composition(preset_path: str, elem_index: dict, loc: dict,
     }
 
 
+def _num(v):
+    """``v`` if it's a real number (not bool / Vec4 / struct), else None -- so an
+    unexpectedly-structured field is dropped rather than dumped raw into the output."""
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
 def _mechanics(rv: dict, gp_index: dict, gp_cache: dict) -> dict | None:
     """Per-rock cracking mechanics (M1): the break-difficulty model the mining HUD
-    doesn't show. Hardness (laser power needed, damage strength) comes from the rock's
-    own ``SMineableHealthComponentParams`` health map; the shared balance (resistance,
-    optimal-window shape, instability, mass, SCU/volume) from the ``MiningGlobalParams``
-    record its ``MineableParams.globalParams`` ref points at. Returns a compact dict, or
-    None when the rock carries none of it (legacy/placeholder entities)."""
+    doesn't show. Laser power needed comes from the rock's own
+    ``SMineableHealthComponentParams`` health map; the shared balance (resistance,
+    optimal-window shape, instability pulse, mass, SCU/volume) from the
+    ``MiningGlobalParams`` record its ``MineableParams.globalParams`` ref points at.
+    Every field is scalar-guarded (``damageStrength`` is a Vec4 curve and
+    ``mineableInstabilityParams`` a struct, so we take the instability *wave period* and
+    skip the curve). Returns a compact dict, or None when the rock carries none of it."""
     mp = _component(rv, "MineableParams") or {}
     center = (_component(rv, "SMineableHealthComponentParams") or {}).get(
         "damageMapParamsCenter") or {}
     out: dict = {
-        "laser_power": center.get("laserDamageFullValue"),
-        "damage_strength": center.get("damageStrength"),
-        "filled_factor": mp.get("filledFactor"),
+        "laser_power": _num(center.get("laserDamageFullValue")),
+        "filled_factor": _num(mp.get("filledFactor")),
     }
     gp_base = _ref_basename(mp.get("globalParams"))
     if gp_base:
         gp = gp_cache.get(gp_base)
         if gp is None:
             gp = gp_cache[gp_base] = _record_value(gp_index.get(gp_base))
+        inst = gp.get("mineableInstabilityParams")
         out.update({
-            "resistance": gp.get("resistanceCurveFactor"),
-            "window_size": gp.get("optimalWindowSize"),
-            "window_max": gp.get("optimalWindowMaxSize"),
-            "instability": gp.get("mineableInstabilityParams"),
-            "mass": gp.get("defaultMass"),
-            "scu_per_volume": gp.get("cSCUPerVolume"),
+            "resistance": _num(gp.get("resistanceCurveFactor")),
+            "window_size": _num(gp.get("optimalWindowSize")),
+            "window_max": _num(gp.get("optimalWindowMaxSize")),
+            "instability": _num(inst.get("instabilityWavePeriod")) if isinstance(inst, dict)
+                           else _num(inst),
+            "mass": _num(gp.get("defaultMass")),
+            "scu_per_volume": _num(gp.get("cSCUPerVolume")),
         })
     out = {k: v for k, v in out.items() if v is not None}
     return out or None
@@ -1196,36 +1206,27 @@ def build_blueprints_from_p4k(p4k: str, sb: str | None = None,
 # Contract templates: the authoritative hauling/delivery taxonomy
 # --------------------------------------------------------------------------- #
 # Each contract is a ContractTemplate under contracts/contracttemplates/. Its
-# contractProperties[] carry structured `extendedTextToken`s (CargoGradeToken,
-# MissionMaxSCUSize, CargoRouteToken, ...) that name the grade / SCU cap / route-shape /
-# rep rank -- the real taxonomy, in place of decoding the contract-id string by hand.
-# CargoManifest records (what mixed/illegal/salvage cargo is made of) ride the same
-# full extract. Numeric token *values* are static caps (the per-offer SCU + payout are
-# filled at runtime), so MissionMaxSCUSize is an upper bound, not the exact haul.
+# contractProperties[] are MissionPropertys, each named by a string `extendedTextToken`
+# (Contractor, CargoRouteToken, CargoGradeToken, MissionMaxSCUSize, ReputationRank, ...).
+# What's *static* per template is the SHAPE -- which tokens are present and the route token
+# -- plus the `illegal` flag. The token *values* (the actual grade word, SCU number, rep
+# rank, chosen org) are runtime-bound (`@LOC_UNINITIALIZED` / empty in the records), so we
+# do NOT read them here; the contract-id heuristic + the live log still supply those.
+# CargoManifest records (what mixed/illegal/salvage cargo is made of) ride the same extract.
 
-# Token name (extendedTextToken.value) -> the field we surface it as.
-_CONTRACT_TOKENS = {
-    "CargoGradeToken": "grade",
-    "MissionMaxSCUSize": "scu_cap",
-    "CargoRouteToken": "route",
-    "SingleToMultiToken": "single_to_multi",
-    "ReputationRank": "rep_rank",
-    "Contractor": "contractor",
+# Route-shape token -> display label (the one route token a cargo/courier template carries).
+_ROUTE_TOKENS = {
+    "CargoRouteToken": "A → B",
+    "CourierRouteToken": "A → B",
+    "SingleToMultiToken": "1 → many",
+    "MultiToSingleToken": "many → 1",
 }
 
 
-def _token_int(v) -> int | None:
-    """A token's data coerced to int (SCU cap), or None when empty/non-numeric."""
-    try:
-        return int(str(v).strip())
-    except (TypeError, ValueError):
-        return None
-
-
 def build_contract_taxonomy(records_root: str, loc: dict) -> list:
-    """Every contract template -> ``{template, grade, scu_cap, route, single_to_multi,
-    rep_rank, contractor, illegal}``, read from an extracted DataCore records root. Fields
-    a template doesn't carry are None (e.g. a combat contract has no cargo grade)."""
+    """Every contract template -> ``{template, route, graded, scu_sized, rep_gated,
+    illegal}``, read from an extracted DataCore records root. Only the statically-known
+    shape is captured (token *values* are runtime); ``route`` is None for non-cargo types."""
     rows: list[dict] = []
     for p in glob.glob(os.path.join(records_root, "**", "contracttemplates", "*.json"),
                        recursive=True):
@@ -1235,18 +1236,16 @@ def build_contract_taxonomy(records_root: str, loc: dict) -> list:
             name = d["_RecordName_"].split(".", 1)[1]
         except (OSError, ValueError, KeyError, IndexError):
             continue
-        props: dict = {}
-        for mp in cv.get("contractProperties") or []:
-            tok = mp.get("extendedTextToken") or {}
-            key = tok.get("value")
-            if key:
-                props[key] = tok.get("data")
-        row = {"template": name}
-        for token, field in _CONTRACT_TOKENS.items():
-            val = props.get(token)
-            row[field] = _token_int(val) if field == "scu_cap" else val
-        row["illegal"] = bool((cv.get("contractDisplayInfo") or {}).get("illegal"))
-        rows.append(row)
+        tokens = {mp.get("extendedTextToken") for mp in (cv.get("contractProperties") or [])
+                  if isinstance(mp.get("extendedTextToken"), str)}
+        rows.append({
+            "template": name,
+            "route": next((lbl for tok, lbl in _ROUTE_TOKENS.items() if tok in tokens), None),
+            "graded": bool(tokens & {"CargoGradeToken", "CourierGradeToken"}),
+            "scu_sized": "MissionMaxSCUSize" in tokens,
+            "rep_gated": "ReputationRank" in tokens,
+            "illegal": bool((cv.get("contractDisplayInfo") or {}).get("illegal")),
+        })
     rows.sort(key=lambda r: r["template"])
     return rows
 

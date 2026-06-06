@@ -81,16 +81,14 @@ def cargo_manifests(path: str = CONTRACTS_PATH) -> list:
     return (load_contracts(path) or {}).get("cargo_manifests") or []
 
 
-# Template fields decode() surfaces as-is; `illegal` is mapped to a `legal` boolean.
-_DECODE_FIELDS = ("grade", "scu_cap", "route", "single_to_multi", "rep_rank")
-
-
 def decode(contract_id: str, path: str = CONTRACTS_PATH) -> dict:
     """Authoritative taxonomy for a live contract id, matched to its ContractTemplate (the
-    id carries the template name plus a runtime suffix). Returns only the fields the
-    template provides (None-valued ones dropped) plus ``legal`` -- so it layers cleanly
-    over the heuristic in ``model.Mission.decoded``; ``{}`` when nothing matches (offline /
-    unknown id, where the heuristic still classifies)."""
+    id carries the template name plus a runtime suffix). Returns the statically-known bits
+    -- the legal/illegal flag (authoritative; the heuristic can't tell) and the route shape
+    -- so it layers cleanly over the heuristic in ``model.Mission.decoded``. ``{}`` when
+    nothing matches (offline / unknown id, where the heuristic still classifies). Note: the
+    grade word, SCU cap and rep rank are runtime-bound in the records, so they are NOT here
+    -- the contract-id heuristic and the live log remain their source."""
     key = _norm(contract_id)
     if not key:
         return {}
@@ -98,6 +96,7 @@ def decode(contract_id: str, path: str = CONTRACTS_PATH) -> dict:
     tmpl = next((t for tkey, t in _cache["by_template"].items() if tkey in key), None)
     if not tmpl:
         return {}
-    out = {f: tmpl.get(f) for f in _DECODE_FIELDS if tmpl.get(f) is not None}
-    out["legal"] = not tmpl.get("illegal")
+    out = {"legal": not tmpl.get("illegal")}
+    if tmpl.get("route"):
+        out["route"] = tmpl["route"]
     return out

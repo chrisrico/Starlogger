@@ -919,12 +919,10 @@ function missionsTable(ms) {
     ((b.accepted_at || "").localeCompare(a.accepted_at || "")));
   const rows = ms.map(m => {
     const dec = m.decoded || {};
-    // structure/category/grade come from the contract-id heuristic; scu_cap/rep_rank/legal
-    // are authoritative ContractTemplate data (p4k) layered in by model.Mission.decoded.
-    const chips = [dec.structure, dec.category, dec.grade];
-    if (dec.scu_cap) chips.push(`≤${dec.scu_cap} SCU`);  // static cap, not the exact haul
-    if (dec.rep_rank) chips.push(dec.rep_rank);
-    const tags = chips.filter(Boolean).map(t => `<span class="chip">${esc(t)}</span>`).join("")
+    // structure/category/grade come from the contract-id heuristic; `legal` is authoritative
+    // ContractTemplate data (p4k) layered in by model.Mission.decoded (grade/SCU are runtime).
+    const tags = [dec.structure, dec.category, dec.grade].filter(Boolean)
+      .map(t => `<span class="chip">${esc(t)}</span>`).join("")
       + (dec.legal === false ? `<span class="chip chip-illegal" title="Illegal contract">⚠ Illegal</span>` : "");
     const note = m.hidden ? '<div class="sub">hidden</div>'
       : (m.partial && m.status === "active" ? '<div class="warn" style="font-size:11px">⚠ partial</div>' : "");
