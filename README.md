@@ -28,8 +28,8 @@ py -m venv .venv
 ```
 
 The only runtime dependency is Flask. The ship cargo-grid database
-(`ships_cargo.json`) ships with the repo, so it works out of the box; see
-[Ship cargo data](#ship-cargo-data) for how it's kept current.
+(`ships_cargo.json`) is generated locally from your game install on first run
+(it is **not** bundled with the repo — see [Ship cargo data](#ship-cargo-data)).
 
 ## Run
 
@@ -102,9 +102,10 @@ a ship you pick in the **SHIP** box at the top. The all-ships grid reference is 
 role) is read **straight from the game's own `Data.p4k`** — no third-party site —
 via [StarBreaker](https://github.com/diogotr7/StarBreaker), a Rust extractor the
 tracker downloads once (SHA-256-pinned, per-OS) into `STARLOGGER_DATA_DIR/bin`. It
-rebuilds only when the game's **major version changes**, at background priority. If
-`Data.p4k` isn't found next to `Game.log`, the committed `ships_cargo.json` is used —
-so most users never run the extractor.
+rebuilds only when the game's **major version changes**, at background priority. The
+extracted data is **not redistributed** — it's generated on your own machine from your
+own copy of the game. If `Data.p4k` isn't found next to `Game.log`, cargo data is
+simply unavailable (the grid falls back to empty) until you run against an install.
 
 ## Fixing recovered data
 
