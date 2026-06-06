@@ -23,6 +23,11 @@ p4k-docs/
 *.zip
 dist/
 
-# ships_cargo.json and reference.json (commodity + location maps) are kept tracked:
-# committed copies of the latest generated p4k data, shipped with the code purely for
-# distribution (runtime reads its own copies in STARLOGGER_DATA_DIR, not these).
+# p4k-derived data extracted from Star Citizen's Data.p4k (via StarBreaker) is NOT
+# distributed with the code — bundling extracted game data risks copyright infringement.
+# Generated locally at runtime into STARLOGGER_DATA_DIR; regenerated on run when Data.p4k
+# is available, otherwise the loaders fall back to empty.
+ships_cargo.json
+reference.json
+mineables.json
+blueprints.json
