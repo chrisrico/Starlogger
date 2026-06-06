@@ -15,8 +15,9 @@ station_names.json
 trade_flags.json
 *.log
 
-# p4k format/data-model documentation vault (Obsidian) — kept out of git for now
-p4k-docs/
+# docs vault (Obsidian): p4k data-model notes + the runtime Game.log catalog —
+# kept out of git for now
+docs/
 
 # build artifacts
 *.tgz
