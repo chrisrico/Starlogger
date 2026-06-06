@@ -15,7 +15,7 @@ Both fall out of a *single* ``scdata.build_reference_data()`` extraction (one
 game-version bump, and are read as a unit -- so they share one file and one
 version stamp. (They were once commodities.json + locations.json; folded together
 because they're always written and wiped together. The heavier ship-cargo
-extraction stays in its own ships_cargo.json -- different trigger and cost.)
+extraction stays in its own ships.json -- different trigger and cost.)
 
 Resolution is best-effort: an unknown commodity GUID falls back to a short
 ``Commodity xxxxxxxx`` label so a trade still renders before / without the map.
@@ -30,12 +30,15 @@ from . import scdata
 from .jsonstore import atomic_write, load_cached
 
 _cache = {"mtime": None, "data": None,
-          "commodities": {}, "commodity_names": [], "codes": {}, "station_names": []}
+          "commodities": {}, "commodity_names": [], "codes": {}, "station_names": [],
+          "commodity_types": {}, "categories": []}
 
 
 def save_reference(commodities: dict, location_codes: dict,
                    commodity_names: list | None = None, station_names: list | None = None,
+                   commodity_types: dict | None = None,
                    game_version: str | None = None, path: str = REFERENCE_PATH) -> None:
+    types = commodity_types or {}
     atomic_write(path, {
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -44,6 +47,8 @@ def save_reference(commodities: dict, location_codes: dict,
         "commodity_names": sorted(commodity_names) if commodity_names else sorted(set(commodities.values())),
         "codes": location_codes,
         "station_names": sorted(station_names) if station_names else sorted(set(location_codes.values())),
+        "commodity_types": types,
+        "categories": sorted(set(types.values())),
     })
 
 
@@ -55,6 +60,8 @@ def _parse(data: dict) -> dict:
     _cache["commodity_names"] = data.get("commodity_names") or sorted(set(_cache["commodities"].values()))
     _cache["codes"] = {k.lower(): v for k, v in (data.get("codes") or {}).items()}
     _cache["station_names"] = data.get("station_names") or sorted(set(_cache["codes"].values()))
+    _cache["commodity_types"] = {k.lower(): v for k, v in (data.get("commodity_types") or {}).items()}
+    _cache["categories"] = data.get("categories") or sorted(set(_cache["commodity_types"].values()))
     return data
 
 
@@ -81,6 +88,19 @@ def commodity_names(path: str = REFERENCE_PATH) -> list:
     """Clean trade-commodity display names for the cargo autocomplete."""
     _load(path)
     return _cache["commodity_names"]
+
+
+def commodity_types(path: str = REFERENCE_PATH) -> dict:
+    """{guid(lower) -> category} (Metal, Gas, Mineral, …). Empty until the cache is
+    built with the category taxonomy (T1). Lets the UI group/colour commodities."""
+    _load(path)
+    return _cache["commodity_types"]
+
+
+def commodity_categories(path: str = REFERENCE_PATH) -> list:
+    """Sorted distinct commodity categories; empty until the taxonomy is built."""
+    _load(path)
+    return _cache["categories"]
 
 
 def commodities_version(path: str = REFERENCE_PATH) -> str | None:

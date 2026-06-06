@@ -96,6 +96,74 @@ def test_build_mineables_extracts_rs_and_composition(tmp_path):
     assert [e["element"] for e in ctype["composition"]] == ["Iron Ore"]
 
 
+def _entity_mech(rs: float, comp_ref: str, gp_ref: str) -> dict:
+    """An entity value with the M1 mechanics components: MineableParams.globalParams +
+    filledFactor and the SMineableHealthComponentParams hardness map."""
+    return {"Components": [
+        {"_Type_": "MineableParams", "composition": comp_ref,
+         "globalParams": gp_ref, "filledFactor": 0.85},
+        {"_Type_": "SMineableHealthComponentParams",
+         "damageMapParamsCenter": {"damageStrength": 12.5, "laserDamageFullValue": 150.0}},
+        {"_Type_": "SSCSignatureSystemParams",
+         "radarProperties": {"baseSignatureParams": {
+             "signatures": [0.0, 0.0, 0.0, 0.0, rs, 0.0, 0.0, 0.0]}}},
+    ]}
+
+
+def test_build_mineables_extracts_mechanics(tmp_path):
+    root = str(tmp_path)
+    ents = os.path.join(root, "libs/foundry/records/entities/mineable")
+    presets = os.path.join(root, "libs/foundry/records/mining/rockcompositionpresets")
+    mining = os.path.join(root, "libs/foundry/records/mining")
+    elems = os.path.join(root, "libs/foundry/records/mining/mineableelements")
+
+    _write(os.path.join(ents, "granitemineablerock_titanium.json"),
+           "EntityClassDefinition.GraniteMineableRock_Titanium",
+           _entity_mech(2000.0, "file://../mining/rockcompositionpresets/granite_titanium.json",
+                        "file://../mining/miningglobalparamsship.json"))
+    # a rock with no mechanics components -> mechanics is None (rides alongside cleanly)
+    _write(os.path.join(ents, "plainmineablerock.json"),
+           "EntityClassDefinition.PlainMineableRock",
+           _entity(2500.0, "file://../mining/rockcompositionpresets/granite_titanium.json"))
+    _write(os.path.join(presets, "granite_titanium.json"),
+           "MineableComposition.Granite_Titanium",
+           _preset("@type_granite", 1,
+                   [("file://../mineableelements/titanium_ore.json", 30.0, 70.0, 1.0)]))
+    _write(os.path.join(elems, "titanium_ore.json"), "MineableElement.Titanium_Ore", {})
+    _write(os.path.join(mining, "miningglobalparamsship.json"),
+           "MiningGlobalParamsShip.MiningGlobalParamsShip",
+           {"_Type_": "MiningGlobalParamsShip", "resistanceCurveFactor": 0.5,
+            "optimalWindowSize": 2.5, "optimalWindowMaxSize": 4.0,
+            "mineableInstabilityParams": 0.3, "defaultMass": 100.0, "cSCUPerVolume": 0.08})
+
+    by_cls = {r["class"]: r for r in scdata.build_mineables(root, {"type_granite": "Granite"})}
+
+    m = by_cls["GraniteMineableRock_Titanium"]["mechanics"]
+    assert m["laser_power"] == 150.0        # per-rock hardness (health component)
+    assert m["damage_strength"] == 12.5
+    assert m["resistance"] == 0.5           # shared balance (global params, via ref)
+    assert m["window_size"] == 2.5
+    assert m["window_max"] == 4.0
+    assert m["instability"] == 0.3
+    assert m["mass"] == 100.0
+    assert m["scu_per_volume"] == 0.08
+    assert m["filled_factor"] == 0.85
+
+    assert by_cls["PlainMineableRock"]["mechanics"] is None
+
+
+def test_lookup_rs_carries_mechanics(tmp_path):
+    path = str(tmp_path / "mineables.json")
+    mineables.save_mineables([
+        {"class": "GraniteMineableRock_Titanium", "name": "Granite — Titanium",
+         "deposit_name": "Granite", "rs": 2000, "min_distinct": 1, "composition": [],
+         "mechanics": {"laser_power": 150.0, "mass": 100.0}},
+    ], game_version="4.8", path=path)
+    mineables._cache["mtime"] = None
+    hit = mineables.lookup_rs(2000, path=path)
+    assert hit[0]["rocks"][0]["mechanics"] == {"laser_power": 150.0, "mass": 100.0}
+
+
 def _save_catalog(path: str) -> None:
     mineables.save_mineables([
         {"class": "FelsicMineableRock_Titanium", "name": "Felsic (Titanium)",

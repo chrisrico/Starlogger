@@ -413,7 +413,12 @@ function renderHeader(d) {
 function datalistsHtml(cat) {
   if (!cat) return "";
   const opts = (a) => (a || []).map(v => `<option value="${esc(v)}"></option>`).join("");
-  return `<datalist id="dl_cargo">${opts(cat.cargo)}</datalist>` +
+  // Tag each cargo option with its commodity category (Metal, Gas, …) from the p4k
+  // taxonomy (T1) — shown by the autocomplete where the browser supports option labels.
+  const types = cat.cargo_types || {};
+  const cargoOpts = (cat.cargo || []).map(v =>
+    `<option value="${esc(v)}"${types[v] ? ` label="${esc(types[v])}"` : ""}></option>`).join("");
+  return `<datalist id="dl_cargo">${cargoOpts}</datalist>` +
          `<datalist id="dl_station">${opts(cat.stations)}</datalist>`;
 }
 
@@ -914,7 +919,13 @@ function missionsTable(ms) {
     ((b.accepted_at || "").localeCompare(a.accepted_at || "")));
   const rows = ms.map(m => {
     const dec = m.decoded || {};
-    const tags = [dec.structure, dec.category, dec.grade].filter(Boolean).map(t => `<span class="chip">${esc(t)}</span>`).join("");
+    // structure/category/grade come from the contract-id heuristic; scu_cap/rep_rank/legal
+    // are authoritative ContractTemplate data (p4k) layered in by model.Mission.decoded.
+    const chips = [dec.structure, dec.category, dec.grade];
+    if (dec.scu_cap) chips.push(`≤${dec.scu_cap} SCU`);  // static cap, not the exact haul
+    if (dec.rep_rank) chips.push(dec.rep_rank);
+    const tags = chips.filter(Boolean).map(t => `<span class="chip">${esc(t)}</span>`).join("")
+      + (dec.legal === false ? `<span class="chip chip-illegal" title="Illegal contract">⚠ Illegal</span>` : "");
     const note = m.hidden ? '<div class="sub">hidden</div>'
       : (m.partial && m.status === "active" ? '<div class="warn" style="font-size:11px">⚠ partial</div>' : "");
     const action = m.hidden
@@ -1937,6 +1948,23 @@ function mineralUnion(rocks) {
   return [...m.values()].sort((a, b) => (b.probability || 0) - (a.probability || 0));
 }
 
+// Compact rock-cracking advisor line from a class's M1 mechanics (p4k); "" when absent.
+// Surfaces the break-difficulty the in-game HUD doesn't show — laser power needed,
+// resistance/instability, optimal-window width, mass. Uses the first rock that carries it.
+function mechHtml(rocks) {
+  const m = (rocks || []).map(r => r.mechanics).find(Boolean);
+  if (!m) return "";
+  const bits = [];
+  if (m.laser_power != null) bits.push(`laser ≥${num(m.laser_power)}`);
+  if (m.resistance != null) bits.push(`resistance ${m.resistance}`);
+  if (m.instability != null) bits.push(`instability ${m.instability}`);
+  if (m.window_size != null) bits.push(`window ${m.window_size}${m.window_max != null ? "–" + m.window_max : ""}`);
+  if (m.mass != null) bits.push(`mass ${num(m.mass)}`);
+  if (!bits.length) return "";
+  return `<div class="mrow"><span class="mk">cracking</span>
+    <div class="mels mn-dim">${esc(bits.join(" · "))}</div></div>`;
+}
+
 // ---- Identify: RS reading → rock class(es), cluster size, possible minerals ---- //
 // Tuned for rapid back-to-back readings: typing a number + Enter (or Identify) shows the
 // result, then clears and refocuses the box for the next reading. A strip of the last few
@@ -2045,6 +2073,7 @@ function identifyResultHtml(v, candidates, combos) {
              <div class="mels">${deps.map(d => tag(d)).join(" ")}</div></div>` : ""}
           <div class="mrow"><span class="mk">possible minerals</span>
             <div class="mels">${minerals.map(elBadge).join("") || '<span class="mn-dim">—</span>'}</div></div>
+          ${mechHtml(c.rocks)}
         </div></div>`;
     }).join("");
   }

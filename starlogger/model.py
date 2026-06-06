@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from . import patterns
+from . import contracts, patterns
 
 
 @dataclass
@@ -71,7 +71,10 @@ class Mission:
 
     @property
     def decoded(self) -> dict:
-        return patterns.decode_contract(self.contract)
+        # Authoritative ContractTemplate data (grade/scu_cap/route/rep/legal) layered over
+        # the contract-id text heuristic -- the template wins where it has a value, and the
+        # heuristic stays as the fallback when no data file / no matching template.
+        return {**patterns.decode_contract(self.contract), **contracts.decode(self.contract)}
 
     @property
     def cargo_types(self) -> list[str]:

@@ -138,7 +138,7 @@ def _reason(cat: _Catalog, ver: str | None) -> str | None:
 def _build_catalogs(path: str) -> list:
     """The catalogs the background loop keeps fresh, each gated/rebuilt the same way. The
     reference/mineables/blueprints modules are imported lazily (only the loop needs them)."""
-    from . import blueprints, mineables, reference
+    from . import blueprints, contracts, mineables, reference
 
     def _ship(p4k, ver, reason):
         print(f"[ship cargo] rebuilding from local install ({reason}) -- niced, ~minutes")
@@ -152,8 +152,10 @@ def _build_catalogs(path: str) -> list:
         reference.save_reference(
             ref["commodities"], ref["location_codes"],
             commodity_names=ref["commodity_names"],
-            station_names=ref["station_names"], game_version=ver)
-        print(f"[reference] built {len(ref['commodity_names'])} commodities + "
+            station_names=ref["station_names"],
+            commodity_types=ref["commodity_types"], game_version=ver)
+        print(f"[reference] built {len(ref['commodity_names'])} commodities "
+              f"({len(ref['categories'])} categories) + "
               f"{len(ref['station_names'])} stations ({reason})")
 
     def _mineables(p4k, ver, reason):
@@ -169,6 +171,15 @@ def _build_catalogs(path: str) -> list:
         if bps:
             blueprints.save_blueprints(bps, game_version=ver)
             print(f"[blueprints] built {len(bps)} blueprints ({reason})")
+
+    def _contracts(p4k, ver, reason):
+        print(f"[contracts] rebuilding from local install ({reason}) -- niced, ~minutes")
+        data = scdata.build_contracts_from_p4k(p4k)
+        if data["templates"]:
+            contracts.save_contracts(data["templates"], data["cargo_manifests"],
+                                     game_version=ver)
+            print(f"[contracts] built {len(data['templates'])} templates + "
+                  f"{len(data['cargo_manifests'])} cargo manifests ({reason})")
 
     return [
         _Catalog("ship cargo",
@@ -186,6 +197,10 @@ def _build_catalogs(path: str) -> list:
         _Catalog("blueprints",
                  lambda: bool(blueprints.load_blueprints().get("blueprints")),
                  blueprints.blueprints_version, _blueprints),
+        # Contract taxonomy + cargo manifests (same full-extract source as mineables).
+        _Catalog("contracts",
+                 lambda: bool(contracts.load_contracts().get("templates")),
+                 contracts.contracts_version, _contracts),
     ]
 
 

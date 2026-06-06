@@ -11,7 +11,7 @@ from dataclasses import asdict
 
 from . import patterns
 from .archive import build_session_trades, build_session_travels
-from .reference import commodity_names, station_names
+from .reference import commodity_names, commodity_types, load_commodities, station_names
 from .model import Leg, Mission
 from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
 from .overrides import apply_override, get_overrides
@@ -214,7 +214,8 @@ def _counts(visible: list, active: list, mission_dicts: list, hidden_ids: set) -
 
 def _autocomplete_catalog(missions: list, zone_names: dict) -> dict:
     """Editor autocomplete: known station names (zone map + p4k catalog + anything seen
-    this session) and cargo names (p4k commodity list + canonical fallback + live)."""
+    this session), cargo names (p4k commodity list + canonical fallback + live), and the
+    commodity-name -> category taxonomy (T1) so the UI can group/colour cargo by type."""
     stations = set(zone_names.values()) | set(station_names())
     cargo_names = set(patterns.COMMODITY_NAMES) | set(commodity_names())
     for mis in missions:
@@ -223,7 +224,11 @@ def _autocomplete_catalog(missions: list, zone_names: dict) -> dict:
                 stations.add(leg.location)
             if leg.cargo:
                 cargo_names.add(leg.cargo)
-    return {"stations": sorted(stations), "cargo": sorted(cargo_names)}
+    # commodity_types is keyed by GUID; the UI works in names, so join via the GUID->name map.
+    guid_name = load_commodities()
+    cargo_types = {guid_name[g]: c for g, c in commodity_types().items() if g in guid_name}
+    return {"stations": sorted(stations), "cargo": sorted(cargo_names),
+            "cargo_types": cargo_types}
 
 
 def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None = None) -> dict:

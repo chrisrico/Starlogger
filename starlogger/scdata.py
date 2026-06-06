@@ -737,41 +737,66 @@ def build_location_names(loc: dict) -> dict:
     return codes
 
 
+def _group_category(g: dict, loc: dict) -> str:
+    """A ResourceTypeGroup's display category (Metal, Gas, …). Prefers the localised
+    ``displayName``; falls back to a camel-split of a name/tag token; '' when neither."""
+    cat = _loc_text(g.get("displayName"), loc)
+    if cat:
+        return cat
+    tok = g.get("tag") or g.get("name") or g.get("groupName") or ""
+    return camel_split(str(tok).replace("_", " ")).strip()
+
+
+def _resource_maps(rec: dict, loc: dict) -> tuple[dict, set, dict]:
+    """Walk a ResourceTypeDatabase record into ``(guid->name, {commodity names},
+    guid->category)``. The category is the resource's immediate containing
+    ResourceTypeGroup (a nested sub-group's name wins over its parent's for its own
+    resources, e.g. a refined ore tagged 'Refined' rather than the parent 'Metal')."""
+    guid_map: dict[str, str] = {}
+    commodity_names: set[str] = set()
+    commodity_types: dict[str, str] = {}
+
+    def walk(g: dict, parent_cat: str) -> None:
+        cat = _group_category(g, loc) or parent_cat
+        for r in g.get("resources", []):
+            guid = (r.get("_RecordId_") or "").lower()
+            dn = r.get("displayName") or ""
+            name = _loc_text(dn, loc)
+            if not name:  # fall back to the record-name token
+                rn = r.get("_RecordName_", "")
+                tok = rn.split(".", 1)[1] if "." in rn else rn
+                name = camel_split(tok.replace("_", " "))
+            if guid:
+                guid_map[guid] = name
+                if cat:
+                    commodity_types[guid] = cat
+            if name and isinstance(dn, str) and dn.lower().startswith("@items_commodities"):
+                commodity_names.add(name)
+        for sub in g.get("groups", []):
+            walk(sub, cat)
+
+    for g in rec.get("_RecordValue_", {}).get("groups", []):
+        walk(g, "")
+    return guid_map, commodity_names, commodity_types
+
+
 def build_reference_data(p4k: str, sb: str | None = None) -> dict:
     """Commodity + station reference data from the local p4k, in one pass: extract
     global.ini once, query the ResourceTypeDatabase, and return localized commodity
-    names (guid->name + a clean trade-commodity list) and station names (code->name +
-    a clean station list)."""
+    names (guid->name + a clean trade-commodity list), the commodity category taxonomy
+    (guid->category) and station names (code->name + a clean station list)."""
     sb = sb or ensure_binary()
     workdir = tempfile.mkdtemp(prefix="starlogger-ref-")
     try:
         loc = extract_localization(p4k, sb, workdir)
         rec = query_resource_types(p4k, sb)
-        guid_map: dict[str, str] = {}
-        commodity_names: set[str] = set()
-
-        def walk(g: dict) -> None:
-            for r in g.get("resources", []):
-                guid = (r.get("_RecordId_") or "").lower()
-                dn = r.get("displayName") or ""
-                name = _loc_text(dn, loc)
-                if not name:  # fall back to the record-name token
-                    rn = r.get("_RecordName_", "")
-                    tok = rn.split(".", 1)[1] if "." in rn else rn
-                    name = camel_split(tok.replace("_", " "))
-                if guid:
-                    guid_map[guid] = name
-                if name and isinstance(dn, str) and dn.lower().startswith("@items_commodities"):
-                    commodity_names.add(name)
-            for sub in g.get("groups", []):
-                walk(sub)
-
-        for g in rec.get("_RecordValue_", {}).get("groups", []):
-            walk(g)
+        guid_map, commodity_names, commodity_types = _resource_maps(rec, loc)
         codes = build_location_names(loc)
         return {
             "commodities": guid_map,
             "commodity_names": sorted(commodity_names),
+            "commodity_types": commodity_types,
+            "categories": sorted(set(commodity_types.values())),
             "location_codes": codes,
             "station_names": sorted(set(codes.values())),
         }
@@ -824,6 +849,14 @@ def _index_by_basename(records_root: str, *subdirs: str) -> dict:
         for p in glob.glob(os.path.join(records_root, "**", sub, "**", "*.json"), recursive=True):
             idx[os.path.basename(p).lower()] = p
     return idx
+
+
+def _record_value(path: str | None) -> dict:
+    """A record file's ``_RecordValue_`` dict, or {} (missing file / not a record)."""
+    try:
+        return json.load(open(path))["_RecordValue_"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
 
 
 def _record_token_name(path: str) -> str:
@@ -892,17 +925,56 @@ def _composition(preset_path: str, elem_index: dict, loc: dict,
     }
 
 
+def _mechanics(rv: dict, gp_index: dict, gp_cache: dict) -> dict | None:
+    """Per-rock cracking mechanics (M1): the break-difficulty model the mining HUD
+    doesn't show. Hardness (laser power needed, damage strength) comes from the rock's
+    own ``SMineableHealthComponentParams`` health map; the shared balance (resistance,
+    optimal-window shape, instability, mass, SCU/volume) from the ``MiningGlobalParams``
+    record its ``MineableParams.globalParams`` ref points at. Returns a compact dict, or
+    None when the rock carries none of it (legacy/placeholder entities)."""
+    mp = _component(rv, "MineableParams") or {}
+    center = (_component(rv, "SMineableHealthComponentParams") or {}).get(
+        "damageMapParamsCenter") or {}
+    out: dict = {
+        "laser_power": center.get("laserDamageFullValue"),
+        "damage_strength": center.get("damageStrength"),
+        "filled_factor": mp.get("filledFactor"),
+    }
+    gp_base = _ref_basename(mp.get("globalParams"))
+    if gp_base:
+        gp = gp_cache.get(gp_base)
+        if gp is None:
+            gp = gp_cache[gp_base] = _record_value(gp_index.get(gp_base))
+        out.update({
+            "resistance": gp.get("resistanceCurveFactor"),
+            "window_size": gp.get("optimalWindowSize"),
+            "window_max": gp.get("optimalWindowMaxSize"),
+            "instability": gp.get("mineableInstabilityParams"),
+            "mass": gp.get("defaultMass"),
+            "scu_per_volume": gp.get("cSCUPerVolume"),
+        })
+    out = {k: v for k, v in out.items() if v is not None}
+    return out or None
+
+
 def build_mineables(records_root: str, loc: dict) -> list:
-    """Every mineable rock -> {class, name, deposit_name, rs, min_distinct, composition},
-    read from an extracted DataCore records root (the same one ``build_ships`` uses).
+    """Every mineable rock -> {class, name, deposit_name, rs, min_distinct, composition,
+    mechanics}, read from an extracted DataCore records root (the same one ``build_ships``
+    uses).
 
     RS is the rock's base radar signature; the in-game HUD shows ``rs x cluster size``.
-    Composition is the probabilistic mineral makeup of the rock's class. Rocks with no
-    RS (a handful of test/placeholder entities) are skipped."""
+    Composition is the probabilistic mineral makeup of the rock's class. ``mechanics`` is
+    the break-difficulty model (see :func:`_mechanics`). Rocks with no RS (a handful of
+    test/placeholder entities) are skipped."""
     comp_index = _index_by_basename(records_root, "rockcompositionpresets")
     elem_index = _index_by_basename(records_root, "mineableelements")
+    # "mining" also holds the presets/elements indexed above; keep only the global-params
+    # records so a same-basename preset can't be loaded in their place.
+    gp_index = {k: v for k, v in _index_by_basename(records_root, "mining").items()
+                if k.startswith("miningglobalparams")}
     comp_cache: dict[str, dict] = {}
     elem_cache: dict[str, str] = {}
+    gp_cache: dict[str, dict] = {}
     rocks: list[dict] = []
     for p in glob.glob(os.path.join(records_root, "**", "entities", "mineable", "*.json"),
                        recursive=True):
@@ -933,6 +1005,7 @@ def build_mineables(records_root: str, loc: dict) -> list:
             "rs": round(rs),
             "min_distinct": comp["min_distinct"],
             "composition": comp["elements"],
+            "mechanics": _mechanics(rv, gp_index, gp_cache),
         })
     rocks.sort(key=lambda r: (r["rs"], r["class"]))
     return rocks
@@ -1115,6 +1188,115 @@ def build_blueprints_from_p4k(p4k: str, sb: str | None = None,
         recs = extract_records(workdir, p4k, sb)
         loc = load_localization(recs)
         return build_blueprints(recs, loc)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# Contract templates: the authoritative hauling/delivery taxonomy
+# --------------------------------------------------------------------------- #
+# Each contract is a ContractTemplate under contracts/contracttemplates/. Its
+# contractProperties[] carry structured `extendedTextToken`s (CargoGradeToken,
+# MissionMaxSCUSize, CargoRouteToken, ...) that name the grade / SCU cap / route-shape /
+# rep rank -- the real taxonomy, in place of decoding the contract-id string by hand.
+# CargoManifest records (what mixed/illegal/salvage cargo is made of) ride the same
+# full extract. Numeric token *values* are static caps (the per-offer SCU + payout are
+# filled at runtime), so MissionMaxSCUSize is an upper bound, not the exact haul.
+
+# Token name (extendedTextToken.value) -> the field we surface it as.
+_CONTRACT_TOKENS = {
+    "CargoGradeToken": "grade",
+    "MissionMaxSCUSize": "scu_cap",
+    "CargoRouteToken": "route",
+    "SingleToMultiToken": "single_to_multi",
+    "ReputationRank": "rep_rank",
+    "Contractor": "contractor",
+}
+
+
+def _token_int(v) -> int | None:
+    """A token's data coerced to int (SCU cap), or None when empty/non-numeric."""
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def build_contract_taxonomy(records_root: str, loc: dict) -> list:
+    """Every contract template -> ``{template, grade, scu_cap, route, single_to_multi,
+    rep_rank, contractor, illegal}``, read from an extracted DataCore records root. Fields
+    a template doesn't carry are None (e.g. a combat contract has no cargo grade)."""
+    rows: list[dict] = []
+    for p in glob.glob(os.path.join(records_root, "**", "contracttemplates", "*.json"),
+                       recursive=True):
+        try:
+            d = json.load(open(p))
+            cv = d["_RecordValue_"]
+            name = d["_RecordName_"].split(".", 1)[1]
+        except (OSError, ValueError, KeyError, IndexError):
+            continue
+        props: dict = {}
+        for mp in cv.get("contractProperties") or []:
+            tok = mp.get("extendedTextToken") or {}
+            key = tok.get("value")
+            if key:
+                props[key] = tok.get("data")
+        row = {"template": name}
+        for token, field in _CONTRACT_TOKENS.items():
+            val = props.get(token)
+            row[field] = _token_int(val) if field == "scu_cap" else val
+        row["illegal"] = bool((cv.get("contractDisplayInfo") or {}).get("illegal"))
+        rows.append(row)
+    rows.sort(key=lambda r: r["template"])
+    return rows
+
+
+def _resource_name(res) -> str:
+    """Commodity display name from a CargoResource.resource ref -- an inline record
+    (``{_RecordName_: ResourceType.Scrap_Metal}``) or a ``file://...`` string."""
+    if isinstance(res, dict):
+        rn = res.get("_RecordName_", "")
+        tok = rn.split(".", 1)[1] if "." in rn else rn
+    elif isinstance(res, str) and res:
+        base = os.path.basename(res.split("?")[0])
+        tok = base[:-5] if base.endswith(".json") else base
+    else:
+        tok = ""
+    return camel_split(tok.replace("_", " ")).strip().title()
+
+
+def build_cargo_manifests(records_root: str, loc: dict) -> list:
+    """Every CargoManifest -> ``{manifest, resources: [{commodity, probability}]}`` --
+    what mixed/illegal/salvage/scrap contract cargo is made of (C2)."""
+    out: list[dict] = []
+    for p in glob.glob(os.path.join(records_root, "**", "cargomanifest", "*.json"),
+                       recursive=True):
+        try:
+            d = json.load(open(p))
+            cv = d["_RecordValue_"]
+            name = d["_RecordName_"].split(".", 1)[1]
+        except (OSError, ValueError, KeyError, IndexError):
+            continue
+        resources = [{"commodity": _resource_name(cr.get("resource")),
+                      "probability": cr.get("probability")}
+                     for cr in ((cv.get("cargoFillCapacity") or {}).get("resources") or [])]
+        out.append({"manifest": name, "resources": resources})
+    out.sort(key=lambda m: m["manifest"])
+    return out
+
+
+def build_contracts_from_p4k(p4k: str, sb: str | None = None,
+                             progress=lambda m: None) -> dict:
+    """Full-extract orchestrator for the contract taxonomy + cargo manifests (gated like
+    mineables/blueprints). Returns ``{templates, cargo_manifests}``."""
+    sb = sb or ensure_binary()
+    workdir = tempfile.mkdtemp(prefix="starlogger-contracts-")
+    try:
+        progress("extracting DataCore for contracts")
+        recs = extract_records(workdir, p4k, sb)
+        loc = load_localization(recs)
+        return {"templates": build_contract_taxonomy(recs, loc),
+                "cargo_manifests": build_cargo_manifests(recs, loc)}
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

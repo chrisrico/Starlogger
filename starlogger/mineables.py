@@ -101,6 +101,7 @@ def lookup_rs(rs_value: float, tol: float = 0.5, max_count: int = 500,
                 "deposit_name": r["deposit_name"],
                 "min_distinct": r["min_distinct"],
                 "composition": r["composition"],
+                "mechanics": r.get("mechanics"),
             } for r in group],
         })
     out.sort(key=lambda c: (c["residual"], c["count"]))

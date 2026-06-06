@@ -14,6 +14,7 @@ from .replay import build_timeline, snapshot_with_overlay, state_at
 from .replay_edit import apply_override_with_siblings, apply_replay_op, seed_overlay
 from .settings import set_setting
 from .blueprints import blueprint_catalog, lookup_blueprint
+from .contracts import load_contracts
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .shipcargo import load_ship_cargo
@@ -106,6 +107,12 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
         if not isinstance(minerals, list):
             return jsonify({"ok": False, "error": "minerals must be a list"}), 400
         return jsonify(mining_plan([str(m) for m in minerals]))
+
+    @app.get("/api/contracts")
+    def api_contracts():
+        # The contract-template taxonomy (grade × route × SCU cap × rep × legal) +
+        # cargo-manifest composition, mined from the p4k. Empty until first built.
+        return jsonify(load_contracts())
 
     @app.get("/api/blueprints")
     def api_blueprints():
