@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Guard: never commit p4k-derived (copyrighted) game data.
+#
+# Star Citizen's Data.p4k is copyrighted. Files we extract from it via StarBreaker
+# (ships_cargo.json, reference.json, mineables.json, blueprints.json, and any future
+# derived file) must NEVER be committed -- they're regenerated locally at runtime.
+#
+# This hook is content-based, so it catches NEW derived files no matter what they're
+# named: every extract stamps a "source": "Star Citizen Data.p4k via StarBreaker ..."
+# field. Only staged *.json files are inspected (data lives in JSON; this avoids
+# flagging source code or docs that merely mention the marker). If a staged JSON file
+# carries the marker, the commit is aborted.
+#
+# Enabled via:  git config core.hooksPath .githooks
+set -euo pipefail
+
+marker='Star Citizen Data\.p4k'
+blocked=()
+
+# Only inspect added/copied/modified staged JSON files (skip deletions / non-json).
+while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$path" in
+        *.json) ;;
+        *) continue ;;
+    esac
+    # Grep the STAGED blob, not the worktree, so it reflects exactly what's committed.
+    if git show ":$path" 2>/dev/null | grep -qE "$marker"; then
+        blocked+=("$path")
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+if [ "${#blocked[@]}" -gt 0 ]; then
+    echo "ERROR: refusing to commit p4k-derived (copyrighted) data." >&2
+    echo "These staged JSON files carry the Data.p4k/StarBreaker source marker:" >&2
+    for f in "${blocked[@]}"; do echo "  - $f" >&2; done
+    echo >&2
+    echo "Add them to .gitignore and unstage (git restore --staged <file>)." >&2
+    exit 1
+fi
