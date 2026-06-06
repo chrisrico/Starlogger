@@ -172,7 +172,7 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
   border-radius:3px;box-shadow:var(--panel-shadow);overflow-y:auto}
 /* shared "eyebrow" label — small uppercase display-font section/field labels. Members below
    keep only their own size / letter-spacing / margin (and color when it isn't the ink-3 default). */
-.stat .k,.gauge .lbl,.filt-lbl,.rec-lbl,.ef label,.elev-lbl,.ls-lbl,.cg-baylabel,
+.stat .k,.gauge .lbl,.filt-lbl,.rec-lbl,.ef label,.ls-lbl,.cg-baylabel,
 .mscan-k,.mi-hist-k,.mres-h{font-family:var(--display);text-transform:uppercase;color:var(--ink-3)}
 .shipmenu{display:none;position:absolute;top:calc(100% + 3px);right:0;z-index:60;
   /* size to the widest row (independent of the narrow input), capped so it can't
@@ -692,21 +692,16 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .cg-box:hover .cf{box-shadow:0 0 14px rgba(var(--cyan-rgb),.3)}
 /* solid cargo cubes (fill mode) — face color set inline (per destination) */
 .cgc{position:absolute;left:0;top:0;box-sizing:border-box}
-/* destination legend */
-.cg-legend{display:flex;flex-wrap:wrap;gap:7px 16px;align-items:center;margin:2px 2px 12px;
-  font-family:var(--mono);font-size:12px;color:var(--ink-2)}
-.cg-leg{display:inline-flex;align-items:center;gap:7px}
-.cg-leg b{color:var(--ink);font-weight:600}
+/* destination colour swatch — the hold's colour key, carried by the load-order rows */
 .cg-sw{width:12px;height:12px;border-radius:2px;border:1px solid rgba(0,0,0,.4);flex:none}
-.cg-sw-free{background:transparent;border:1px dashed rgba(var(--line-rgb),.4)}
+.ls-sw{display:inline-flex;gap:3px;flex:none}
 /* select control — used by the ship-grids page (/grids.html) toolbar */
 .tc-sel{font-size:12px;padding:5px 9px;border-radius:3px;cursor:pointer;
   min-width:130px;max-width:340px}
 .tc-sel:hover:not(:disabled){border-color:var(--cyan)}
 .tc-sel:disabled{opacity:.5;cursor:default}
-/* elevator staging + load-order sequence */
-.elev-lbl{font-size:11px;letter-spacing:.16em;color:var(--ink-2);margin:10px 2px 4px}
-.elev-lbl .sub,.ls-lbl .sub{text-transform:none;letter-spacing:0}
+/* load-order sequence (doubles as the destination colour key) */
+.ls-lbl .sub{text-transform:none;letter-spacing:0}
 .ls-alone{font-family:var(--mono);font-size:10px;font-weight:600;color:#ffb43c;
   letter-spacing:.02em;white-space:nowrap}
 .loadseq{margin:12px 2px 14px;font-family:var(--mono);font-size:12px}
