@@ -5,11 +5,14 @@ loading/unloading/route views, grouped to help load and unload cargo.
 
 from __future__ import annotations
 
+import subprocess
 import time
 from collections import defaultdict
 from dataclasses import asdict
+from functools import lru_cache
 
 from . import patterns
+from .config import BASE_DIR
 from .archive import build_session_trades, build_session_travels
 from .reference import commodity_names, commodity_types, load_commodities, station_names
 from .model import Leg, Mission
@@ -22,6 +25,22 @@ from .shipcargo import (
 from .tradeflags import lost_trade_ids
 from .state import State
 from .stations import get_station_names, learn_station_names
+
+
+@lru_cache(maxsize=1)
+def _app_version() -> str | None:
+    """Short git commit hash of the running code, shown as the app version in the
+    footer. Cached for the process lifetime — fine because the tracker is restarted
+    on each game launch (sc-run.sh re-execs after self-updating), so it can't go
+    stale within a session. None when BASE_DIR isn't a git checkout or git is absent."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", BASE_DIR, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None if out.returncode == 0 else None
 
 
 # Shown for a leg whose only location signal is the acceptance-host zone (see
@@ -316,6 +335,7 @@ def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None 
             "ship_cargo_version": cargo_db.get("game_version"),
             "game_version": state.game_version,
             "game_build": state.game_build,
+            "app_version": _app_version(),
             "in_seat": state.in_seat,
             "session_started_at": state.session_started_at,
             "logged_in": state.logged_in,

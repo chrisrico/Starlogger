@@ -1835,14 +1835,16 @@ async function refresh() {
     renderAll(curData());                  // render every tab from the live snapshot
     if (TAB === "archive") loadSessions();  // keep archive fresh while viewing
     const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
-    const sess = d.logged_in ? ("session since " + (d.session_started_at || "?")) : "at main menu (logged out)";
+    // App build: the short git hash of the running code (logged-in state already
+    // lives in the header status pill, so the footer shows the version instead).
+    const build = "build " + esc(d.app_version || "?");
     // RSI's patch-notes page is what the launcher links to pre-update (then hides) —
     // make the parsed game version a link back to it. Index URL always lists the
     // current LIVE build first, so it needs no per-patch upkeep.
     const ver = d.game_version
       ? ` · game <a class="pn-link" href="https://robertsspaceindustries.com/en/patch-notes" target="_blank" rel="noopener">${esc(d.game_version)} ↗</a>`
       : "";
-    $("foot").innerHTML = `synced ${esc(new Date().toLocaleTimeString())} · ${esc(sess)}${ver} · ${esc(last)} · cargo db @ ${esc(d.ship_cargo_version || "?")}`;
+    $("foot").innerHTML = `synced ${esc(new Date().toLocaleTimeString())} · ${build}${ver} · ${esc(last)} · cargo db @ ${esc(d.ship_cargo_version || "?")}`;
   } catch (e) {
     const secs = Math.round((Date.now() - _lastOkTs) / 1000);
     $("foot").textContent = `waiting for tracker… (${e}) · ${secs}s`;
