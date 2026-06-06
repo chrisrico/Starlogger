@@ -23,9 +23,12 @@ curl -fsSL https://raw.githubusercontent.com/chrisrico/starlogger/main/install.s
 ```
 
 Then just launch Star Citizen as usual: the tracker rides along with the game and
-**updates itself on every launch**. Nothing else to do.
+**checks for updates on every launch**. Nothing else to do.
 
-- **Updating** is automatic. To pin a version, set `STARLOGGER_NO_UPDATE=1`.
+- **Updating**: when a new version is available, launching pops up a dialog
+  (Update / View changes / Skip). "View changes" opens the GitHub diff between your
+  installed and the latest commit. Set `STARLOGGER_AUTO_UPDATE=1` to apply updates
+  silently without the prompt, or `STARLOGGER_NO_UPDATE=1` to pin and never check.
 - To install elsewhere, set `STARLOGGER_DATA_DIR` before running the command.
 - If the [LUG Helper](https://github.com/starcitizen-lug/lug-helper) ever reverts the
   `.desktop` launcher, **re-run the install command** — it re-asserts the launcher
@@ -76,7 +79,8 @@ game. The LIVE `Game.log` is auto-detected (Windows:
 ## Run it with the game
 
 **Linux:** the [installer](#install-linux) wires this up — your Star Citizen
-`.desktop` runs `lib/sc-run.sh`, which self-updates, backgrounds the dashboard, and
+`.desktop` runs `lib/sc-run.sh`, which checks for updates (prompting unless
+`STARLOGGER_AUTO_UPDATE`/`STARLOGGER_NO_UPDATE` is set), backgrounds the dashboard, and
 then `exec`s LUG's `sc-launch.sh`. The tracker is tied to the game's lifetime via
 `run-tracker.sh`'s `setpriv --pdeathsig`, so the kernel stops it whenever the game
 launcher exits — even on SIGKILL — with no `kill` line to get wrong. It skips if
@@ -143,7 +147,7 @@ Two common gaps:
 ```
 install.sh        Linux: one-shot installer (clone + venv + patch .desktop)
 tracker.py        CLI entry point
-lib/sc-run.sh     Linux: game launcher — self-updates, starts tracker, execs sc-launch.sh
+lib/sc-run.sh     Linux: game launcher — prompts to update, starts tracker, execs sc-launch.sh
 run-tracker.sh    Linux: start the tracker for a play session (sc-launch hook)
 run-tracker.bat   Windows: start the tracker for a play session
 starlogger/       package:

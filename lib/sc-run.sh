@@ -30,24 +30,93 @@ tracker_dir="$HOME/.local/share/starlogger"
 tracker="$tracker_dir/run-tracker.sh"
 
 ############################################################################
-# Self-update: pull the latest tracker, then re-exec the fresh copy. This script
-# lives inside $tracker_dir, so `git reset` rewrites it underneath the running shell;
-# we re-exec the updated canonical copy exactly once ($_SCRUN_REEXEC guards the loop)
-# so the new code runs cleanly instead of from a half-rewritten file. Best-effort and
-# silent: skipped when pinned ($STARLOGGER_NO_UPDATE), offline, or not a clone -- a
-# failed update never costs a launch. `reset --hard` is safe for user data
-# (sessions/overrides/etc. are gitignored and untracked).
+# Shared helpers (notify + update prompt), defined up here so the self-update
+# block that runs next can use them.
 ############################################################################
-if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ -z "${_SCRUN_REEXEC:-}" ] \
-    && [ -d "$tracker_dir/.git" ] && command -v git >/dev/null 2>&1; then
-    if git -C "$tracker_dir" fetch --quiet --depth 1 origin main \
-        && git -C "$tracker_dir" reset --hard --quiet origin/main; then
-        [ -x "$tracker_dir/.venv/bin/python" ] \
-            && "$tracker_dir/.venv/bin/pip" install -q --disable-pip-version-check -r "$tracker_dir/requirements.txt" 2>/dev/null
-        export _SCRUN_REEXEC=1
-        exec "$tracker_dir/lib/sc-run.sh" "$@"
+# Desktop notification, guarded so a missing notify-send never breaks launch.
+notify() {  # $1 = app   $2 = urgency (normal|critical)   $3 = summary
+    command -v notify-send >/dev/null 2>&1 \
+        && notify-send --app-name="$1" --urgency="$2" "$3"
+}
+
+# Ask whether to apply an available update. Echoes update|view|skip; returns
+# nonzero when no GUI dialog tool exists. Launched from the .desktop there's no
+# TTY, so a graphical prompt is the only way to ask -- kdialog on KDE, else zenity.
+ask_update() {  # $1 = dialog text
+    local text="$1" resp rc
+    if command -v kdialog >/dev/null 2>&1 && [[ "${XDG_CURRENT_DESKTOP:-}" == *KDE* ]]; then
+        kdialog --title "Starlogger update" \
+            --yes-label "Update" --no-label "Skip" --cancel-label "View changes" \
+            --warningyesnocancel "$text"
+        case $? in 0) echo update ;; 2) echo view ;; *) echo skip ;; esac
+    elif command -v zenity >/dev/null 2>&1; then
+        resp=$(zenity --question --title "Starlogger update" --text "$text" \
+            --ok-label "Update" --cancel-label "Skip" --extra-button "View changes" 2>/dev/null)
+        rc=$?
+        if [ "$resp" = "View changes" ]; then echo view
+        elif [ "$rc" -eq 0 ]; then echo update
+        else echo skip
+        fi
+    elif command -v kdialog >/dev/null 2>&1; then   # kdialog outside KDE
+        kdialog --title "Starlogger update" \
+            --yes-label "Update" --no-label "Skip" --cancel-label "View changes" \
+            --warningyesnocancel "$text"
+        case $? in 0) echo update ;; 2) echo view ;; *) echo skip ;; esac
+    else
+        return 1
     fi
-    # fetch/reset failed (offline, etc.) -> fall through and run the current copy.
+}
+
+############################################################################
+# Self-update. Fetch the latest tracker; if it differs from the installed copy,
+# prompt the user (Update / View changes on GitHub / Skip) -- unless
+# $STARLOGGER_AUTO_UPDATE is set, which applies it unprompted (the old silent
+# behavior). Applying does `git reset --hard` (safe for user data: sessions/
+# overrides/etc. are gitignored and untracked) then re-execs the fresh copy
+# exactly once ($_SCRUN_REEXEC guards the loop), because git rewrites this very
+# file under the running shell. Skipped entirely when pinned
+# ($STARLOGGER_NO_UPDATE), offline, or not a clone -- a failed or declined
+# update never costs a launch. With no GUI dialog available and no auto-update,
+# we just notify that an update exists.
+############################################################################
+apply_update() {  # re-exec into the freshly reset copy; never returns on success
+    git -C "$tracker_dir" reset --hard --quiet FETCH_HEAD || return 1
+    [ -x "$tracker_dir/.venv/bin/python" ] \
+        && "$tracker_dir/.venv/bin/pip" install -q --disable-pip-version-check -r "$tracker_dir/requirements.txt" 2>/dev/null
+    export _SCRUN_REEXEC=1
+    exec "$tracker_dir/lib/sc-run.sh" "$@"
+}
+
+if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ -z "${_SCRUN_REEXEC:-}" ] \
+    && [ -d "$tracker_dir/.git" ] && command -v git >/dev/null 2>&1 \
+    && git -C "$tracker_dir" fetch --quiet --depth 1 origin main; then
+    have="$(git -C "$tracker_dir" rev-parse --short HEAD 2>/dev/null)"
+    want="$(git -C "$tracker_dir" rev-parse --short FETCH_HEAD 2>/dev/null)"
+    if [ -n "$want" ] && [ "$have" != "$want" ]; then
+        if [ -n "${STARLOGGER_AUTO_UPDATE:-}" ]; then
+            apply_update "$@"
+        else
+            compare="${tracker_repo%.git}/compare/$have...$want"
+            text="A new version of the Starlogger tracker is available.
+
+Installed: $have
+Latest:    $want
+
+Update before launching Star Citizen?"
+            # Loop so "View changes" opens the diff and re-asks; any other
+            # choice (or no GUI dialog) breaks out with $choice set.
+            while choice="$(ask_update "$text")"; do
+                [ "$choice" = view ] || break
+                xdg-open "$compare" >/dev/null 2>&1 &
+            done
+            case "${choice:-}" in
+                update) apply_update "$@" ;;
+                skip)   : ;;   # declined -> run the current copy
+                *)      notify Starlogger normal "Starlogger update available ($want) — re-run install.sh" ;;
+            esac
+        fi
+    fi
+    # fetch failed (offline) -> if-condition false, skip update, launch current copy.
 fi
 
 ############################################################################
@@ -56,11 +125,6 @@ fi
 # A desktop notification fires only on an actual update or a fetch failure (the
 # up-to-date case stays quiet); on failure we keep whatever's already there.
 ############################################################################
-# Desktop notification, guarded so a missing notify-send never breaks launch.
-notify() {  # $1 = app   $2 = urgency (normal|critical)   $3 = summary
-    command -v notify-send >/dev/null 2>&1 \
-        && notify-send --app-name="$1" --urgency="$2" "$3"
-}
 update_starstrings() {
     local url='https://raw.githubusercontent.com/MrKraken/StarStrings/refs/heads/master/Data/Localization/english/global.ini'
     local dest_dir="$user_cfg_dir/Data/Localization/english"
