@@ -433,17 +433,35 @@
     let out = "";
     // Label cells biggest-first and DROP any tag that would collide with one already
     // placed — keeps dense layouts (Caterpillar, Ironclad) legible instead of a pile of
-    // overlapping labels. Projected-pixel proximity test (tag ≈ 14px tall).
+    // overlapping labels. The test is an AABB over each tag's ESTIMATED rendered size
+    // (10px mono ≈ 6px/char + padding, capped at the max-width), so a long name that
+    // overhangs a near neighbour is caught where the old fixed 48px gap missed it.
     const placed = [];
+    const tagW = (name) => Math.min(116, name.length * 6 + 14);
     const named = cells.filter(c => c.name)
       .sort((a, b) => (b.width * b.length * b.height) - (a.width * a.length * a.height));
+    // Drop a redundant trailing word shared by every bay name (usually the ship name —
+    // "Cargo Left Hermes" / "Cargo Right Hermes" → "Cargo Left" / "Cargo Right"), so the
+    // tags fit without truncation. Left untouched when the names don't share a tail.
+    const labelOf = (() => {
+      const ws = named.map(c => c.name.trim().split(/\s+/));
+      const last = ws[0] && ws[0][ws[0].length - 1];
+      const strip = ws.length > 1 && ws.every(w => w.length > 1 && w[w.length - 1] === last);
+      return (c) => strip ? c.name.trim().split(/\s+/).slice(0, -1).join(" ") : c.name;
+    })();
+    // On a dense hold the tiny secure/EVA sub-grids (e.g. Ironclad's 2×2 cells) are
+    // smaller than their own labels, so they just clutter — skip naming them and let the
+    // big cargo bays carry the labels. Sparse holds (≤4 named cells) keep every tag.
+    const minArea = named.length > 4 ? 9 : 0;
     for (const c of named) {
+      if (c.width * c.length < minArea) continue;
       let cw = c.x - box.minX + c.width / 2, cd = c.z - box.minZ + c.length / 2;
       if (flip) { cw = box.w - cw; cd = box.l - cd; }
       const [sx, sy] = project(cw * S, cd * S, ((c.y || 0) + c.height) * S);
-      if (placed.some(p => Math.abs(p[0] - sx) < 48 && Math.abs(p[1] - sy) < 14)) continue;
-      placed.push([sx, sy]);
-      out += `<div class="cg-baytag" style="left:${(m.left + sx).toFixed(1)}px;top:${(m.top + sy).toFixed(1)}px">${esc(c.name)}</div>`;
+      const label = labelOf(c), w = tagW(label);
+      if (placed.some(p => Math.abs(p.x - sx) < (p.w + w) / 2 + 2 && Math.abs(p.y - sy) < 15)) continue;
+      placed.push({ x: sx, y: sy, w });
+      out += `<div class="cg-baytag" style="left:${(m.left + sx).toFixed(1)}px;top:${(m.top + sy).toFixed(1)}px">${esc(label)}</div>`;
     }
     // forward = +z (we map the ship's +Y nose axis to depth); only meaningful when the
     // layout is the real ship geometry, not the synthesised row-tiling. The marker rides

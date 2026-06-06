@@ -658,7 +658,10 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 @media (max-width:560px){.editor{grid-template-columns:1fr}.ef.wide,.ef.btns{grid-column:1}}
 
 /* ---- cargo grid (isometric 3D, 1 grid line = 1 SCU) ---- */
-.cg-wrap{display:flex;flex-wrap:wrap;gap:30px;align-items:flex-end;padding:14px 2px 6px}
+/* wide single-bay holds (e.g. Ironclad ≈ 828px) scroll within the panel instead of
+   overflowing it; multi-bay holds that fit still wrap onto the next row */
+.cg-wrap{display:flex;flex-wrap:wrap;gap:30px;align-items:flex-end;justify-content:safe center;
+  padding:14px 2px 6px;overflow-x:auto}
 .cg-bay{display:flex;flex-direction:column;gap:10px;align-items:center}
 .cg-scene{position:relative}
 .cg-stage{position:absolute;transform-style:preserve-3d;transform-origin:0 0}
