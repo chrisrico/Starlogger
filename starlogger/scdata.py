@@ -545,10 +545,70 @@ def _synth_layout(grid_classes: list, grid_index: dict) -> list:
 # --------------------------------------------------------------------------- #
 # Naming
 # --------------------------------------------------------------------------- #
-def display_name(cls: str, loc: dict) -> tuple[str, str]:
+# Entity-record fields that hold the vehicle's localised-name pointer (a ``@vehicle_Name*``
+# ref), in priority order. The record is the authoritative class->loc-key mapping: it
+# names the exact key even when its word order differs from the class id, so we read it
+# rather than reconstructing the key. We take the full-name refs (not ``ShortName``) to
+# keep the manufacturer-prefixed form the comms channel emits.
+_NAME_REF_KEYS = ("vehicleName", "Name", "displayName")
+
+
+def _record_vehicle_name(rec_path: str | None, loc: dict) -> str:
+    """Localised full vehicle name from the entity record's own ``@vehicle_Name*`` pointer
+    (e.g. ``"vehicleName": "@vehicle_NameCRUS_C1_Spirit"`` on class ``CRUS_Spirit_C1``), or
+    "" when the record has no usable pointer. This is the game's own mapping, so it beats
+    deriving the key from the class id."""
+    if not rec_path:
+        return ""
+    try:
+        rv = json.load(open(rec_path))["_RecordValue_"]
+    except (OSError, ValueError, KeyError):
+        return ""
+    found: dict = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if (k in _NAME_REF_KEYS and isinstance(v, str)
+                        and v.lower().startswith("@vehicle_name")):
+                    found.setdefault(k, v)
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(rv)
+    for k in _NAME_REF_KEYS:
+        txt = _loc_text(found[k], loc).strip() if k in found else ""
+        if txt:
+            return txt
+    return ""
+
+
+def _vehicle_name(cls: str, loc: dict, rec_path: str | None = None) -> str:
+    """Localised full vehicle name for a class ("Crusader C1 Spirit"), or "" when none.
+    Tries, in order: the entity record's own ``@vehicle_Name*`` pointer (authoritative);
+    the direct ``vehicle_name<cls>`` key; and -- because the game keys names by an internal
+    name whose word order can differ from the class id (class ``CRUS_Spirit_C1`` vs key
+    ``vehicle_NameCRUS_C1_Spirit``) -- an unambiguous token-set match against the
+    ``vehicle_name*`` keys (``_short`` variants excluded: we want the full, manufacturer-
+    prefixed form the comms channel emits). Otherwise the caller's code-split fallback wins."""
+    full = _record_vehicle_name(rec_path, loc)
+    if full:
+        return full
+    full = loc.get(f"vehicle_name{cls}".lower(), "").strip()
+    if full:
+        return full
+    want = frozenset(cls.lower().split("_"))
+    matches = {v.strip() for k, v in loc.items()
+               if k.startswith("vehicle_name") and not k.endswith("_short") and v.strip()
+               and frozenset(k[len("vehicle_name"):].split("_")) == want}
+    return matches.pop() if len(matches) == 1 else ""
+
+
+def display_name(cls: str, loc: dict, rec_path: str | None = None) -> tuple[str, str]:
     """Return (bare model name, full localised name) for a ship class. Falls back to
     a code-split of the class name when localisation has no entry."""
-    full = loc.get(f"vehicle_name{cls}".lower(), "").strip()
+    full = _vehicle_name(cls, loc, rec_path)
     if not full:
         parts = cls.split("_")
         return (" ".join(parts[1:]) or cls, cls)
@@ -556,10 +616,10 @@ def display_name(cls: str, loc: dict) -> tuple[str, str]:
     return (rest if rest and head.lower() in _MFR_PREFIXES else full, full)
 
 
-def manufacturer(cls: str, loc: dict) -> tuple[str, str]:
+def manufacturer(cls: str, loc: dict, rec_path: str | None = None) -> tuple[str, str]:
     """Return (short, full) manufacturer names. Short is the prefix word the game uses
     in vehicle names ("Drake"); full is the localised company name."""
-    full_name = loc.get(f"vehicle_name{cls}".lower(), "").strip()
+    full_name = _vehicle_name(cls, loc, rec_path)
     head = full_name.split(" ", 1)[0] if full_name else ""
     short = head if head.lower() in _MFR_PREFIXES else cls.split("_", 1)[0]
     code = cls.split("_", 1)[0]
@@ -1186,8 +1246,8 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
             # GEO don't).
             if scu <= 0 and not mining:
                 continue
-            name, name_full = display_name(cls, loc)
-            mfr_short, mfr_full = manufacturer(cls, loc)
+            name, name_full = display_name(cls, loc, rec_path)
+            mfr_short, mfr_full = manufacturer(cls, loc, rec_path)
             entry = {
                 "class": cls,
                 "scu": scu,

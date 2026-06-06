@@ -49,12 +49,17 @@ def test_board_other_players_ship(monkeypatch):
     assert st.boarded_owner == "caged-danimal"
 
 
-@pytest.mark.xfail(reason="cargo DB extraction names the Crusader Spirit 'Spirit C1'; the "
-                          "official (and comms-channel) name is 'C1 Spirit'. Pending a DB "
-                          "name fix by a separate agent — resolve_ship_name will then match "
-                          "exactly. Uses the real ships_cargo.json on purpose.",
-                   strict=False)
-def test_boarding_spirit_uses_official_name():
+def test_boarding_spirit_uses_official_name(monkeypatch):
+    # The committed master ships_cargo.json must carry the Crusader Spirit under its
+    # official (and comms-channel) name "C1 Spirit", so resolve_ship_name matches it
+    # exactly. Validates the repo master itself (not the machine's local data dir) by
+    # feeding its real ship-name set. See scdata._vehicle_name for the resolution.
+    import json
+    from starlogger import config
+    master = json.load(open(os.path.join(config.BASE_DIR, "ships_cargo.json")))
+    names = set(master.get("ships", {}))
+    assert "C1 Spirit" in names, "master DB no longer names the Spirit 'C1 Spirit'"
+    monkeypatch.setattr(shipcargo, "known_ship_names", lambda db=None: names)
     st = State()
     st.player = "WonkoTheSane1"
     st.feed(_chan("joined channel", "Crusader C1 Spirit", "caged-danimal"))
@@ -114,5 +119,4 @@ def test_reset_clears_boarded(monkeypatch):
 
 
 if __name__ == "__main__":
-    import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

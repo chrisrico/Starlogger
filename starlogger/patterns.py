@@ -475,9 +475,9 @@ def resolve_ship_name(name: str) -> str | None:
     Spirit") to its cargo-DB display name — or None when it isn't a ship channel at all
     (party / global / mission comms have no manufacturer prefix). Used to detect a ship
     boarded as crew. More forgiving than `canonical_ship_name`: after stripping the
-    manufacturer it also matches the model word-order-insensitively, so the channel's
-    marketing name ("C1 Spirit") still resolves to the DB's ("Spirit C1"). Falls back to
-    the stripped model for a real (manufacturer-prefixed) ship the DB doesn't carry."""
+    manufacturer it also matches the model word-order-insensitively, so a channel name
+    whose word order differs from the DB's still resolves. Falls back to the stripped
+    model for a real (manufacturer-prefixed) ship the DB doesn't carry."""
     from . import shipcargo  # lazy: shipcargo imports this module
     name = (name or "").strip()
     known = shipcargo.known_ship_names()
