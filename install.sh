@@ -54,7 +54,7 @@ fi
 # --- venv + deps -----------------------------------------------------------
 [ -x "$dir/.venv/bin/python" ] || python3 -m venv "$dir/.venv" \
     || die "could not create venv"
-"$dir/.venv/bin/pip" install -q --upgrade -r "$dir/requirements.txt" \
+"$dir/.venv/bin/pip" install -q --disable-pip-version-check --upgrade -r "$dir/requirements.txt" \
     || die "dependency install failed"
 
 # --- patch the .desktop launcher ------------------------------------------

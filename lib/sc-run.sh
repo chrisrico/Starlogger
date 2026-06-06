@@ -43,7 +43,7 @@ if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ -z "${_SCRUN_REEXEC:-}" ] \
     if git -C "$tracker_dir" fetch --quiet --depth 1 origin main \
         && git -C "$tracker_dir" reset --hard --quiet origin/main; then
         [ -x "$tracker_dir/.venv/bin/python" ] \
-            && "$tracker_dir/.venv/bin/pip" install -q -r "$tracker_dir/requirements.txt" 2>/dev/null
+            && "$tracker_dir/.venv/bin/pip" install -q --disable-pip-version-check -r "$tracker_dir/requirements.txt" 2>/dev/null
         export _SCRUN_REEXEC=1
         exec "$tracker_dir/lib/sc-run.sh" "$@"
     fi
