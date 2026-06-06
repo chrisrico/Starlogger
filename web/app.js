@@ -22,6 +22,7 @@ function setHTML(id, html) {
 
 let TAB = "contracts";   // Contracts is the first/default tab
 let LAST = null;      // latest snapshot
+let _lastRenderSig = null;  // serialized snapshot last rendered by the poll (skip identical re-renders)
 let EDIT = null;      // mission_id whose editor is open (Contracts tab)
 let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
 let SESSIONS = null;  // archived sessions
@@ -1803,7 +1804,15 @@ async function refresh() {
     _lastOkTs = Date.now();
     if (_dcTimer) clearDisconnect();   // back online -> drop the countdown
     LAST = d;
-    renderAll(curData());                  // render every tab from the live snapshot
+    // Skip the whole render pass when the snapshot is byte-identical to the last one
+    // the poll rendered: setHTML already no-ops the DOM, this also skips building the
+    // HTML strings + cargo packing each 3s tick. User interactions call renderAll()
+    // directly (unguarded), so an open editor/drag still repaints immediately.
+    const sig = JSON.stringify(d);
+    if (sig !== _lastRenderSig) {
+      _lastRenderSig = sig;
+      renderAll(curData());                  // render every tab from the live snapshot
+    }
     if (TAB === "archive") loadSessions();  // keep archive fresh while viewing
     const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
     // App build: the short git hash of the running code (logged-in state already

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+from collections import deque
 
 from . import patterns
 from .model import Leg, Mission, Trade
@@ -62,8 +63,8 @@ class State:
         # now-stale station/override rows. Set by the entry point.
         self.current_epoch: int | None = None
         self.on_epoch_change = None
-        # missions that ended recently and still await an award line
-        self._pending_award: list[str] = []
+        # missions that ended recently and still await an award line (FIFO)
+        self._pending_award: deque[str] = deque()
 
     # -- helpers --------------------------------------------------------- #
     def _m(self, mid: str) -> Mission:
@@ -418,7 +419,7 @@ class State:
             amt = int(m.group("amt"))
             self.total_awarded += amt
             if self._pending_award:
-                tgt = self.missions.get(self._pending_award.pop(0))
+                tgt = self.missions.get(self._pending_award.popleft())
                 if tgt:
                     tgt.reward = (tgt.reward or 0) + amt
 
