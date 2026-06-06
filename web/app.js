@@ -623,8 +623,8 @@ function bodyLabel(s) {
   return sys + esc(s.body) + moon;
 }
 
-function planView(plan) {
-  if (!plan || !plan.stops || !plan.stops.length) return "";
+function planView(plan, runByDest) {
+  runByDest = runByDest || {};
   const load = plan.load || {};
   const loadItems = (load.items || [])
     .map(it => `<span class="chip">${esc(it.cargo)}${it.qty ? " " + num(it.qty) : ""}</span>`).join("");
@@ -645,60 +645,48 @@ function planView(plan) {
       `<div class="row">${legCheck(it.mission_id, it.oid, false)}<div class="rowmain">
          <span class="cargo">${cargoCell(it.cargo, it.mission_id, it.oid)}</span></div>
          <div class="qty">${qtyCell(it.qty, it.mission_id, it.oid)}</div></div>`).join("");
-    return header + `<div class="card plan-stop"><h3><span>${stationCell(s.station, s.zone)}</span>
-        <span class="scu">${num(s.scu)} SCU</span></h3>${rows}</div>`;
+    // origin(s) + mission count for this destination, rolled up from the route runs
+    const run = runByDest[s.station] || { origins: [], missions: 0, partial: false };
+    const from = run.origins.length
+      ? `<div class="row"><div class="sub">from ${run.origins.map(esc).join(", ")}${run.missions ? " · " + run.missions + " mission(s)" : ""}</div></div>` : "";
+    // drag handle only, so clicking the station/cargo cells to edit never starts a drag
+    return header + `<div class="card plan-stop route" data-dest="${esc(s.station)}"
+        ondragover="routeDragOver(event)" ondragleave="routeDragLeave(event)"
+        ondrop="routeDrop(event)" ondragend="routeDragEnd(event)"><h3>
+        <span class="ends"><button type="button" class="route-grip" draggable="true"
+          title="Drag, or focus and use ↑/↓, to reorder this stop" aria-label="Reorder this stop — use arrow up or down"
+          ondragstart="routeDragStart(event)" onkeydown="routeGripKey(event)">⠿</button>${stationCell(s.station, s.zone)}${run.partial ? ' <span class="warn">⚠</span>' : ""}</span>
+        <span class="scu">${SCU(s.scu, run.partial)}</span></h3>${rows}${from}</div>`;
   }).join("");
 
+  const reset = ROUTE_ORDER
+    ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
   return `<div class="planwrap">
-    <div class="archbar"><span class="arch-title">Trip Plan · ${plan.stops.length} stop(s) · ${n || plan.stops.length} jump(s)</span>
-      <span class="sub">load at origin, then fewest-jump delivery order</span></div>
+    <div class="archbar"><span class="arch-title">Route Plan · ${plan.stops.length} stop(s) · ${n || plan.stops.length} jump(s)</span>
+      <span class="sub">drag a stop to set your visit &amp; load order</span>${reset}</div>
     ${loadCard}
-    <div class="plan-stops">${stopCards}</div>
+    <div class="plan-stops" id="routegrid">${stopCards}</div>
   </div>`;
 }
 
 function routeCards(routes, d) {
-  // Apply the user's manual drag order (if any) to both the trip plan and the rollup
-  // so every view — and the load order — agrees.
+  // Apply the user's manual drag order so the itinerary, the load order and the
+  // manifest packing all agree on the visit sequence.
   const planSorted = (d.plan && d.plan.stops)
     ? { ...d.plan, stops: byRouteOrder(d.plan.stops, s => s.station) } : d.plan;
-  const plan = planView(planSorted);
-  if (!routes.length) return plan || standby("No Routes Plotted",
-    "Active contracts are bundled into <b>origin → destination</b> runs. Plot a haul to chart your routes.",
-    "no active legs");
-  const ordered = byRouteOrder(routes, r => r.destination);
-  const reset = ROUTE_ORDER
-    ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
-  const cards = ordered.map(r => {
-    // each cargo chip ticks off all its legs on this route at once; a single-leg chip
-    // is also inline-editable (commodity + qty), matching the other screens.
-    const cargo = r.cargo.map(c => {
-      const legs = (c.legs || []).map(l => ({ mission_id: l.mission_id, oid: l.oid }));
-      const one = legs.length === 1 ? legs[0] : null;
-      const tick = legs.length
-        ? `<button class="chiptick" title="Mark this cargo delivered on this route"
-            onclick='markDelivered(${JSON.stringify(legs)}, true)'>✓</button>` : "";
-      const cName = one ? cargoCell(c.cargo, one.mission_id, one.oid) : esc(c.cargo);
-      const cQty = c.qty ? " " + num(c.qty) : (one ? " " + qtyCell(null, one.mission_id, one.oid) : "");
-      return `<span class="chip">${cName}${cQty}${tick}</span>`;
-    }).join("");
-    // drag handle only (so clicking the station/cargo cells to edit never starts a drag);
-    // the card is the drop target.
-    return `<div class="card route" data-dest="${esc(r.destination)}"
-        ondragover="routeDragOver(event)" ondragleave="routeDragLeave(event)"
-        ondrop="routeDrop(event)" ondragend="routeDragEnd(event)"><h3>
-        <span class="ends"><button type="button" class="route-grip" draggable="true"
-          title="Drag, or focus and use ↑/↓, to reorder the run" aria-label="Reorder this run — use arrow up or down"
-          ondragstart="routeDragStart(event)" onkeydown="routeGripKey(event)">⠿</button>${stationCell(r.origin, r.origin_zone)}<span class="arrow">→</span>${stationCell(r.destination, r.dest_zone)}${r.has_partial ? ' <span class="warn">⚠</span>' : ""}</span>
-        <span class="scu">${SCU(r.total_scu, r.has_partial)}</span></h3>
-      <div class="row"><div>${cargo}</div></div>
-      <div class="row"><div class="sub">${r.mission_count} mission(s)</div></div>
-      </div>`;
-  }).join("");
-  return plan + partialNote(d)
-    + `<div class="route-rollup"><div class="archbar"><span class="arch-title">Route Rollup</span>`
-    + `<span class="sub">drag runs to set your visit &amp; load order</span>${reset}</div>`
-    + `<div class="grid" id="routegrid">${cards}</div></div>`;
+  if (!planSorted || !planSorted.stops || !planSorted.stops.length)
+    return standby("No Routes Plotted",
+      "Active contracts are bundled into <b>origin → destination</b> runs, then ordered into a fewest-jump itinerary. Plot a haul to chart your route.",
+      "no active legs");
+  // roll the runs up by destination → its origin(s), mission count, and partial flag
+  const runByDest = {};
+  (routes || []).forEach(r => {
+    const e = runByDest[r.destination] || (runByDest[r.destination] = { origins: [], missions: 0, partial: false });
+    if (r.origin && !e.origins.includes(r.origin)) e.origins.push(r.origin);
+    e.missions += r.mission_count || 0;
+    e.partial = e.partial || r.has_partial;
+  });
+  return planView(planSorted, runByDest) + partialNote(d);
 }
 
 // ---- drag-reorder of the route runs (sets the manual delivery/load order) ---- //
