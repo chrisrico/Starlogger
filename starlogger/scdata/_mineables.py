@@ -179,7 +179,7 @@ def build_mineables_from_p4k(p4k: str, sb: str | None = None,
                              progress=lambda m: None) -> list:
     """Full-extract orchestrator: extract the DataCore + localisation from the local
     install and build the mineable-rock list. Heavy (a full ``dcb extract``), so gated on
-    a major game-version bump like ship cargo -- see ``shipcargo.refresh_loop``."""
+    a major game-version bump like ship cargo -- see ``catalogs.refresh_loop``."""
     sb = sb or ensure_binary()
     workdir = tempfile.mkdtemp(prefix="starlogger-mineables-")
     try:

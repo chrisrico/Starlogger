@@ -22,7 +22,7 @@ import threading
 import time
 import webbrowser
 
-from starlogger import shipcargo
+from starlogger import catalogs
 from starlogger.archive import (
     ARCHIVE_SCHEMA,
     archive_session,
@@ -286,7 +286,7 @@ def main() -> None:
     # backfill the session archive from logbackups in the background (skips ones
     # already archived) so a fresh data dir self-populates without a manual --rebuild.
     threading.Thread(target=backfill_archive, args=(log_path, stop), daemon=True).start()
-    threading.Thread(target=shipcargo.refresh_loop, args=(state, stop, log_path), daemon=True).start()
+    threading.Thread(target=catalogs.refresh_loop, args=(state, stop, log_path), daemon=True).start()
     threading.Thread(target=cleanup_loop, args=(log_path, epoch_trigger, stop), daemon=True).start()
 
     url = f"http://{args.host}:{args.port}"

@@ -2,7 +2,7 @@
 the boarded ship is detected from its comms-channel join ("You have joined channel
 '<Ship> : <Owner>'", Owner != you) and cleared again when they re-board/pilot their own.
 
-Disk-isolated: shipcargo's cargo-DB lookups are monkeypatched, so no ships.json read.
+Disk-isolated: the ships module's cargo-DB lookups are monkeypatched, so no ships.json read.
 
 Run: python3 -m pytest tests/test_state.py
 """
@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from starlogger import shipcargo
+from starlogger import ships
 from starlogger.state import State
 
 KNOWN = {"Hermes", "Ironclad", "Freelancer MAX"}   # all named as officially marketed
@@ -35,8 +35,8 @@ def _clear_driver(ent):
 
 
 def _st(monkeypatch, player="WonkoTheSane1"):
-    monkeypatch.setattr(shipcargo, "known_ship_names", lambda db=None: set(KNOWN))
-    monkeypatch.setattr(shipcargo, "ship_display_name", lambda ent, db=None: None)  # force mfr-split fallback
+    monkeypatch.setattr(ships, "known_ship_names", lambda db=None: set(KNOWN))
+    monkeypatch.setattr(ships, "ship_display_name", lambda ent, db=None: None)  # force mfr-split fallback
     st = State()
     st.player = player
     return st
@@ -59,7 +59,7 @@ def test_boarding_spirit_uses_official_name(monkeypatch):
     master = json.load(open(os.path.join(config.BASE_DIR, "ships.json")))
     names = set(master.get("ships", {}))
     assert "C1 Spirit" in names, "master DB no longer names the Spirit 'C1 Spirit'"
-    monkeypatch.setattr(shipcargo, "known_ship_names", lambda db=None: names)
+    monkeypatch.setattr(ships, "known_ship_names", lambda db=None: names)
     st = State()
     st.player = "WonkoTheSane1"
     st.feed(_chan("joined channel", "Crusader C1 Spirit", "caged-danimal"))

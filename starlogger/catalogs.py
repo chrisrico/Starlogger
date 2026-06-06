@@ -1,119 +1,22 @@
-"""Local cache of ship cargo grids, read from the game's own ``Data.p4k`` via
-``scdata`` (StarBreaker) instead of scraping a third-party site. It serves the
-per-ship total SCU, the physical grid geometry (deck-positioned sub-grids), and the
-localised name / manufacturer / role. Refreshed only when the game's major version
-changes (cargo layouts change with patches, not sessions).
+"""Background refresh of every ``Data.p4k``-derived catalog (ship cargo, commodity /
+station reference, mineables, blueprints, contracts) behind one version-gated loop.
 
-The on-disk file is keyed by display name (so ``/api/ships`` and the front-end stay
-unchanged); each entry also carries its ``class`` (the DataCore entity class, e.g.
-``MISC_Freelancer``) so the log's vehicle entity can be looked up directly."""
+The heavy StarBreaker extraction lives in ``scdata``; each catalog owns its own
+save/load module (``ships``, ``reference``, ``mineables``, ``blueprints``,
+``contracts``). This module is the catalog-agnostic engine that decides *when* to
+rebuild (only on a MAJOR game-version move, or if a cache is missing), locates the
+p4k once per pass, and isolates each rebuild from the others' failures."""
 
 from __future__ import annotations
 
 import threading
-import time
 from dataclasses import dataclass
 from typing import Callable
 
 from .config import SHIP_CARGO_PATH
-from .jsonstore import atomic_write, load_cached
 from .patterns import major_version
 from . import scdata
-
-_cache = {"mtime": None, "data": {"ships": {}, "fetched_at": None, "game_version": None},
-          "by_class": {}, "by_name": {}}
-
-
-def build_ship_cargo(p4k: str, progress=lambda m: None) -> dict:
-    """Extract every cargo ship from the local install and re-key by display name."""
-    by_class = scdata.build_ships(p4k, progress=progress)
-    ships: dict[str, dict] = {}
-    for entry in by_class.values():
-        name = entry["name"]
-        # Display-name collisions (variants) -> keep the larger-capacity ship.
-        if name not in ships or entry["scu"] > ships[name]["scu"]:
-            ships[name] = entry
-    return ships
-
-
-def save_ship_cargo(ships: dict, game_version: str | None = None,
-                    path: str = SHIP_CARGO_PATH) -> None:
-    atomic_write(path, {
-        "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
-        "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "game_version": game_version,
-        "count": len(ships),
-        "ships": ships,
-    })
-
-
-def _reindex(data: dict) -> None:
-    ships = data.get("ships", {})
-    _cache["by_name"] = {name.lower(): e for name, e in ships.items()}
-    _cache["by_class"] = {e["class"].lower(): e for e in ships.values() if e.get("class")}
-
-
-def _parse_ships(data: dict) -> dict:
-    _reindex(data)  # refresh the by-name / by-class lookup tables on each (re)load
-    return data
-
-
-def load_ship_cargo(path: str = SHIP_CARGO_PATH) -> dict:
-    return load_cached(path, _cache, _parse_ships)
-
-
-def _lookup(name: str | None, db: dict | None) -> dict | None:
-    """Resolve a ship by display name (Freelancer) or DataCore class (MISC_Freelancer)."""
-    if not name:
-        return None
-    if db is not None:
-        ships = db.get("ships", {})
-        by_name = {n.lower(): e for n, e in ships.items()}
-        by_class = {e["class"].lower(): e for e in ships.values() if e.get("class")}
-    else:
-        load_ship_cargo()
-        by_name, by_class = _cache["by_name"], _cache["by_class"]
-    key = name.lower()
-    return by_name.get(key) or by_class.get(key)
-
-
-def ship_capacity(name: str | None, db: dict | None = None) -> int | None:
-    hit = _lookup(name, db)
-    return hit["scu"] if hit else None
-
-
-def ship_grid(name: str | None, db: dict | None = None) -> list | None:
-    """The ship's cargo-grid geometry: a list of bays, each ``{x, z, grids:[...]}``."""
-    hit = _lookup(name, db)
-    return hit.get("groups") if hit else None
-
-
-def ship_display_name(entity_class: str | None, db: dict | None = None) -> str | None:
-    """Map a DataCore vehicle entity class (from the log) to its display name."""
-    hit = _lookup(entity_class, db)
-    return hit.get("name") if hit else None
-
-
-def ship_layout(name: str | None, db: dict | None = None) -> str | None:
-    """'deck' if the grid bays are at real ship positions (forward = +z), else 'synth'."""
-    hit = _lookup(name, db)
-    return hit.get("layout") if hit else None
-
-
-def is_mining_ship(name: str | None, internal: str | None = None,
-                   db: dict | None = None) -> bool:
-    """True when the effective ship/vehicle is used for mining, per the cargo DB's
-    explicit ``mining`` flag (or, equivalently, a role mentioning mining — e.g. the
-    MOLE's 'Medium Mining'; salvage roles deliberately don't count). Every mining
-    vehicle, grid-bearing or not, is catalogued with this flag by scdata.build_ships
-    (the Prospector, Golem, Greycat ROC / ROC-DS and ATLS GEO have no cargo grid).
-    Drives the dashboard's mining-vs-hauling tab layout."""
-    hit = _lookup(name, db) or _lookup(internal, db)
-    return bool(hit and (hit.get("mining") or "mining" in (hit.get("role") or "").lower()))
-
-
-def known_ship_names(db: dict | None = None) -> set:
-    return set((db or load_ship_cargo()).get("ships", {}))
+from .ships import build_ship_cargo, load_ship_cargo, save_ship_cargo
 
 
 @dataclass

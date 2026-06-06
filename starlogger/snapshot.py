@@ -19,7 +19,7 @@ from .model import Leg, Mission
 from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
 from .overrides import apply_override, get_overrides
 from .settings import get_settings
-from .shipcargo import (
+from .ships import (
     is_mining_ship, load_ship_cargo, ship_capacity, ship_grid, ship_layout,
 )
 from .tradeflags import lost_trade_ids

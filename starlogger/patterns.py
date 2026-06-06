@@ -438,8 +438,8 @@ def friendly_ship(entity: str) -> str:
     """Display name for a log vehicle entity class (e.g. ``MISC_Freelancer``). Prefers
     the localised name from the cargo database (built from the game files); falls back
     to a manufacturer-code split before that database exists (e.g. first run)."""
-    from . import shipcargo  # lazy: shipcargo imports this module
-    name = shipcargo.ship_display_name(entity)
+    from . import ships  # lazy: ships imports this module
+    name = ships.ship_display_name(entity)
     if name:
         return name
     parts = entity.split("_")
@@ -456,9 +456,9 @@ def canonical_ship_name(name: str) -> str:
     ("Mercury Star Runner", "Freelancer MAX"), so the same ship would be recorded
     twice. Strip a leading manufacturer word (or two, e.g. "Consolidated Outland")
     when the remainder is a known ship; otherwise return the name unchanged."""
-    from . import shipcargo  # lazy: shipcargo imports this module
+    from . import ships  # lazy: ships imports this module
     name = (name or "").strip()
-    known = shipcargo.known_ship_names()
+    known = ships.known_ship_names()
     if name in known:
         return name
     parts = name.split()
@@ -478,9 +478,9 @@ def resolve_ship_name(name: str) -> str | None:
     manufacturer it also matches the model word-order-insensitively, so a channel name
     whose word order differs from the DB's still resolves. Falls back to the stripped
     model for a real (manufacturer-prefixed) ship the DB doesn't carry."""
-    from . import shipcargo  # lazy: shipcargo imports this module
+    from . import ships  # lazy: ships imports this module
     name = (name or "").strip()
-    known = shipcargo.known_ship_names()
+    known = ships.known_ship_names()
     if name in known:
         return name
     parts = name.split()

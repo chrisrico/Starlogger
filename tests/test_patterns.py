@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from starlogger import patterns, reference, shipcargo
+from starlogger import patterns, reference, ships
 
 
 # --------------------------------------------------------------------------- #
@@ -248,14 +248,14 @@ def test_friendly_shop_and_kiosk():
 # --------------------------------------------------------------------------- #
 
 def test_friendly_ship(monkeypatch):
-    monkeypatch.setattr(shipcargo, "ship_display_name", lambda e: "")  # force the fallback path
+    monkeypatch.setattr(ships, "ship_display_name", lambda e: "")  # force the fallback path
     assert patterns.friendly_ship("MISC_Freelancer") == "MISC Freelancer"
-    monkeypatch.setattr(shipcargo, "ship_display_name", lambda e: "Freelancer MAX")
+    monkeypatch.setattr(ships, "ship_display_name", lambda e: "Freelancer MAX")
     assert patterns.friendly_ship("MISC_Freelancer_Max") == "Freelancer MAX"
 
 
 def test_canonical_ship_name(monkeypatch):
-    monkeypatch.setattr(shipcargo, "known_ship_names",
+    monkeypatch.setattr(ships, "known_ship_names",
                         lambda: {"Mercury Star Runner", "Freelancer MAX", "Nomad"})
     assert patterns.canonical_ship_name("Crusader Mercury Star Runner") == "Mercury Star Runner"
     assert patterns.canonical_ship_name("Consolidated Outland Nomad") == "Nomad"  # two-word mfr
@@ -264,7 +264,7 @@ def test_canonical_ship_name(monkeypatch):
 
 
 def test_resolve_ship_name(monkeypatch):
-    monkeypatch.setattr(shipcargo, "known_ship_names", lambda: {"C1 Spirit", "Freelancer MAX"})
+    monkeypatch.setattr(ships, "known_ship_names", lambda: {"C1 Spirit", "Freelancer MAX"})
     assert patterns.resolve_ship_name("Crusader C1 Spirit") == "C1 Spirit"
     # word-order-insensitive: "Spirit C1" resolves back to "C1 Spirit"
     assert patterns.resolve_ship_name("Crusader Spirit C1") == "C1 Spirit"

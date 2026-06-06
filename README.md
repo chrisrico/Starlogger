@@ -152,8 +152,9 @@ run-tracker.sh    Linux: start the tracker for a play session (sc-launch hook)
 run-tracker.bat   Windows: start the tracker for a play session
 starlogger/       package:
                     config · patterns · model · state (log parser) · snapshot ·
-                    planner · overrides · stations · shipcargo · scdata
-                    (Data.p4k extraction) · archive · replay (session replay) ·
+                    planner · overrides · stations · ships · scdata
+                    (Data.p4k extraction) · catalogs (p4k-cache refresh loop) ·
+                    archive · replay (session replay) ·
                     maintenance · tailer · settings · server (Flask)
 web/              dashboard front-end:
                     index.html · styles.css · app.js · cargogrid.js (3-D grid

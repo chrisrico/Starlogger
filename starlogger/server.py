@@ -17,7 +17,7 @@ from .blueprints import blueprint_catalog, lookup_blueprint
 from .contracts import load_contracts
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
-from .shipcargo import load_ship_cargo
+from .ships import load_ship_cargo
 from .tradeflags import set_lost
 from .snapshot import build_snapshot
 from .state import State

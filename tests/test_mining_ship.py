@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from starlogger.shipcargo import is_mining_ship
+from starlogger.ships import is_mining_ship
 
 
 # A minimal cargo DB shaped like ships.json: only the `mining`/`role`/`class`
