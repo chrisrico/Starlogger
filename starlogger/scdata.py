@@ -584,31 +584,10 @@ def _record_vehicle_name(rec_path: str | None, loc: dict) -> str:
     return ""
 
 
-def _vehicle_name(cls: str, loc: dict, rec_path: str | None = None) -> str:
-    """Localised full vehicle name for a class ("Crusader C1 Spirit"), or "" when none.
-    Tries, in order: the entity record's own ``@vehicle_Name*`` pointer (authoritative);
-    the direct ``vehicle_name<cls>`` key; and -- because the game keys names by an internal
-    name whose word order can differ from the class id (class ``CRUS_Spirit_C1`` vs key
-    ``vehicle_NameCRUS_C1_Spirit``) -- an unambiguous token-set match against the
-    ``vehicle_name*`` keys (``_short`` variants excluded: we want the full, manufacturer-
-    prefixed form the comms channel emits). Otherwise the caller's code-split fallback wins."""
-    full = _record_vehicle_name(rec_path, loc)
-    if full:
-        return full
-    full = loc.get(f"vehicle_name{cls}".lower(), "").strip()
-    if full:
-        return full
-    want = frozenset(cls.lower().split("_"))
-    matches = {v.strip() for k, v in loc.items()
-               if k.startswith("vehicle_name") and not k.endswith("_short") and v.strip()
-               and frozenset(k[len("vehicle_name"):].split("_")) == want}
-    return matches.pop() if len(matches) == 1 else ""
-
-
 def display_name(cls: str, loc: dict, rec_path: str | None = None) -> tuple[str, str]:
     """Return (bare model name, full localised name) for a ship class. Falls back to
-    a code-split of the class name when localisation has no entry."""
-    full = _vehicle_name(cls, loc, rec_path)
+    a code-split of the class name when the record carries no usable name pointer."""
+    full = _record_vehicle_name(rec_path, loc)
     if not full:
         parts = cls.split("_")
         return (" ".join(parts[1:]) or cls, cls)
@@ -619,7 +598,7 @@ def display_name(cls: str, loc: dict, rec_path: str | None = None) -> tuple[str,
 def manufacturer(cls: str, loc: dict, rec_path: str | None = None) -> tuple[str, str]:
     """Return (short, full) manufacturer names. Short is the prefix word the game uses
     in vehicle names ("Drake"); full is the localised company name."""
-    full_name = _vehicle_name(cls, loc, rec_path)
+    full_name = _record_vehicle_name(rec_path, loc)
     head = full_name.split(" ", 1)[0] if full_name else ""
     short = head if head.lower() in _MFR_PREFIXES else cls.split("_", 1)[0]
     code = cls.split("_", 1)[0]
