@@ -14,7 +14,7 @@
 //   • packed  — opts.packed (from packCargo) given: a flat floor with discrete
 //               sized cargo boxes placed by the 3D first-fit packer (test mode).
 //
-// A ship grid is the `groups` list from ships_cargo.json: bays, each
+// A ship grid is the `groups` list from ships.json: bays, each
 // `{x, z, grids:[{x,y,z,width,height,length, …}]}`. x = width, z = depth, y =
 // vertical level; a sub-grid's SCU = width × length × height.
 (function (global) {

@@ -2,8 +2,8 @@
 # Guard: never commit p4k-derived (copyrighted) game data.
 #
 # Star Citizen's Data.p4k is copyrighted. Files we extract from it via StarBreaker
-# (ships_cargo.json, reference.json, mineables.json, blueprints.json, and any future
-# derived file) must NEVER be committed -- they're regenerated locally at runtime.
+# (ships.json, reference.json, mineables.json, blueprints.json, contracts.json, and any
+# future derived file) must NEVER be committed -- they're regenerated locally at runtime.
 #
 # This hook is content-based, so it catches NEW derived files no matter what they're
 # named: every extract stamps a "source": "Star Citizen Data.p4k via StarBreaker ..."

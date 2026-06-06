@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from starlogger.shipcargo import is_mining_ship
 
 
-# A minimal cargo DB shaped like ships_cargo.json: only the `mining`/`role`/`class`
+# A minimal cargo DB shaped like ships.json: only the `mining`/`role`/`class`
 # fields the detector reads. Every mining vehicle is catalogued now -- the MOLE carries
 # a cargo grid; the Prospector / ROC / ROC-DS / ATLS GEO don't, but scdata.build_ships
 # still lists them (scu 0, empty grid) with an explicit `mining` flag.

@@ -28,7 +28,7 @@ py -m venv .venv
 ```
 
 The only runtime dependency is Flask. The ship cargo-grid database
-(`ships_cargo.json`) is generated locally from your game install on first run
+(`ships.json`) is generated locally from your game install on first run
 (it is **not** bundled with the repo — see [Ship cargo data](#ship-cargo-data)).
 
 ## Run
@@ -98,7 +98,7 @@ a ship you pick in the **SHIP** box at the top. The all-ships grid reference is 
 
 ## Ship cargo data
 
-`ships_cargo.json` (per-ship SCU, deck-accurate grid geometry, names, manufacturer,
+`ships.json` (per-ship SCU, deck-accurate grid geometry, names, manufacturer,
 role) is read **straight from the game's own `Data.p4k`** — no third-party site —
 via [StarBreaker](https://github.com/diogotr7/StarBreaker), a Rust extractor the
 tracker downloads once (SHA-256-pinned, per-OS) into `STARLOGGER_DATA_DIR/bin`. It
@@ -143,5 +143,6 @@ assets/           social-preview.png · icon.png (repo/brand images)
 
 Generated data lives in `STARLOGGER_DATA_DIR` (default `~/.local/share/starlogger`,
 or `$XDG_DATA_HOME/starlogger`; `%LOCALAPPDATA%\starlogger` on Windows): `overrides.json`,
-`sessions.json`, `settings.json`, `station_names.json`, `ships_cargo.json`, and the
+`sessions.json`, `settings.json`, `station_names.json`, the p4k-derived `ships.json`,
+`reference.json`, `mineables.json`, `blueprints.json`, `contracts.json`, and the
 extractor in `bin/`.

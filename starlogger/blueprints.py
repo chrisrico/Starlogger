@@ -2,7 +2,7 @@
 
 Built from the game's ``Data.p4k`` (via ``scdata.build_blueprints``) on the same full
 DataCore extract / major-version trigger as the mineables catalog -- its own file, like
-ships_cargo.json / mineables.json. Each blueprint records what it crafts and the flat
+ships.json / mineables.json. Each blueprint records what it crafts and the flat
 material list its recipe needs: ``{slot, resource, scu, min_quality}`` per ingredient,
 plus a ``minerals`` shortcut. That feeds the Mining tab's blueprint planner: pick a
 blueprint -> its required minerals -> the rocks (and RS values) that yield them.

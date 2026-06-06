@@ -30,18 +30,22 @@ DATA_DIR = os.environ.get("STARLOGGER_DATA_DIR") or _default_data_dir()
 
 WEB_DIR = os.path.join(BASE_DIR, "web")  # static assets always ship with the code
 OVERRIDES_PATH = os.path.join(DATA_DIR, "overrides.json")
-SHIP_CARGO_PATH = os.path.join(DATA_DIR, "ships_cargo.json")
+SHIP_CARGO_PATH = os.path.join(DATA_DIR, "ships.json")
 # Commodity GUID->name and location code->name, built together from Data.p4k and
 # kept in one file (see reference.py). Was commodities.json + locations.json.
 REFERENCE_PATH = os.path.join(DATA_DIR, "reference.json")
 # Mineable-rock RS (radar signature) + composition, built from the full DataCore
-# extract (its own file/trigger, like ships_cargo.json -- the data can't be pulled
+# extract (its own file/trigger, like ships.json -- the data can't be pulled
 # via the cheap query path reference.json uses). See mineables.py.
 MINEABLES_PATH = os.path.join(DATA_DIR, "mineables.json")
 # Crafting blueprints + their material requirements, from the same full DataCore
 # extract (links a blueprint -> the minerals it needs -> the rocks that yield them).
 # See blueprints.py.
 BLUEPRINTS_PATH = os.path.join(DATA_DIR, "blueprints.json")
+# Contract template taxonomy + cargo manifests, from the same full DataCore extract
+# (the authoritative grade/route/SCU-cap/rep/legal table behind contract classification).
+# See contracts.py.
+CONTRACTS_PATH = os.path.join(DATA_DIR, "contracts.json")
 TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")

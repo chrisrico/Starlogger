@@ -2,7 +2,7 @@
 the boarded ship is detected from its comms-channel join ("You have joined channel
 '<Ship> : <Owner>'", Owner != you) and cleared again when they re-board/pilot their own.
 
-Disk-isolated: shipcargo's cargo-DB lookups are monkeypatched, so no ships_cargo.json read.
+Disk-isolated: shipcargo's cargo-DB lookups are monkeypatched, so no ships.json read.
 
 Run: python3 -m pytest tests/test_state.py
 """
@@ -50,13 +50,13 @@ def test_board_other_players_ship(monkeypatch):
 
 
 def test_boarding_spirit_uses_official_name(monkeypatch):
-    # The committed master ships_cargo.json must carry the Crusader Spirit under its
+    # The committed master ships.json must carry the Crusader Spirit under its
     # official (and comms-channel) name "C1 Spirit", so resolve_ship_name matches it
     # exactly. Validates the repo master itself (not the machine's local data dir) by
     # feeding its real ship-name set. See scdata._vehicle_name for the resolution.
     import json
     from starlogger import config
-    master = json.load(open(os.path.join(config.BASE_DIR, "ships_cargo.json")))
+    master = json.load(open(os.path.join(config.BASE_DIR, "ships.json")))
     names = set(master.get("ships", {}))
     assert "C1 Spirit" in names, "master DB no longer names the Spirit 'C1 Spirit'"
     monkeypatch.setattr(shipcargo, "known_ship_names", lambda db=None: names)
