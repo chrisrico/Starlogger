@@ -40,6 +40,10 @@ class State:
         self.ship_internal: str | None = None
         self.ship_ts: str | None = None
         self.in_seat: bool = False
+        # multicrew: a ship boarded as crew on ANOTHER player's vessel (the displayed
+        # ship while aboard; pilot detection only ever names your own ship)
+        self.boarded_ship: str | None = None
+        self.boarded_owner: str | None = None
         self.ships_used: set[str] = set()
         # called with `self` right before a session is cleared (login/logout/relaunch),
         # so the ending session can be archived. Set by the entry point.
@@ -92,6 +96,8 @@ class State:
             self.ship_ts = None
             self.location = None
             self.in_seat = False
+            self.boarded_ship = None
+            self.boarded_owner = None
             self.ships_used.clear()
             # the ending session was just archived (above); the cleared session has no
             # finished work, so reset the dirty tracking to match -- otherwise the next
@@ -211,7 +217,9 @@ class State:
         return False
 
     def _ship(self, line: str, ts: str | None) -> bool:
-        # pilot-seat control is authoritative ("Local client node" == this player)
+        # pilot-seat control is authoritative ("Local client node" == this player).
+        # It only ever names YOUR OWN ship, so any such event also means you're back on
+        # your own ship -> stop showing a boarded one.
         m = patterns.VEHICLE_CTRL.search(line)
         if m:
             self.ship_internal = m.group("ent")
@@ -219,6 +227,27 @@ class State:
             self.ship_ts = ts
             self.in_seat = m.group("act") == "SetDriver"
             self.ships_used.add(self.ship)
+            self._clear_boarded()
+            return True
+        # multicrew: boarding another player's ship as crew joins its comms channel,
+        # named '<Ship> : <Owner>'. Owner != you AND a recognizable ship -> show that
+        # ship; rejoining your OWN ship's channel reverts. (Pilot detection never names
+        # a ship you only crew on.) Falls through to the SHIP_CHANNEL fallback below.
+        m = patterns.CHANNEL_JOIN.search(line)
+        if m and self.player:
+            owner = m.group("owner").strip()
+            if owner == self.player:
+                self._clear_boarded()
+            else:
+                ship = patterns.resolve_ship_name(m.group("ship"))
+                if ship:
+                    self.boarded_ship = ship
+                    self.boarded_owner = owner
+                    self.ship_ts = ts
+        # left a channel -> if it's the ship we're aboard, we've disembarked
+        m = patterns.CHANNEL_LEAVE.search(line)
+        if m and self.boarded_ship and self.boarded_ship == patterns.resolve_ship_name(m.group("ship")):
+            self._clear_boarded()
             return True
         # comms channel join names the ship in plain text -- fallback only, before
         # any vehicle-control event (channel entries can be stale / non-ship).
@@ -234,6 +263,10 @@ class State:
                 self.ships_used.add(self.ship)
             return True
         return False
+
+    def _clear_boarded(self) -> None:
+        self.boarded_ship = None
+        self.boarded_owner = None
 
     def _trade(self, line: str, ts: str | None) -> bool:
         """Record a manual commodity-terminal buy/sell. The request line is the only

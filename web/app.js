@@ -322,6 +322,12 @@ function statusHtml(d) {
   const online = d.logged_in;
   const pill = `<span class="pill ${online ? "online" : "offline"}"><span class="dot"></span>${online ? "In Verse" : "Main Menu"}</span>`;
   const scu = d.ship_scu != null ? ` <span class="cap">${num(d.ship_scu)} SCU</span>` : "";
+  if (d.boarded) {
+    // crewing another player's ship — show it badged as boarded, not "detected"
+    const who = d.boarded_owner ? `${esc(d.boarded_owner)}'s ship` : "another ship";
+    return pill + `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${scu}
+      <span class="ship-auto" title="you're aboard ${who} as crew — the manifest shows the shared haul in this hold">⚑ aboard ${who}</span></span>`;
+  }
   if (d.ship_detected) {
     // detected ship overrides the manual pick — show it locked, no searchable box
     return pill + `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${scu}

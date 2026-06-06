@@ -83,6 +83,35 @@ def test_autocomplete_catalog(monkeypatch):
     assert cat["stations"] == sorted(cat["stations"])   # serialized sorted
 
 
+def test_boarded_ship_drives_grid_and_capacity(monkeypatch):
+    """Crewing another player's ship: effective_ship (and so capacity + grid) follow the
+    boarded ship while aboard, then revert to your own when boarded clears."""
+    db = {"ships": {
+        "Ironclad": {"scu": 2200, "class": "DRAK_Ironclad", "layout": "deck",
+                     "groups": [{"x": 0, "z": 0,
+                                 "grids": [{"width": 6, "length": 20, "height": 6, "x": 0, "y": 0, "z": 0}]}]},
+        "Freelancer MAX": {"scu": 120, "class": "MISC_Freelancer_MAX", "layout": "synth", "groups": []},
+    }}
+    for name, val in [("get_overrides", lambda: {}), ("get_settings", lambda: {}),
+                      ("load_ship_cargo", lambda: db), ("get_station_names", lambda: {}),
+                      ("learn_station_names", lambda z: None), ("station_names", lambda: []),
+                      ("commodity_names", lambda: []), ("lost_trade_ids", lambda: [])]:
+        monkeypatch.setattr(snapshot, name, val)
+
+    st = State()
+    st.ship = "Freelancer MAX"          # your own piloted ship
+    st.boarded_ship = "Ironclad"        # but you're crewing a friend's Ironclad
+    st.boarded_owner = "caged-danimal"
+    d = build_snapshot(st)
+    assert d["ship"] == "Ironclad" and d["ship_scu"] == 2200
+    assert d["boarded"] is True and d["boarded_owner"] == "caged-danimal"
+    assert d["ship_grid"][0]["grids"][0]["width"] == 6      # the Ironclad's hold
+
+    st.boarded_ship = st.boarded_owner = None               # disembarked
+    d2 = build_snapshot(st)
+    assert d2["ship"] == "Freelancer MAX" and d2["ship_scu"] == 120 and d2["boarded"] is False
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

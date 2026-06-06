@@ -284,10 +284,11 @@ def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None 
         # manual commodity-terminal trades this session (buy/sell), with a rollup
         trades, trade_summary = build_session_trades(state)
 
-        # Effective ship: the game-detected ship always wins; otherwise fall back
-        # to the user's manual pick (settings.json). This drives the capacity
-        # gauge and the cargo-grid view even at the main menu / for planning.
-        effective_ship = state.ship or selected_ship
+        # Effective ship: a ship boarded as crew on another player's vessel wins while
+        # aboard (the dashboard then shows that ship's hold for the shared haul); else
+        # the game-detected pilot ship; else the user's manual pick (settings.json).
+        # Drives the capacity gauge and cargo-grid view even at the main menu.
+        effective_ship = state.boarded_ship or state.ship or selected_ship
 
         return {
             "player": state.player,
@@ -295,6 +296,9 @@ def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None 
             "ship": effective_ship,
             "ship_detected": bool(state.ship),
             "selected_ship": selected_ship,
+            # crewing another player's ship: effective_ship is theirs, badge it as such
+            "boarded": bool(state.boarded_ship),
+            "boarded_owner": state.boarded_owner,
             "ship_internal": state.ship_internal,
             "ship_ts": state.ship_ts,
             "ship_scu": ship_capacity(effective_ship, cargo_db),

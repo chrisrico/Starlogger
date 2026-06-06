@@ -253,6 +253,11 @@ CHANGELIST = re.compile(r"Changelist:\s*(\d+)")
 # Ship detection. Comms channel join names the ship; Vehicle Control Flow ties a
 # ship entity to the local client (authoritative).
 SHIP_CHANNEL = re.compile(r"joined channel '(?P<ship>[^':]+?)\s*:\s*(?P<player>[^']+)'")
+# Multicrew: a ship's comms channel is named '<Ship> : <Owner>'. The self HUD
+# notification ("You have joined/left ...") is the one signal that names a ship you
+# BOARDED as crew (Owner != you) — the driver-only Vehicle Control Flow never does.
+CHANNEL_JOIN = re.compile(r"You have joined channel '(?P<ship>[^':]+?)\s*:\s*(?P<owner>[^']+)'")
+CHANNEL_LEAVE = re.compile(r"You have left(?: the)? channel '(?P<ship>[^':]+?)\s*:\s*(?P<owner>[^']+)'")
 VEHICLE_CTRL = re.compile(
     r"Vehicle Control Flow>\s*\w+::(?P<act>SetDriver|ClearDriver):\s*Local client node "
     r"\[\d+\][^']*'(?P<ent>[A-Za-z][A-Za-z0-9_]+?)_\d+'"
@@ -463,3 +468,29 @@ def canonical_ship_name(name: str) -> str:
             if rest in known:
                 return rest
     return name
+
+
+def resolve_ship_name(name: str) -> str | None:
+    """Resolve a comms-channel ship name ("<Manufacturer> <Model>", e.g. "Crusader C1
+    Spirit") to its cargo-DB display name — or None when it isn't a ship channel at all
+    (party / global / mission comms have no manufacturer prefix). Used to detect a ship
+    boarded as crew. More forgiving than `canonical_ship_name`: after stripping the
+    manufacturer it also matches the model word-order-insensitively, so the channel's
+    marketing name ("C1 Spirit") still resolves to the DB's ("Spirit C1"). Falls back to
+    the stripped model for a real (manufacturer-prefixed) ship the DB doesn't carry."""
+    from . import shipcargo  # lazy: shipcargo imports this module
+    name = (name or "").strip()
+    known = shipcargo.known_ship_names()
+    if name in known:
+        return name
+    parts = name.split()
+    strip_n = next((n for n in (2, 1)
+                    if len(parts) > n and " ".join(parts[:n]) in _MFR_NAMES), 0)
+    if not strip_n:                       # no manufacturer prefix -> not a ship channel
+        return None
+    model = " ".join(parts[strip_n:])
+    if model in known:
+        return model
+    toks = frozenset(w.lower() for w in parts[strip_n:])
+    hits = [k for k in known if frozenset(w.lower() for w in k.split()) == toks]
+    return hits[0] if len(hits) == 1 else (model or None)

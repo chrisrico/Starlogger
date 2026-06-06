@@ -101,7 +101,7 @@ def _facts(st: State, cmap: dict) -> dict:
             for tid, t in st.trades.items()
         },
         "awarded": st.total_awarded,
-        "ship": st.ship,
+        "ship": st.boarded_ship or st.ship,   # effective ship — boarding is a visible change
         "routes": len(st.travel_routes),
         "arrivals": len(st.travel_arrivals),
     }
