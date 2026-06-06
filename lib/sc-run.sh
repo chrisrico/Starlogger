@@ -30,6 +30,27 @@ tracker_dir="$HOME/.local/share/starlogger"
 tracker="$tracker_dir/run-tracker.sh"
 
 ############################################################################
+# Self-update: pull the latest tracker, then re-exec the fresh copy. This script
+# lives inside $tracker_dir, so `git reset` rewrites it underneath the running shell;
+# we re-exec the updated canonical copy exactly once ($_SCRUN_REEXEC guards the loop)
+# so the new code runs cleanly instead of from a half-rewritten file. Best-effort and
+# silent: skipped when pinned ($STARLOGGER_NO_UPDATE), offline, or not a clone -- a
+# failed update never costs a launch. `reset --hard` is safe for user data
+# (sessions/overrides/etc. are gitignored and untracked).
+############################################################################
+if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ -z "${_SCRUN_REEXEC:-}" ] \
+    && [ -d "$tracker_dir/.git" ] && command -v git >/dev/null 2>&1; then
+    if git -C "$tracker_dir" fetch --quiet --depth 1 origin main \
+        && git -C "$tracker_dir" reset --hard --quiet origin/main; then
+        [ -x "$tracker_dir/.venv/bin/python" ] \
+            && "$tracker_dir/.venv/bin/pip" install -q -r "$tracker_dir/requirements.txt" 2>/dev/null
+        export _SCRUN_REEXEC=1
+        exec "$tracker_dir/lib/sc-run.sh" "$@"
+    fi
+    # fetch/reset failed (offline, etc.) -> fall through and run the current copy.
+fi
+
+############################################################################
 # StarStrings: fetch the latest community global.ini if newer than local, and
 # install it into the LIVE localization folder. The ETag is cached as an xattr.
 # A desktop notification fires only on an actual update or a fetch failure (the

@@ -13,7 +13,31 @@ destination — plus a 3-D **cargo-grid loader**, a per-session **archive**, and
 Runs on **Linux (Wine/Proton)** and **native Windows** — the same codebase
 auto-detects the install for each.
 
-## Setup
+## Install (Linux)
+
+One command — clones into `$XDG_DATA_HOME/starlogger` (≈ `~/.local/share/starlogger`),
+builds its venv, and points your Star Citizen launcher at the tracker:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chrisrico/starlogger/main/install.sh | bash
+```
+
+Then just launch Star Citizen as usual: the tracker rides along with the game and
+**updates itself on every launch**. Nothing else to do.
+
+- **Updating** is automatic. To pin a version, set `STARLOGGER_NO_UPDATE=1`.
+- To install elsewhere, set `STARLOGGER_DATA_DIR` before running the command.
+- If the [LUG Helper](https://github.com/starcitizen-lug/lug-helper) ever reverts the
+  `.desktop` launcher, **re-run the install command** — it re-asserts the launcher
+  (and doubles as a manual update/repair).
+
+The only runtime dependency is Flask. The ship cargo-grid database (`ships.json`) is
+generated locally from your game install on first run (it is **not** bundled with the
+repo — see [Ship cargo data](#ship-cargo-data)).
+
+## Manual setup (dev / Windows)
+
+Run from a checkout without the installer:
 
 **Linux:**
 ```bash
@@ -27,11 +51,7 @@ py -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 ```
 
-The only runtime dependency is Flask. The ship cargo-grid database
-(`ships.json`) is generated locally from your game install on first run
-(it is **not** bundled with the repo — see [Ship cargo data](#ship-cargo-data)).
-
-## Run
+Then run it directly:
 
 ```bash
 .venv/bin/python tracker.py        # Linux: auto-detect Game.log, serve :8765
@@ -55,21 +75,16 @@ game. The LIVE `Game.log` is auto-detected (Windows:
 
 ## Run it with the game
 
+**Linux:** the [installer](#install-linux) wires this up — your Star Citizen
+`.desktop` runs `lib/sc-run.sh`, which self-updates, backgrounds the dashboard, and
+then `exec`s LUG's `sc-launch.sh`. The tracker is tied to the game's lifetime via
+`run-tracker.sh`'s `setpriv --pdeathsig`, so the kernel stops it whenever the game
+launcher exits — even on SIGKILL — with no `kill` line to get wrong. It skips if
+`:8765` is already serving. (The LUG Helper may revert the `.desktop` on update;
+re-run the install command to restore it.)
+
 **Windows:** run `run-tracker.bat` in a terminal (or make a desktop shortcut to it);
 Ctrl-C stops it. `STARLOGGER_DATA_DIR` defaults to `%LOCALAPPDATA%\starlogger`.
-
-**Linux (LUG `sc-launch.sh`):** to start the tracker with the game and stop it when
-you quit, add one line just before the launcher line in the
-[LUG Helper](https://github.com/starcitizen-lug/lug-helper)'s `sc-launch.sh`:
-
-```bash
-STARLOGGER_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
-```
-
-`run-tracker.sh` backgrounds the dashboard and uses `setpriv --pdeathsig` so the
-kernel stops it whenever `sc-launch.sh` exits — even on SIGKILL — with no `kill`
-line to get wrong. It skips if `:8765` is already serving. (LUG Helper may
-overwrite `sc-launch.sh` on update; keep a copy.)
 
 ## Dashboard
 
@@ -126,7 +141,9 @@ Two common gaps:
 ## Project layout
 
 ```
+install.sh        Linux: one-shot installer (clone + venv + patch .desktop)
 tracker.py        CLI entry point
+lib/sc-run.sh     Linux: game launcher — self-updates, starts tracker, execs sc-launch.sh
 run-tracker.sh    Linux: start the tracker for a play session (sc-launch hook)
 run-tracker.bat   Windows: start the tracker for a play session
 starlogger/       package:
