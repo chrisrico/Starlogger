@@ -24,14 +24,19 @@ def get_overrides(path: str = OVERRIDES_PATH) -> dict:
     return load_cached(path, _cache)
 
 
-def write_override(mission_id: str, override: dict | None, path: str = OVERRIDES_PATH) -> None:
-    """Set (or, if override is falsy, remove) one mission's override entry."""
-    data = read_json(path, dict)
+def apply_override_edit(data: dict, mission_id: str, override: dict | None) -> dict:
+    """Set (or, if override is falsy, remove) one mission's override entry in `data`,
+    in place. The pure core shared by the disk writer and the ephemeral replay overlay."""
     if override:
         data[mission_id] = override
     else:
         data.pop(mission_id, None)
-    atomic_write(path, data)
+    return data
+
+
+def write_override(mission_id: str, override: dict | None, path: str = OVERRIDES_PATH) -> None:
+    """Set (or, if override is falsy, remove) one mission's override entry."""
+    atomic_write(path, apply_override_edit(read_json(path, dict), mission_id, override))
 
 
 def prune_overrides(keep_mission_ids: set, path: str = OVERRIDES_PATH,
@@ -104,10 +109,9 @@ def apply_override(mis: Mission, ov: dict) -> Mission:
     return m
 
 
-def set_leg_states(items: list[dict], done: bool, path: str = OVERRIDES_PATH) -> None:
-    """Mark/unmark specific legs delivered. `items` is a list of
-    {"mission_id", "oid"}; reads the file once, merges, writes once."""
-    data = read_json(path, dict)
+def apply_leg_states(data: dict, items: list[dict], done: bool) -> dict:
+    """Mark/unmark specific legs delivered, mutating `data` in place. `items` is a list
+    of {"mission_id", "oid"}. The pure core shared by the disk writer and the overlay."""
     for it in items:
         mid, oid = it.get("mission_id"), it.get("oid")
         if not mid or not oid:
@@ -126,14 +130,19 @@ def set_leg_states(items: list[dict], done: bool, path: str = OVERRIDES_PATH) ->
             data[mid] = entry
         else:
             data.pop(mid, None)
-    atomic_write(path, data)
+    return data
 
 
-def set_leg_field(mission_id: str, oid: str, field: str, value, path: str = OVERRIDES_PATH) -> None:
-    """Merge one per-leg field correction (``cargo`` | ``qty``) into a mission's
-    override, keyed by objective id; a falsy/None value clears it. Read-modify-write,
-    pruning empty cells/entries so the file stays minimal."""
-    data = read_json(path, dict)
+def set_leg_states(items: list[dict], done: bool, path: str = OVERRIDES_PATH) -> None:
+    """Mark/unmark specific legs delivered. `items` is a list of
+    {"mission_id", "oid"}; reads the file once, merges, writes once."""
+    atomic_write(path, apply_leg_states(read_json(path, dict), items, done))
+
+
+def apply_leg_field(data: dict, mission_id: str, oid: str, field: str, value) -> dict:
+    """Merge one per-leg field correction (``cargo`` | ``qty``) into `data` in place,
+    keyed by objective id; a falsy/None value clears it, pruning empty cells/entries.
+    The pure core shared by the disk writer and the ephemeral replay overlay."""
     entry = data.get(mission_id) or {}
     fields = entry.get("leg_fields") or {}
     cell = fields.get(oid) or {}
@@ -153,4 +162,11 @@ def set_leg_field(mission_id: str, oid: str, field: str, value, path: str = OVER
         data[mission_id] = entry
     else:
         data.pop(mission_id, None)
-    atomic_write(path, data)
+    return data
+
+
+def set_leg_field(mission_id: str, oid: str, field: str, value, path: str = OVERRIDES_PATH) -> None:
+    """Merge one per-leg field correction (``cargo`` | ``qty``) into a mission's
+    override, keyed by objective id; a falsy/None value clears it. Read-modify-write,
+    pruning empty cells/entries so the file stays minimal."""
+    atomic_write(path, apply_leg_field(read_json(path, dict), mission_id, oid, field, value))

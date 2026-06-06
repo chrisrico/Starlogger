@@ -159,19 +159,22 @@ def _label(prev: dict | None, cur: dict, st: State) -> str:
     return f"{active} active contract{'' if active == 1 else 's'}"
 
 
-def _build(key: str, path: str) -> tuple[list, list]:
+def _build(key: str, path: str) -> tuple[list, list, list]:
     """Replay one log file, capturing a checkpoint each time the target session's
     visible state changes. Earlier/other sessions in the file are fed (so state stays
-    correct) but only the target session's lines are snapshotted."""
+    correct) but only the target session's lines are snapshotted. Also records, per
+    checkpoint, the absolute line index where it was taken (``lines``) so the State at
+    that checkpoint can be reconstructed on demand for ephemeral archive editing."""
     cmap = load_commodities()
     st = State()  # no on_session_end hook -> session resets just clear, no archiving
     points: list[dict] = []
     snapshots: list[dict] = []
+    lines: list[int] = []
     prev_facts: dict | None = None
     prev_sig: tuple | None = None
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
+            for ln, line in enumerate(f):
                 st.feed(line)
                 if _session_key(st) != key:
                     prev_facts, prev_sig = None, None  # outside the target session
@@ -193,14 +196,16 @@ def _build(key: str, path: str) -> tuple[list, list]:
                 if points and points[-1]["ts"] == st.last_event_ts and points[-1]["label"] == label:
                     snapshots[-1] = snap
                     points[-1]["fill"] = fill
+                    lines[-1] = ln
                 else:
                     points.append({"i": len(points), "ts": st.last_event_ts,
                                    "label": label, "fill": fill})
                     snapshots.append(snap)
+                    lines.append(ln)
                 prev_facts, prev_sig = facts, sig
     except OSError:
-        return [], []
-    return points, snapshots
+        return [], [], []
+    return points, snapshots, lines
 
 
 def _entry(key: str, log_path: str | None) -> dict | None:
@@ -211,10 +216,10 @@ def _entry(key: str, log_path: str | None) -> dict | None:
     if c and os.path.isfile(c["path"]) and _mtime(c["path"]) == c["mtime"]:
         return c
     for path in _candidate_order(key, log_path):
-        points, snapshots = _build(key, path)
+        points, snapshots, lines = _build(key, path)
         if points:
             entry = {"path": path, "mtime": _mtime(path),
-                     "points": points, "snapshots": snapshots}
+                     "points": points, "snapshots": snapshots, "lines": lines}
             with _lock:
                 _cache[key] = entry
                 while len(_cache) > _CACHE_MAX:
@@ -240,3 +245,49 @@ def snapshot_at(key: str, log_path: str | None, i: int) -> dict | None:
         return None
     i = max(0, min(int(i), len(e["snapshots"]) - 1))
     return e["snapshots"][i]
+
+
+# Last reconstructed State, so a burst of edits / a re-render at one checkpoint re-feeds
+# the log only once. Replaced whenever the (session, checkpoint, log file) changes.
+_state_cache: dict = {"key": None, "i": None, "path": None, "state": None}
+
+
+def _reconstruct(path: str, upto_ln: int) -> "State":
+    """Re-feed the log up to (and including) absolute line ``upto_ln`` to rebuild the
+    State exactly as it stood when checkpoint ``i``'s snapshot was taken."""
+    st = State()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for ln, line in enumerate(f):
+            st.feed(line)
+            if ln >= upto_ln:
+                break
+    return st
+
+
+def state_at(key: str, log_path: str | None, i: int) -> "State | None":
+    """The reconstructed :class:`State` at checkpoint ``i`` (clamped), for ephemeral
+    archive editing. Cached for the last (key, i) so repeated edits stay snappy. None
+    when the session's source log is no longer available."""
+    e = _entry(key, log_path)
+    if not e or not e.get("lines"):
+        return None
+    i = max(0, min(int(i), len(e["lines"]) - 1))
+    c = _state_cache
+    if c["key"] == key and c["i"] == i and c["path"] == e["path"] and c["state"] is not None:
+        return c["state"]
+    st = _reconstruct(e["path"], e["lines"][i])
+    _state_cache.update(key=key, i=i, path=e["path"], state=st)
+    return st
+
+
+def snapshot_with_overlay(key: str, log_path: str | None, i: int, overlay: dict | None) -> dict | None:
+    """Snapshot for checkpoint ``i`` with an ephemeral edit ``overlay`` applied (archive
+    editing). With ``overlay`` None this matches :func:`snapshot_at` (the cached, disk-
+    overrides snapshot); otherwise the State is reconstructed and re-rendered with the
+    overlay — nothing is persisted either way."""
+    if overlay is None:
+        return snapshot_at(key, log_path, i)
+    st = state_at(key, log_path, i)
+    if st is None:
+        return None
+    return build_snapshot(st, overlay=overlay)

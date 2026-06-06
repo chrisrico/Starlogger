@@ -7,19 +7,20 @@ import logging
 from flask import Flask, jsonify, request, send_from_directory
 
 from .archive import filter_sessions, load_sessions
-from .config import WEB_DIR
-from .overrides import (apply_override, get_overrides, set_leg_field, set_leg_states,
-                        write_override)
-from .replay import build_timeline, snapshot_at
+from .config import OVERRIDES_PATH, WEB_DIR
+from .jsonstore import atomic_write, read_json
+from .overrides import set_leg_field, set_leg_states
+from .replay import build_timeline, snapshot_with_overlay, state_at
+from .replay_edit import apply_override_with_siblings, apply_replay_op, seed_overlay
 from .settings import set_setting
 from .blueprints import blueprint_catalog, lookup_blueprint
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .shipcargo import load_ship_cargo
 from .tradeflags import set_lost
-from .snapshot import build_snapshot, dest_signature, origin_label
+from .snapshot import build_snapshot
 from .state import State
-from .stations import get_station_names, set_station_name
+from .stations import set_station_name
 
 
 def create_app(state: State, log_path: str | None = None) -> Flask:
@@ -156,21 +157,48 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
             return jsonify({"available": False})
         return jsonify({"available": True, **tl})
 
-    @app.get("/api/replay/state")
+    @app.route("/api/replay/state", methods=["GET", "POST"])
     def api_replay_state():
-        # The full dashboard snapshot at one checkpoint — drives the whole UI in
-        # replay mode, same shape as /api/state.
-        key = request.args.get("key") or ""
+        # The full dashboard snapshot at one checkpoint — drives the whole UI in replay
+        # mode, same shape as /api/state. GET (no overlay) returns the cached disk-state
+        # snapshot; POST {key, at, overlay} re-renders that checkpoint with an ephemeral
+        # edit overlay applied (archive editing scrubs with edits kept), persisting nothing.
+        body = request.get_json(force=True, silent=True) or {}
+        key = request.args.get("key") or body.get("key") or ""
         try:
-            at = int(request.args.get("at", 0))
+            at = int(request.args.get("at", body.get("at", 0)))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "at must be an integer"}), 400
         if not key:
             return jsonify({"ok": False, "error": "key required"}), 400
-        snap = snapshot_at(key, log_path, at)
+        snap = snapshot_with_overlay(key, log_path, at, body.get("overlay"))
         if snap is None:
             return jsonify({"available": False}), 404
         return jsonify(snap)
+
+    @app.post("/api/replay/edit")
+    def api_replay_edit():
+        # Apply ONE edit op to the ephemeral archive overlay and return the recomputed
+        # snapshot + the updated overlay (which the client echoes back on the next edit
+        # /scrub). Mirrors the live edit endpoints exactly but writes nothing to disk.
+        body = request.get_json(force=True, silent=True) or {}
+        key, op = body.get("key") or "", body.get("op")
+        try:
+            at = int(body.get("at", 0))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "at must be an integer"}), 400
+        if not key or not isinstance(op, dict) or not op.get("kind"):
+            return jsonify({"ok": False, "error": "key and op required"}), 400
+        st = state_at(key, log_path, at)
+        if st is None:
+            return jsonify({"available": False}), 404
+        overlay = body.get("overlay") or seed_overlay()
+        try:
+            apply_replay_op(overlay, op, st)
+        except (KeyError, TypeError, ValueError) as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        return jsonify({"ok": True, "snapshot": build_snapshot(st, overlay=overlay),
+                        "overlay": overlay})
 
     @app.post("/api/override")
     def api_override():
@@ -181,43 +209,15 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
         override = payload.get("override")
         if override is not None and not isinstance(override, dict):
             return jsonify({"ok": False, "error": "override must be an object or null"}), 400
-        origin = (override or {}).get("origin")
-        origin = origin.strip() if isinstance(origin, str) else None
         try:
             # Correcting an origin propagates only to *same-route* siblings: other
             # active missions that share BOTH the edited mission's displayed origin
             # AND its destination(s). Origin alone is too coarse — many missions
             # share an "Unknown station" origin while running different routes, so
-            # we'd otherwise rewrite all of them (including a reverse-direction
-            # haul). Keyed on what's displayed; only writes per-mission origin
-            # overrides, never touches zone names.
-            before, prev_ov = {}, {}
-            if origin:
-                with state.lock:
-                    zone_names = {**get_station_names(), **state.zone_names}
-                    prev_ov = get_overrides()
-                    # Key each active mission on its *displayed* (origin, destinations) under
-                    # the override currently in effect — the same effective-mission resolution
-                    # build_snapshot uses, so siblings match exactly what the dashboard shows.
-                    before = {}
-                    for oid, m in state.missions.items():
-                        if m.status != "active":
-                            continue
-                        ov = prev_ov.get(oid)
-                        eff = apply_override(m, ov) if ov else m
-                        before[oid] = (origin_label(eff, zone_names),
-                                       dest_signature(eff, zone_names))
-
-            write_override(mid, override)
-
-            key = before.get(mid)
-            if origin and key:
-                for oid, sib_key in before.items():
-                    if oid == mid or sib_key != key:
-                        continue
-                    sib = dict(prev_ov.get(oid) or {})
-                    sib["origin"] = origin
-                    write_override(oid, sib)
+            # we'd otherwise rewrite all of them (including a reverse-direction haul).
+            # The merge logic is shared with the ephemeral replay overlay.
+            data = apply_override_with_siblings(read_json(OVERRIDES_PATH, dict), state, mid, override)
+            atomic_write(OVERRIDES_PATH, data)
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
         return jsonify({"ok": True})

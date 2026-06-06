@@ -30,7 +30,11 @@ let SESSIONS = null;  // archived sessions
 // When a session is replayed, the WHOLE dashboard renders a reconstructed past
 // snapshot instead of live data: curData() returns REPLAY_SNAPSHOT and the poll pauses.
 // REPLAY_POINTS is the scrub timeline (index/ts/label); REPLAY_I the current checkpoint.
+// Archive editing is fully interactive but EPHEMERAL: every edit goes to an in-memory
+// overlay (REPLAY_EDITS) via /api/replay/edit — which recomputes the snapshot exactly
+// like live but writes nothing to disk. null until the first edit (disk state shown).
 let REPLAY_MODE = false, REPLAY_KEY = null, REPLAY_POINTS = [], REPLAY_I = 0, REPLAY_SNAPSHOT = null;
+let REPLAY_EDITS = null, REPLAY_SAVED_ORDER = null;
 let REPLAY_UNAVAILABLE = new Set();  // session keys whose source log is gone
 let _scrubTimer = null;
 
@@ -308,7 +312,7 @@ function pickShip(ev, name) {
 }
 
 async function selectShip(name) {
-  if (REPLAY_MODE) return;
+  if (REPLAY_MODE) return replayEdit({ kind: "select_ship", ship: name || null });
   try { await postJSON("/api/select-ship", { ship: name || null }); }
   catch (e) { alert("Couldn't set ship: " + e); return; }
   refresh();
@@ -477,7 +481,6 @@ function qtyCell(qty, mid, oid) {
 }
 
 function edOpen(el) {
-  if (REPLAY_MODE) return;   // replay is read-only — past state can't be edited
   let f; try { f = JSON.parse(el.dataset.field); } catch (e) { return; }
   EDIT_CELL = cellTok(f);
   rerenderEdits();
@@ -495,6 +498,14 @@ async function edCommit(el) {
   if (EDIT_CELL !== cellTok(f)) return;   // already cancelled/committed
   const raw = (el.value || "").trim();
   EDIT_BUSY = true; EDIT_CELL = null;
+  if (REPLAY_MODE) {
+    const op = f.k === "station" ? { kind: "station_name", zone: f.zone, name: raw }
+      : f.k === "origin" ? { kind: "override", mission_id: f.mid, override: { ...rawOverride(f.mid), origin: raw || null } }
+        : { kind: "leg_field", mission_id: f.mid, oid: f.oid, field: f.k, value: raw };
+    await replayEdit(op);
+    EDIT_BUSY = false;
+    return;
+  }
   try {
     if (f.k === "station") await postJSON("/api/station-name", { zone: f.zone, name: raw });
     else if (f.k === "origin") await postJSON("/api/override", { mission_id: f.mid, override: { ...rawOverride(f.mid), origin: raw || null } });
@@ -508,6 +519,24 @@ async function postJSON(url, body) {
   const j = await r.json().catch(() => ({}));
   if (!j.ok) throw new Error(j.error || r.status);
   return j;
+}
+// POST returning a raw JSON body (no {ok} envelope) — the replay snapshot/edit responses.
+async function postRaw(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify(body), cache: "no-store" });
+  return r.json();
+}
+// Archive edit: send one edit op to the ephemeral overlay, swap in the recomputed snapshot
+// + updated overlay (nothing is persisted), and repaint. The single path every editor uses
+// in replay mode in place of its live /api/* write.
+async function replayEdit(op) {
+  try {
+    const j = await postRaw("/api/replay/edit",
+      { key: REPLAY_KEY, at: REPLAY_I, overlay: REPLAY_EDITS, op });
+    if (!j || !j.snapshot) throw new Error((j && j.error) || "edit failed");
+    REPLAY_EDITS = j.overlay; REPLAY_SNAPSHOT = j.snapshot;
+    EDIT = null; renderAll(curData());
+  } catch (e) { alert("Edit failed: " + e); }
 }
 // GET + parse JSON for the live dashboard's no-cache reads (state/sessions/replay/ships).
 // Mining catalog lookups use their own plain fetch (cacheable, no `ok` envelope).
@@ -608,14 +637,18 @@ function legCheck(mid, oid, done, legsJson) {
 }
 
 async function markDelivered(legs, done) {
-  if (REPLAY_MODE) return;
   if (typeof legs === "string") legs = JSON.parse(legs);
+  if (REPLAY_MODE) return replayEdit({ kind: "leg_state", legs, done });
   try { await postJSON("/api/leg-state", { legs, done }); }
   catch (e) { alert("Update failed: " + e); return; }
   refresh();
 }
 
-// ---- trip plan (ordered itinerary above the route cards) ---- //
+// ---- Routes: one ordered itinerary that doubles as the reorder control ---- //
+// (Was two stacked sections, "Trip Plan" + "Route Rollup", that duplicated the same
+// deliveries. Merged: the timeline IS the run list — each stop carries its origin(s)
+// and mission count, and dragging a stop sets the visit & load order that the load
+// sequence and the manifest packing both follow.)
 function bodyLabel(s) {
   if (s.body === "?") return "Unknown location";
   const sys = s.system && s.system !== "?" && s.system !== s.body ? `${esc(s.system)} · ` : "";
@@ -723,13 +756,20 @@ function routeDrop(ev) {
   order = order.filter(x => x !== DRAG_DEST);
   order.splice(order.indexOf(dropDest), 0, DRAG_DEST);
   ROUTE_ORDER = order;
-  localStorage.setItem("routeOrder", JSON.stringify(order));
+  persistRouteOrder();
   routeDragEnd();
   renderAll(curData());
 }
+// Persist the manual route order to localStorage — but only when live. In archive replay
+// the order is ephemeral (restored on exit), so it must not bleed into the live view.
+function persistRouteOrder() {
+  if (REPLAY_MODE) return;
+  if (ROUTE_ORDER) localStorage.setItem("routeOrder", JSON.stringify(ROUTE_ORDER));
+  else localStorage.removeItem("routeOrder");
+}
 function resetRouteOrder() {
   ROUTE_ORDER = null;
-  localStorage.removeItem("routeOrder");
+  persistRouteOrder();
   renderAll(curData());
 }
 // Keyboard reorder (a no-mouse alternative to dragging the ⠿ grip): move the run
@@ -740,7 +780,7 @@ function moveRoute(dest, dir) {
   if (i < 0 || j < 0 || j >= order.length) return;
   order.splice(i, 1); order.splice(j, 0, dest);
   ROUTE_ORDER = order;
-  localStorage.setItem("routeOrder", JSON.stringify(order));
+  persistRouteOrder();
   renderAll(curData());
   setTimeout(() => {   // restore focus to the grip in its new position
     const card = [...document.querySelectorAll("#routegrid .card.route")].find(c => c.dataset.dest === dest);
@@ -1203,7 +1243,7 @@ function buildOverride() {
 }
 
 async function postOverride(mid, override) {
-  if (REPLAY_MODE) return;   // belt-and-suspenders: no live writes during replay
+  if (REPLAY_MODE) return replayEdit({ kind: "override", mission_id: mid, override });
   try { await postJSON("/api/override", { mission_id: mid, override }); }
   catch (e) { alert("Save failed: " + e); }
   EDIT = null;
@@ -1566,6 +1606,7 @@ async function loadSessions() {
 // Flag/unflag a trade load as lost (cargo destroyed/stolen). Optimistically updates
 // the live snapshot's lost set so the row re-renders immediately, then persists.
 async function markTradeLost(id, lost) {
+  if (REPLAY_MODE) return replayEdit({ kind: "trade_lost", trade_id: id, lost });
   if (LAST) {
     const set = new Set(LAST.lost_trades || []);
     lost ? set.add(id) : set.delete(id);
@@ -1620,6 +1661,8 @@ async function enterReplay(key) {
       return;
     }
     REPLAY_KEY = key; REPLAY_POINTS = tl.points; REPLAY_MODE = true;
+    REPLAY_EDITS = null;                  // fresh sandbox; the server seeds it on first edit
+    REPLAY_SAVED_ORDER = ROUTE_ORDER;     // archive reordering is ephemeral — restore on exit
     // Land on the session's busiest checkpoint (most contracts/cargo on the dashboard)
     // rather than the last one — session-end usually has empty holds and finished
     // contracts, so defaulting there makes replay look like it did nothing. Falls back
@@ -1640,8 +1683,10 @@ async function enterReplay(key) {
 async function loadReplayState() {
   const bar = $("replaybar"); if (bar) bar.classList.add("rb-busy");
   try {
-    const snap = await getJSON(
-      `/api/replay/state?key=${encodeURIComponent(REPLAY_KEY)}&at=${REPLAY_I}`);
+    // POST so any ephemeral edits (REPLAY_EDITS) stay applied while scrubbing; null overlay
+    // returns the cached disk-state snapshot for this checkpoint (unchanged behaviour).
+    const snap = await postRaw("/api/replay/state",
+      { key: REPLAY_KEY, at: REPLAY_I, overlay: REPLAY_EDITS });
     if (snap && snap.available !== false) { REPLAY_SNAPSHOT = snap; renderAll(curData()); }
   } catch (e) { /* leave the prior frame up */ }
   if (bar) bar.classList.remove("rb-busy");
@@ -1659,6 +1704,8 @@ function scrubStep(d) { scrubTo(REPLAY_I + d); }
 
 function exitReplay() {
   REPLAY_MODE = false; REPLAY_KEY = null; REPLAY_SNAPSHOT = null; REPLAY_POINTS = []; REPLAY_I = 0;
+  REPLAY_EDITS = null;                          // discard the ephemeral edits
+  ROUTE_ORDER = REPLAY_SAVED_ORDER; REPLAY_SAVED_ORDER = null;   // restore the live route order
   renderReplayBar();
   if (LAST) renderAll(curData());                 // back to the live snapshot
   _archRepaint();

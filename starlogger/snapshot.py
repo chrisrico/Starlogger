@@ -226,17 +226,26 @@ def _autocomplete_catalog(missions: list, zone_names: dict) -> dict:
     return {"stations": sorted(stations), "cargo": sorted(cargo_names)}
 
 
-def build_snapshot(state: State, trade_only: bool = False) -> dict:
-    overrides = get_overrides()
+def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None = None) -> dict:
+    # `overlay` (replay/archive editing) supplies an EPHEMERAL edit set —
+    # {overrides, station_names, lost, selected_ship} — used instead of the on-disk
+    # stores, and suppresses every persistence side effect, so a past session can be
+    # edited exactly like the live one without writing anything to disk.
+    ephemeral = overlay is not None
+    overrides = overlay.get("overrides") or {} if ephemeral else get_overrides()
     cargo_db = load_ship_cargo()
-    selected_ship = get_settings().get("selected_ship")
+    selected_ship = overlay.get("selected_ship") if ephemeral else get_settings().get("selected_ship")
+    ov_station = overlay.get("station_names") or {} if ephemeral else {}
+    ov_lost = overlay.get("lost") if ephemeral else None
 
     with state.lock:
         # Persist names this session learned, then resolve against the union of
         # the persistent store (manual edits + everything learned before) and
         # this session's freshly-learned names (the live truth wins on conflict).
-        learn_station_names(state.zone_names)
-        zone_names = {**get_station_names(), **state.zone_names}
+        # An overlay edit (archive rename) wins over all of it; ephemeral runs never persist.
+        if not ephemeral:
+            learn_station_names(state.zone_names)
+        zone_names = {**get_station_names(), **state.zone_names, **ov_station}
         # apply overrides, drop non-trade, split into hidden vs visible
         missions, hidden_ids, visible = _split_missions(state.missions, overrides)
 
@@ -316,7 +325,7 @@ def build_snapshot(state: State, trade_only: bool = False) -> dict:
             "trades": trades,
             "trade_summary": trade_summary,
             "travels": build_session_travels(state),
-            "lost_trades": lost_trade_ids(),
+            "lost_trades": ov_lost if ov_lost is not None else lost_trade_ids(),
 
             "catalog": _autocomplete_catalog(missions, zone_names),
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
