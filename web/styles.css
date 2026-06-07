@@ -172,7 +172,7 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
   border-radius:3px;box-shadow:var(--panel-shadow);overflow-y:auto}
 /* shared "eyebrow" label — small uppercase display-font section/field labels. Members below
    keep only their own size / letter-spacing / margin (and color when it isn't the ink-3 default). */
-.stat .k,.gauge .lbl,.filt-lbl,.rec-lbl,.ef label,.ls-lbl,.cg-baylabel,
+.stat .k,.gauge .lbl,.filt-lbl,.rec-lbl,.ef label,.cg-baylabel,
 .mscan-k,.mi-hist-k,.mres-h{font-family:var(--display);text-transform:uppercase;color:var(--ink-3)}
 .shipmenu{display:none;position:absolute;top:calc(100% + 3px);right:0;z-index:60;
   /* size to the widest row (independent of the narrow input), capped so it can't
@@ -316,8 +316,15 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
 
 .route .ends{font-size:13px;font-weight:600;letter-spacing:.02em;display:flex;align-items:center;flex-wrap:wrap;gap:2px}
 
-/* ---- route plan (ordered itinerary; each stop drag-reorders) ---- */
+/* ---- plan section (ordered itinerary = load order; each stop drag-reorders) ---- */
 .planwrap{margin-bottom:26px}
+/* section header — matches the app's .arch-sub header language (replaced the unstyled .archbar) */
+.plan-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 12px;background:var(--panel-2);
+  padding:9px 16px;margin-bottom:16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.plan-head .arch-title{font-family:var(--display);text-transform:uppercase;letter-spacing:.1em;
+  font-size:11px;font-weight:600;color:var(--cyan);margin-right:4px}
+.plan-head .sub{font-size:11px}
+.plan-head .route-reset{margin-left:auto}
 .plan-load{display:flex;align-items:center;gap:14px;padding:12px 16px;margin-bottom:18px;
   background:linear-gradient(90deg,rgba(var(--cyan-rgb),.10),rgba(var(--cyan-rgb),.02));
   border:1px solid var(--line-2);border-left:3px solid var(--cyan);border-radius:2px}
@@ -328,7 +335,8 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
 .plan-load .plan-station{font-weight:600;font-size:14px}
 .plan-load .plan-chips{margin-top:4px}
 .plan-load .scu{font-family:var(--mono);color:var(--cyan);font-weight:600;white-space:nowrap}
-.plan-stops{position:relative;padding-left:22px}
+.plan-stops{position:relative;padding-left:22px;margin:0;list-style:none}
+.plan-stops > li{list-style:none}
 /* the route spine */
 .plan-stops::before{content:"";position:absolute;left:7px;top:6px;bottom:14px;width:2px;
   background:linear-gradient(180deg,var(--cyan),rgba(var(--cyan-rgb),.15))}
@@ -341,6 +349,20 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
   font-weight:600;color:#04121d;background:var(--cyan);box-shadow:0 0 10px rgba(var(--cyan-rgb),.5)}
 .plan-stop{margin-bottom:10px}
 .plan-stop h3{font-size:13px}
+/* stop-row extras: destination colour swatch + physical load-position badge */
+.ps-sw{width:12px;height:12px;border-radius:2px;border:1px solid rgba(0,0,0,.4);flex:none;display:inline-block}
+/* physical load order — ghost badge, deliberately unlike the filled cyan jump circles */
+.ps-pos{font-family:var(--mono);font-size:9.5px;font-weight:600;color:var(--ink-3);
+  border:1px solid var(--line-2);border-radius:2px;min-width:15px;text-align:center;padding:0 3px;flex:none}
+.ps-pos::before{content:"⬇";font-size:8px;opacity:.6;margin-right:1px}
+.ps-from{margin:1px 0 7px}
+.ps-cargo{display:flex;flex-wrap:wrap;gap:5px}
+/* one cargo chip: material · qty · container breakdown (name + qty stay editable) */
+.cargochip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;
+  background:rgba(var(--line-rgb),.06);border:1px solid var(--line);border-radius:3px;padding:2px 7px}
+.cargochip .legchk{margin:0}
+.cc-qty{color:var(--cyan);font-weight:600;white-space:nowrap}
+.cc-box{font-size:10px;white-space:nowrap}
 /* ---- drag-reorderable route stops ---- */
 .card.route{cursor:grab}
 .card.route.dragging{opacity:.45;cursor:grabbing}
@@ -708,29 +730,21 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .cg-box:hover .cf{box-shadow:0 0 14px rgba(var(--cyan-rgb),.3)}
 /* solid cargo cubes (fill mode) — face color set inline (per destination) */
 .cgc{position:absolute;left:0;top:0;box-sizing:border-box}
-/* destination colour swatch — the hold's colour key, carried by the load-order rows */
+/* destination colour swatch — the hold's colour key, carried by the stop rows */
 .cg-sw{width:12px;height:12px;border-radius:2px;border:1px solid rgba(0,0,0,.4);flex:none}
-.ls-sw{display:inline-flex;gap:3px;flex:none}
 /* select control — used by the ship-grids page (/grids.html) toolbar */
 .tc-sel{font-size:12px;padding:5px 9px;border-radius:3px;cursor:pointer;
   min-width:130px;max-width:340px}
 .tc-sel:hover:not(:disabled){border-color:var(--cyan)}
 .tc-sel:disabled{opacity:.5;cursor:default}
-/* load-order sequence (doubles as the destination colour key) */
-.ls-lbl .sub{text-transform:none;letter-spacing:0}
+/* "⚠ shared" marker on a stop carrying a cargo type split across destinations */
 .ls-alone{font-family:var(--mono);font-size:10px;font-weight:600;color:#ffb43c;
   letter-spacing:.02em;white-space:nowrap}
-.loadseq{margin:12px 2px 14px;font-family:var(--mono);font-size:12px}
-.ls-lbl{font-size:11px;letter-spacing:.16em;color:var(--ink-2)}
-.loadseq ol{margin:7px 0 0;padding:0;list-style:none;counter-reset:ls}
-.loadseq li{counter-increment:ls;display:flex;align-items:center;gap:9px;padding:3px 4px;color:var(--ink);border-radius:3px;cursor:default}
-.loadseq li:hover,.loadseq li:focus-visible{background:rgba(var(--cyan-rgb),.08);outline:none}
-.loadseq li::before{content:counter(ls);color:var(--cyan);min-width:18px;text-align:right;font-weight:600}
-.ls-dest{color:var(--ink)}
-.ls-scu{margin-left:auto}
-/* hover an elevator/step → dim the hold, glow that elevator's boxes */
-#holdwrap.hling .cg-box{opacity:.13;transition:opacity .12s}
-#holdwrap.hling .cg-box.hl-on{opacity:1;filter:drop-shadow(0 0 4px var(--cyan))}
+/* hover a stop row or its boxes → brighten + outline that destination's boxes and its
+   row, WITHOUT hiding the rest (bidirectional, non-destructive) */
+#holdwrap .cg-box{transition:filter .1s}
+#holdwrap .cg-box.hl-on{filter:brightness(1.32) drop-shadow(0 0 6px var(--cyan));z-index:5}
+.card.route.hl-row{border-color:var(--cyan);box-shadow:inset 3px 0 0 var(--cyan)}
 .cg-baylabel{display:flex;align-items:center;gap:8px;
   font-size:11px;letter-spacing:.16em;color:var(--ink-2)}
 .cg-baylabel .cg-baydim{font-family:var(--mono);letter-spacing:.04em;color:var(--ink-3);text-transform:none}

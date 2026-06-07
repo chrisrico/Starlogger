@@ -99,7 +99,6 @@ const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(te
 // CARGO_SUB defaults to "" (auto): the active phase is inferred from the snapshot
 // (current location / cargo aboard) until the user picks one explicitly — see cargoDefault.
 let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "pickup" · "dropoff"
-let PLAN_SUB = localStorage.getItem("planSub") || "route";    // "route" · "hold"
 
 // ---- tabs (with URL-hash deep-linking) ---- //
 const TABS = ["cargo", "plan", "contracts", "archive", "mining"];
@@ -561,7 +560,7 @@ function rerenderEdits() {
   if (!LAST) return;
   const d = curData(); if (!d) return;
   setHTML("cargo", cargoView(d));
-  setHTML("plan", planView2(d));
+  setHTML("plan", planView(d));
 }
 
 // ---- Cargo tab: Loading (pickup) ⇄ Unloading (dropoff) behind a segmented control ---- //
@@ -601,18 +600,11 @@ function cargoView(d) {
   return tabBar([["pickup", "Loading"], ["dropoff", "Unloading"]], sub, "cargoSub") + body;
 }
 
-// ---- Plan tab: Routes (itinerary + rollup) ⇄ Manifest (3D hold packing) ---- //
-function planSub(k) {
-  if (PLAN_SUB === k) return;
-  PLAN_SUB = k;
-  localStorage.setItem("planSub", k);
-  const d = curData(); if (d) setHTML("plan", planView2(d));
-}
-function planView2(d) {
-  const sub = PLAN_SUB === "hold" ? "hold" : "route";
-  const body = sub === "hold" ? gridView(d) : routeCards(d.routes, d);
-  return tabBar([["route", "Routes"], ["hold", "Manifest"]], sub, "planSub") + body;
-}
+// ---- Plan tab: ONE section — the ordered itinerary IS the load order, with the 3D
+// hold below it. Dragging a stop sets the visit & load order (ROUTE_ORDER) that both
+// the list and the hold packing follow. (Was two sub-tabs, Routes ⇄ Manifest, keyed on
+// different units — a stop vs. a packed elevator — which never agreed; now one unit:
+// the destination stop = one list row = one hold band.) See planView below.
 
 function groupCards(groups, kind, d) {
   if (!groups.length) return kind === "loading"
@@ -668,70 +660,137 @@ function bodyLabel(s) {
   return sys + esc(s.body) + moon;
 }
 
-function planView(plan, runByDest) {
-  runByDest = runByDest || {};
-  const load = plan.load || {};
+// container-size breakdown of one cargo line, as "n×size" groups (largest first),
+// e.g. 24 SCU capped at 16 → "1×16 · 1×8". Reuses the mission tier's box cap.
+function boxBreakdown(qty, maxBox) {
+  if (!qty || typeof synthBoxes !== "function") return "";
+  const by = {};
+  synthBoxes(qty, maxBox).forEach(b => { by[b.scu] = (by[b.scu] || 0) + 1; });
+  return Object.keys(by).map(Number).sort((a, b) => b - a).map(s => `${by[s]}×${s}`).join(" · ");
+}
+// one cargo chip on a stop row: material · qty · container breakdown. Name and qty stay
+// inline-editable, and a leg tick lets a stop be marked delivered without leaving Plan.
+function cargoChip(it, maxBox) {
+  const brk = boxBreakdown(it.qty, maxBox);
+  return `<span class="cargochip">${legCheck(it.mission_id, it.oid, false)}<span class="cc-name">${cargoCell(it.cargo, it.mission_id, it.oid)}</span> <span class="cc-qty">${qtyCell(it.qty, it.mission_id, it.oid)}</span>${brk ? ` <span class="cc-box sub">${brk}</span>` : ""}</span>`;
+}
+
+// The section header — matches the app's .arch-sub header language (was the unstyled .archbar).
+function planHead(d, stops, jumps, hasGrid, access, banded, cap, placed, totalScu, empty) {
+  const free = (hasGrid && cap) ? ` · ${num(Math.max(0, cap - placed))} SCU free` : "";
+  const shipBit = hasGrid ? ` · ${esc(d.ship)} ${num(totalScu)}/${num(cap)} SCU`
+    : (d.ship ? ` · ${esc(d.ship)}` : "");
+  const title = empty ? `Trip Plan${shipBit}` : `Trip Plan · ${stops} stop(s) · ${jumps} jump(s)${shipBit}`;
+  const sub = empty
+    ? "no cargo staged — accept hauling contracts and your route &amp; load plan appear here"
+    : (hasGrid ? `${accessLabel(access)} · ${banded ? "loaded front-to-back" : "load order doesn't matter"}${free}`
+               : "drag a stop to set your visit &amp; load order");
+  const reset = ROUTE_ORDER
+    ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
+  return `<header class="plan-head"><span class="arch-title">${title}</span>
+    <span class="sub">${sub}</span>${reset}</header>`;
+}
+
+// The whole Plan section: itinerary list (= load order) + the 3D hold, from one snapshot.
+function planView(d) {
+  const hasGrid = !!(d.ship && d.ship_grid && d.ship_grid.length);
+  const access = (hasGrid && typeof accessFor === "function") ? accessFor(d.ship) : { open: true };
+  const banded = !!access.axis;
+
+  // manual drag order wins everywhere (list order, load order, hold packing)
+  const planSorted = (d.plan && d.plan.stops)
+    ? { ...d.plan, stops: byRouteOrder(d.plan.stops, s => s.station) } : { stops: [] };
+  const hasStops = planSorted.stops && planSorted.stops.length;
+  if (!hasStops && !hasGrid)
+    return standby("No Routes Plotted",
+      "Active contracts are bundled into <b>origin → destination</b> runs, then ordered into a fewest-jump itinerary and a hold-loading plan. Plot a haul to chart your route.",
+      "no active legs");
+
+  // one bundle per destination → one band in the hold (no destination mixing)
+  const groups = cargoGroups(d);
+  const order = !hasGrid ? groups
+    : (banded ? [...groups].sort((a, b) => a.routeIdx - b.routeIdx) : loadOrder(groups));
+  const shipPacked = hasGrid ? packGroups(d.ship_grid, order, banded ? access : null) : null;
+  const cap = d.ship_scu || 0, placed = shipPacked ? shipPacked.placedScu : 0;
+  const totalScu = groups.reduce((a, g) => a + g.scu, 0);
+  const hold = hasGrid ? holdHtml(d, shipPacked, access) : "";
+
+  // stable destination hue (matches the hold's box hues) + 1-based physical load position
+  // (banded ships load deepest/last-delivered first, so the badge counts from the hatch).
+  const hueOf = {}; let hi = 0;
+  (d.unloading || []).forEach(g => { if (!(g.location in hueOf)) hueOf[g.location] = destHue(hi++); });
+  const loadPos = {}; const gByDest = {};
+  groups.forEach(g => { gByDest[g.dest] = g; });
+  ((hasGrid && banded) ? [...order].reverse() : order).forEach((g, i) => { loadPos[g.dest] = i + 1; });
+
+  if (!hasStops)
+    return `<div class="planwrap">${planHead(d, 0, 0, hasGrid, access, banded, cap, placed, totalScu, true)}
+      <div class="sub" style="margin:10px 2px 14px">No cargo staged yet — accept hauling contracts and your route &amp; load plan appear here.</div>
+      ${hold}</div>`;
+
+  // per-mission box-size cap (Medium 8-vs-16 keys off the mission's TOTAL SCU)
+  const byId = {}; (d.missions || []).forEach(m => { byId[m.mission_id] = m; });
+  const mTotal = {};
+  planSorted.stops.forEach(s => (s.items || []).forEach(it => {
+    mTotal[it.mission_id] = (mTotal[it.mission_id] || 0) + (it.qty || 0);
+  }));
+  const maxBoxOf = (mid) => tierMaxBox((byId[mid] || {}).title, mTotal[mid] || 0);
+
+  // origin(s) + mission count rolled up by destination, from the route runs
+  const runByDest = {};
+  (d.routes || []).forEach(r => {
+    const e = runByDest[r.destination] || (runByDest[r.destination] = { origins: [], missions: 0, partial: false });
+    if (r.origin && !e.origins.includes(r.origin)) e.origins.push(r.origin);
+    e.missions += r.mission_count || 0;
+    e.partial = e.partial || r.has_partial;
+  });
+
+  // group consecutive stops under a body/moon header to show jumps
+  let lastKey = null, n = 0;
+  const stopRows = planSorted.stops.map(s => {
+    const key = `${s.system}/${s.body}/${s.moon || ""}`;
+    const header = key !== lastKey
+      ? `<li class="plan-leg"><span class="plan-jump">${++n}</span>${bodyLabel(s)}</li>` : "";
+    lastKey = key;
+    const hue = hueOf[s.station] != null ? hueOf[s.station] : destHue(0);
+    const pos = loadPos[s.station];
+    const run = runByDest[s.station] || { origins: [], missions: 0, partial: false };
+    const grp = gByDest[s.station];
+    const sharedTag = grp && grp.shared
+      ? ' <span class="ls-alone" title="carries a cargo type split across stops — load this stop fully before the next, so the identical boxes don\'t get mixed up">⚠ shared</span>' : "";
+    const from = run.origins.length
+      ? `<div class="ps-from sub">from ${run.origins.map(esc).join(", ")}${run.missions ? " · " + run.missions + " mission(s)" : ""}</div>` : "";
+    const chips = (s.items || []).map(it => cargoChip(it, maxBoxOf(it.mission_id))).join("");
+    // drag handle only, so clicking the station/cargo cells to edit never starts a drag
+    return header + `<li class="card plan-stop route" data-dest="${esc(s.station)}"
+        ondragover="routeDragOver(event)" ondragleave="routeDragLeave(event)"
+        ondrop="routeDrop(event)" ondragend="routeDragEnd(event)">
+      <h3><span class="ends"><button type="button" class="route-grip" draggable="true"
+          title="Drag, or focus and use ↑/↓, to reorder this stop" aria-label="Reorder this stop — use arrow up or down"
+          ondragstart="routeDragStart(event)" onkeydown="routeGripKey(event)">⠿</button>${hasGrid ? `<span class="ps-sw" style="background:hsl(${hue},64%,52%)"></span>` : ""}${(hasGrid && pos) ? `<span class="ps-pos" title="load #${pos}${banded ? " — loaded deepest-first" : ""}">${pos}</span>` : ""}${stationCell(s.station, s.zone)}${run.partial ? ' <span class="warn">⚠</span>' : ""}${sharedTag}</span>
+        <span class="scu">${SCU(s.scu, run.partial)}</span></h3>
+      ${from}<div class="ps-cargo">${chips}</div></li>`;
+  }).join("");
+
+  const overScu = shipPacked ? shipPacked.overflow.reduce((a, b) => a + b.scu, 0) : 0;
+  const over = overScu
+    ? `<div class="note">⚠ ${num(overScu)} SCU won't fit this ${num(cap)} SCU hold — you'll need another run.</div>` : "";
+  const ambig = (hasGrid && order.some(g => g.shared))
+    ? `<div class="note">⚠ A cargo type is bound for more than one destination — its boxes look identical. Load each stop marked <b>⚠ shared</b> <b>fully</b> before the next, so the twins don't get mixed up.</div>` : "";
+
+  const load = planSorted.load || {};
   const loadItems = (load.items || [])
     .map(it => `<span class="chip">${esc(it.cargo)}${it.qty ? " " + num(it.qty) : ""}</span>`).join("");
   const loadCard = `<div class="plan-load">
     <div class="plan-step">LOAD</div>
     <div class="plan-body"><div class="plan-station">${esc(load.station || "—")}</div>
       <div class="plan-chips">${loadItems || '<span class="sub">no cargo outstanding</span>'}</div></div>
-    <div class="scu">${num(plan.scu_total || 0)} SCU</div></div>`;
+    <div class="scu">${num(planSorted.scu_total || 0)} SCU</div></div>`;
 
-  // group consecutive stops under a body/moon header to show jumps
-  let lastKey = null, n = 0;
-  const stopCards = plan.stops.map(s => {
-    const key = `${s.system}/${s.body}/${s.moon || ""}`;
-    const header = key !== lastKey
-      ? `<div class="plan-leg"><span class="plan-jump">${++n}</span>${bodyLabel(s)}</div>` : "";
-    lastKey = key;
-    const rows = s.items.map(it =>
-      `<div class="row">${legCheck(it.mission_id, it.oid, false)}<div class="rowmain">
-         <span class="cargo">${cargoCell(it.cargo, it.mission_id, it.oid)}</span></div>
-         <div class="qty">${qtyCell(it.qty, it.mission_id, it.oid)}</div></div>`).join("");
-    // origin(s) + mission count for this destination, rolled up from the route runs
-    const run = runByDest[s.station] || { origins: [], missions: 0, partial: false };
-    const from = run.origins.length
-      ? `<div class="row"><div class="sub">from ${run.origins.map(esc).join(", ")}${run.missions ? " · " + run.missions + " mission(s)" : ""}</div></div>` : "";
-    // drag handle only, so clicking the station/cargo cells to edit never starts a drag
-    return header + `<div class="card plan-stop route" data-dest="${esc(s.station)}"
-        ondragover="routeDragOver(event)" ondragleave="routeDragLeave(event)"
-        ondrop="routeDrop(event)" ondragend="routeDragEnd(event)"><h3>
-        <span class="ends"><button type="button" class="route-grip" draggable="true"
-          title="Drag, or focus and use ↑/↓, to reorder this stop" aria-label="Reorder this stop — use arrow up or down"
-          ondragstart="routeDragStart(event)" onkeydown="routeGripKey(event)">⠿</button>${stationCell(s.station, s.zone)}${run.partial ? ' <span class="warn">⚠</span>' : ""}</span>
-        <span class="scu">${SCU(s.scu, run.partial)}</span></h3>${rows}${from}</div>`;
-  }).join("");
-
-  const reset = ROUTE_ORDER
-    ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
-  return `<div class="planwrap">
-    <div class="archbar"><span class="arch-title">Route Plan · ${plan.stops.length} stop(s) · ${n || plan.stops.length} jump(s)</span>
-      <span class="sub">drag a stop to set your visit &amp; load order</span>${reset}</div>
+  return `<div class="planwrap">${planHead(d, planSorted.stops.length, n, hasGrid, access, banded, cap, placed, totalScu, false)}${over}${ambig}
     ${loadCard}
-    <div class="plan-stops" id="routegrid">${stopCards}</div>
-  </div>`;
-}
-
-function routeCards(routes, d) {
-  // Apply the user's manual drag order so the itinerary, the load order and the
-  // manifest packing all agree on the visit sequence.
-  const planSorted = (d.plan && d.plan.stops)
-    ? { ...d.plan, stops: byRouteOrder(d.plan.stops, s => s.station) } : d.plan;
-  if (!planSorted || !planSorted.stops || !planSorted.stops.length)
-    return standby("No Routes Plotted",
-      "Active contracts are bundled into <b>origin → destination</b> runs, then ordered into a fewest-jump itinerary. Plot a haul to chart your route.",
-      "no active legs");
-  // roll the runs up by destination → its origin(s), mission count, and partial flag
-  const runByDest = {};
-  (routes || []).forEach(r => {
-    const e = runByDest[r.destination] || (runByDest[r.destination] = { origins: [], missions: 0, partial: false });
-    if (r.origin && !e.origins.includes(r.origin)) e.origins.push(r.origin);
-    e.missions += r.mission_count || 0;
-    e.partial = e.partial || r.has_partial;
-  });
-  return planView(planSorted, runByDest) + partialNote(d);
+    <ol class="plan-stops" id="routegrid" onmouseover="rowHover(event)" onmouseout="rowHover(event)">${stopRows}</ol>
+    ${hold}</div>` + partialNote(d);
 }
 
 // ---- drag-reorder of the route runs (sets the manual delivery/load order) ---- //
@@ -968,7 +1027,7 @@ function renderAll(d) {
   // the 3s poll; DRAG_DEST guards a route drag; GRID_HOVER guards the hold highlight. Plan
   // renders only its active sub, so combining all three keeps either sub stable mid-interaction.
   if (!EDIT_CELL) setHTML("cargo", cargoView(d));
-  if (!EDIT_CELL && DRAG_DEST == null && !GRID_HOVER) setHTML("plan", planView2(d));
+  if (!EDIT_CELL && DRAG_DEST == null && !GRID_HOVER) setHTML("plan", planView(d));
   if (EDIT === null) setHTML("contracts", missionsTable(d.missions));  // don't clobber an open editor
 }
 
@@ -1024,14 +1083,12 @@ function tierMaxBox(title, totalScu) {
   }
 }
 
-// All outstanding cargo, staged as elevators. Cargo is bundled per destination, then
-// those bundles are packed onto AS FEW elevators as possible: two bundles may ride the
-// same elevator unless they carry the SAME cargo TYPE to different stops — those boxes
-// are identical and would be indistinguishable once mixed (e.g. Aluminum→A and
-// Aluminum→B must stay apart, but Scrap→C can ride with either). Boxes are tagged with
-// their destination's hue. An elevator is flagged `shared` when it carries a type that
-// also rides another elevator, so the loader knows to load it fully before the next.
-// SCU is synthesized into standard containers capped by each mission's size tier;
+// All outstanding cargo, bundled into ONE GROUP PER DESTINATION — each stop becomes its
+// own hold band so cargo for different destinations is never stacked together. Boxes
+// carry their destination's hue. A group is flagged `shared` when it carries a cargo
+// TYPE that also goes to another destination (e.g. Aluminum→A and Aluminum→B): those
+// boxes are identical, so load each such stop fully before the next to avoid mixing the
+// twins. SCU is synthesized into standard containers capped by each mission's size tier;
 // `routeIdx` is the earliest delivery position (loads last / on top).
 function cargoGroups(d) {
   const byId = {};
@@ -1075,34 +1132,48 @@ function cargoGroups(d) {
     g.routeIdx = Math.min(g.routeIdx, it.idx);
   }
 
-  // greedy first-fit: drop each bundle (earliest delivery first) onto the first elevator
-  // that shares no cargo type with it; otherwise start a new elevator.
-  const elevators = [];
-  for (const bnd of Object.values(byDest).sort((a, b) => a.routeIdx - b.routeIdx)) {
-    let e = elevators.find(e => ![...bnd.types].some(t => e.types.has(t)));
-    if (!e) { e = { dests: [], types: new Set(), cargo: [], scu: 0, boxes: [], routeIdx: Infinity }; elevators.push(e); }
-    e.dests.push(bnd.dest);
-    bnd.types.forEach(t => e.types.add(t));
-    for (const c of bnd.cargo) if (!e.cargo.includes(c)) e.cargo.push(c);
-    e.scu += bnd.scu; e.boxes.push(...bnd.boxes);
-    e.routeIdx = Math.min(e.routeIdx, bnd.routeIdx);
-  }
-
-  return elevators.map(e => ({
-    shared: e.cargo.some(isAmbiguous),    // carries a type that also rides another elevator
-    dest: e.dests.join(", "), cargo: e.cargo.join(", "),
-    hue: hueOf[e.dests[0]], scu: e.scu, boxes: e.boxes, routeIdx: e.routeIdx,
-  }));
+  // one group per destination — each stop gets its own hold band, so cargo for
+  // different destinations is never stacked together. `shared` flags a stop carrying a
+  // cargo type that also rides another stop (identical-looking boxes): load it fully
+  // before the next so the twins don't get mixed up.
+  return Object.values(byDest)
+    .sort((a, b) => a.routeIdx - b.routeIdx)
+    .map(g => ({
+      shared: g.cargo.some(isAmbiguous),
+      dest: g.dest, cargo: g.cargo.join(", "),
+      hue: g.hue, scu: g.scu, boxes: g.boxes, routeIdx: g.routeIdx,
+    }));
 }
 
-// Highlight one elevator's boxes in the ship hold (dim the rest). gid===null clears.
-function hlElev(gid) {
-  GRID_HOVER = gid != null;   // freeze the grid repaint while the highlight is active
+// Bidirectional, non-destructive highlight keyed by DESTINATION: brighten that stop's
+// boxes in the hold AND its row in the list, without hiding the rest. dest===null clears.
+// Freezes the Plan repaint while active so the SSE/poll doesn't wipe the highlight.
+function hlDest(dest) {
+  GRID_HOVER = dest != null;
   const wrap = $("holdwrap");
-  if (!wrap) return;
-  wrap.classList.toggle("hling", gid != null);
-  wrap.querySelectorAll(".cg-box").forEach(b =>
-    b.classList.toggle("hl-on", gid != null && b.dataset.gid === String(gid)));
+  if (wrap) wrap.querySelectorAll(".cg-box").forEach(b =>
+    b.classList.toggle("hl-on", dest != null && b.dataset.dest === dest));
+  document.querySelectorAll("#routegrid .card.route").forEach(c =>
+    c.classList.toggle("hl-row", dest != null && c.dataset.dest === dest));
+}
+// Delegated hover on the stop list / the hold — read the dest off the closest row/box.
+// On mouseout, only clear when the pointer truly leaves the container (not when moving
+// between two children), so highlights don't flicker.
+function rowHover(ev) {
+  if (ev.type === "mouseout") {
+    const g = $("routegrid"); if (g && g.contains(ev.relatedTarget)) return;
+    return hlDest(null);
+  }
+  const row = ev.target.closest(".card.route");
+  hlDest(row ? row.dataset.dest : null);
+}
+function boxHover(ev) {
+  if (ev.type === "mouseout") {
+    const w = $("holdwrap"); if (w && w.contains(ev.relatedTarget)) return;
+    return hlDest(null);
+  }
+  const box = ev.target.closest(".cg-box");
+  hlDest(box ? box.dataset.dest : null);
 }
 
 const NEAR = { rear: "rear", front: "front", left: "left", right: "right" };
@@ -1113,84 +1184,11 @@ function accessLabel(access) {
     ? (access.both ? "side-loading · left + right hatches" : "side-loading · " + NEAR[access.near] + " hatch")
     : (access.both ? "front + rear hatches" : NEAR[access.near] + " hatch");
 }
-// Load order — the hold's single legend + sequence. Each row is one elevator: a swatch
-// per DESTINATION it carries (deduped from its boxes, so the box colours stay readable
-// even when the packer combines stops onto one elevator), the cargo, and its SCU. For
-// banded ships the PHYSICAL sequence is the reverse of the band order — load the deepest
-// (last-delivered) cargo first so the first delivery ends up at the hatch. gid indexes
-// `order` (where each group was packed). Open ships: any order.
-function loadSeqHtml(order, banded, access) {
-  const rows = order.map((g, i) => ({ g, gid: i }));
-  const seqRows = banded ? [...rows].reverse() : rows;
-  const seqNote = banded
-    ? `load deepest (last delivered) first, so the first delivery ends up right at the ${NEAR[access.near]} hatch · hover to locate in the hold`
-    : `every box is reachable here, so order doesn't matter · hover to locate in the hold`;
-  const swatches = (g) => {
-    const seen = {}, hues = [];
-    (g.boxes || []).forEach(b => { if (!(b.dest in seen)) { seen[b.dest] = 1; hues.push(b.hue); } });
-    if (!hues.length) hues.push(g.hue);
-    return hues.map(h => `<span class="cg-sw" style="background:hsl(${h},64%,52%)"></span>`).join("");
-  };
-  return `<div class="loadseq"><span class="ls-lbl">Load order <span class="sub">(${seqNote})</span></span>
-    <ol>${seqRows.map(({ g, gid }) =>
-      `<li tabindex="0" onmouseenter="hlElev(${gid})" onmouseleave="hlElev(null)" onfocus="hlElev(${gid})" onblur="hlElev(null)"><span class="ls-sw">${swatches(g)}</span>
-        <span class="ls-dest">${esc(g.dest)}</span> <span class="ls-cargo sub">${esc(g.cargo)}</span>
-        ${g.shared ? '<span class="ls-alone" title="carries a cargo type split across elevators — load this one fully before the next">⚠ shared</span>' : ""}
-        <span class="ls-scu sub">${num(g.scu)} SCU</span></li>`).join("")}</ol></div>`;
-}
-// The 3D hold render wrapped in #holdwrap (the hover-highlight target).
+// The 3D hold render wrapped in #holdwrap (the hover-highlight target). Delegated
+// mouseover/out drive the bidirectional highlight (box ↔ list row).
 function holdHtml(d, packed, access) {
-  return `<div id="holdwrap">` + cargoGridHtml(d.ship_grid, { scale: 22, packed, layout: d.ship_layout, access }) + `</div>`;
-}
-function gridView(d) {
-  if (!d.ship) return standby("No Ship Detected",
-    "Board a ship in-game — or pick one from the SHIP box — and its cargo grid appears here.",
-    "awaiting ship");
-  if (!d.ship_grid || !d.ship_grid.length) return standby("No Grid Data",
-    `<b>${esc(d.ship)}</b> isn't in the cargo-grid database, or carries no cargo grid.`,
-    "no geometry");
-
-  const groups = cargoGroups(d);
-  const cap = d.ship_scu || 0;
-  const totalScu = groups.reduce((a, g) => a + g.scu, 0);
-
-  // Per-ship cargo access (from the hatch survey): banded ships unload front-to-back
-  // from a hatch; "open" ships (externals / cargo lifts / multi-side) have every box
-  // reachable, so load order is irrelevant.
-  const access = (typeof accessFor === "function") ? accessFor(d.ship) : { open: true };
-  const banded = !!access.axis;
-
-  // One header line carries ship · fill · access · free SCU (the old separate legend
-  // "Free" chip and the redundant "Ship hold" label both folded away — the load-order
-  // list below is the colour key, and the header already names the hold).
-  const headHtml = (placed) => {
-    const free = cap ? ` · ${num(Math.max(0, cap - placed))} SCU free` : "";
-    return `<div class="archbar">
-      <span class="arch-title">${esc(d.ship)} · ${num(totalScu)} / ${num(cap)} SCU</span>
-      <span class="sub">${accessLabel(access)} · ${banded ? "loaded front-to-back" : "load order doesn't matter"}${free}</span></div>`;
-  };
-
-  if (!groups.length) {
-    const msg = "No cargo to load yet — accept hauling contracts and your picked-up cargo stages here by destination.";
-    return headHtml(0) + `<div class="sub" style="margin:6px 2px 14px">${msg}</div>`
-      + holdHtml(d, { placed: [] }, access);
-  }
-
-  // Banded ships pack front-to-back: order groups first-delivered-first so group 0
-  // gets the band AT the hatch and nothing later sits in front of it. Open ships:
-  // layering is irrelevant; keep the existing order. packGroups tags each placed
-  // box with its group index (gid) for the hover-highlight.
-  const order = banded ? [...groups].sort((a, b) => a.routeIdx - b.routeIdx) : loadOrder(groups);
-  const shipPacked = packGroups(d.ship_grid, order, banded ? access : null);
-  const overScu = shipPacked.overflow.reduce((a, b) => a + b.scu, 0);
-
-  const over = overScu
-    ? `<div class="note">⚠ ${num(overScu)} SCU won't fit this ${num(cap)} SCU hold — you'll need another run.</div>` : "";
-  const ambig = order.some(g => g.shared)
-    ? `<div class="note">⚠ A cargo type is bound for more than one destination — its boxes look identical. Load each elevator marked <b>⚠ shared</b> <b>fully</b> before raising the next, so the twins don't get mixed up.</div>` : "";
-  const seq = loadSeqHtml(order, banded, access);
-
-  return headHtml(shipPacked.placedScu) + over + ambig + seq + holdHtml(d, shipPacked, access);
+  return `<div id="holdwrap" onmouseover="boxHover(event)" onmouseout="boxHover(event)">`
+    + cargoGridHtml(d.ship_grid, { scale: 22, packed, layout: d.ship_layout, access }) + `</div>`;
 }
 
 // ---- editor actions ---- //
@@ -2323,7 +2321,7 @@ function planResultHtml(r) {
 // whole module is initialised — activating #archive/#mining calls loadSessions()/initMining(),
 // which touch state declared far below the nav setup.
 const LEGACY_HASH = { loading: ["cargo", () => CARGO_SUB = "pickup"], unloading: ["cargo", () => CARGO_SUB = "dropoff"],
-                      routes: ["plan", () => PLAN_SUB = "route"], grid: ["plan", () => PLAN_SUB = "hold"] };
+                      routes: ["plan", () => {}], grid: ["plan", () => {}] };
 const _hash = location.hash.slice(1);
 if (LEGACY_HASH[_hash]) { LEGACY_HASH[_hash][1](); activateTab(LEGACY_HASH[_hash][0]); }
 else if (TABS.includes(_hash)) activateTab(_hash);

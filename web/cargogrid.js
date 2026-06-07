@@ -222,7 +222,7 @@
                         for (let x = ox; x < ox + bw; x++) set.add(key(x, y, z));
                     placed.push({
                       bi, x: dx + ox, y: dz + oy, z: (c.y || 0) + oz,
-                      w: bw, l: bl, h: bh, hue: item.hue, scu: item.scu, gid: item.gid,
+                      w: bw, l: bl, h: bh, hue: item.hue, scu: item.scu, gid: item.gid, dest: item.dest,
                       label: (item.dest ? item.dest + " · " : "") + `${item.scu} SCU (${bw}×${bl}×${bh})`,
                     });
                     placedScu += item.scu;
@@ -420,7 +420,7 @@
     const col = [top, yw, yw, xw, xw];
     const f = boxFaces(W, L, H, (i, fw, fh, tf) =>
       `<div class="cgc" style="${st(col[i], fw, fh)};transform-origin:0 0;transform:${tf}"></div>`);
-    return `<div class="cg-box" data-gid="${b.gid == null ? "" : b.gid}" title="${esc(b.label)}" style="transform:translate3d(${bx * S}px,${by * S}px,${b.z * S}px)">${f}</div>`;
+    return `<div class="cg-box" data-gid="${b.gid == null ? "" : b.gid}" data-dest="${esc(b.dest == null ? "" : b.dest)}" title="${esc(b.label)}" style="transform:translate3d(${bx * S}px,${by * S}px,${b.z * S}px)">${f}</div>`;
   }
 
   // Flat (non-rotated) overlays placed in cg-scene at the projected position of a
