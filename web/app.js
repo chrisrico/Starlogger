@@ -1789,73 +1789,82 @@ function updateReplayBar() {
   if (scrub && +scrub.value !== REPLAY_I) scrub.value = REPLAY_I;  // keep slider synced for ◀/▶
 }
 
-// ---- poll loop ---- //
-// When the tracker process exits, /api/state stops answering. We opened this tab for
-// the user on launch, so we clean it up too: once we've been down for
-// DISCONNECT_CLOSE_MS (long enough to ride out a brief restart blip) we silently close
-// the tab — no countdown UI. window.close() is only honored for script-opened windows
-// in some browsers (this one was opened by the OS); if it's refused we fall back to an
-// unambiguous "safe to close" overlay.
-const DISCONNECT_CLOSE_MS = 5000;
-let _lastOkTs = Date.now();
-let _dcTimer = null;     // pending auto-close timer, null while connected
+// ---- live stream ---- //
+// The tracker pushes the full snapshot over SSE whenever the log changes (real-time, no
+// polling). The open connection also tells the server a dashboard is attached, so the
+// tracker stays alive while this tab is open and shuts itself down only once the last tab
+// closes. Shutdown is the server's job now, so this tab never self-closes; on a dropped
+// connection we just show a passive banner and let EventSource auto-reconnect (which also
+// reattaches silently when the tracker is restarted).
 
-function clearDisconnect() {        // reconnected before the timer fired
-  if (_dcTimer) { clearTimeout(_dcTimer); _dcTimer = null; }
+function showDisconnect(msg) {
+  let el = $("dcbanner");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "dcbanner";
+    el.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;" +
+      "background:#5a1d1d;color:#f4dada;font:600 13px/1.4 system-ui,sans-serif;" +
+      "text-align:center;padding:6px 12px";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg || "Tracker disconnected — reconnecting…";
+  el.style.display = "block";
+}
+function hideDisconnect() {
+  const el = $("dcbanner");
+  if (el) el.style.display = "none";
 }
 
-function _closeTab() {
-  window.close();
-  setTimeout(() => {                // still here? the browser refused the close
-    document.body.innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:center;height:100vh;' +
-      'font:600 16px/1.5 system-ui,sans-serif;color:#9aa;text-align:center;padding:24px">' +
-      'Tracker disconnected — this tab is safe to close.</div>';
-  }, 200);
+// Apply a freshly-received live snapshot — from the SSE push or a manual refresh().
+function applySnapshot(d) {
+  LAST = d;
+  if (REPLAY_MODE) return;   // keep LAST fresh underneath; the replay view owns the screen
+  // Skip the whole render pass when the snapshot is byte-identical to the last one
+  // rendered: setHTML already no-ops the DOM, this also skips building the HTML strings +
+  // cargo packing. User interactions call renderAll() directly (unguarded), so an open
+  // editor/drag still repaints immediately.
+  const sig = JSON.stringify(d);
+  if (sig !== _lastRenderSig) {
+    _lastRenderSig = sig;
+    renderAll(curData());                  // render every tab from the live snapshot
+  }
+  if (TAB === "archive") loadSessions();  // keep archive fresh while viewing
+  const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
+  // App build: the short git hash of the running code (logged-in state already
+  // lives in the header status pill, so the footer shows the version instead).
+  const build = "build " + esc(d.app_version || "?");
+  // RSI's patch-notes page is what the launcher links to pre-update (then hides) —
+  // make the parsed game version a link back to it. Index URL always lists the
+  // current LIVE build first, so it needs no per-patch upkeep.
+  const ver = d.game_version
+    ? ` · game <a class="pn-link" href="https://robertsspaceindustries.com/en/patch-notes" target="_blank" rel="noopener">${esc(d.game_version)} ↗</a>`
+    : "";
+  $("foot").innerHTML = `synced ${esc(new Date().toLocaleTimeString())} · ${build}${ver} · ${esc(last)} · cargo db @ ${esc(d.ship_cargo_version || "?")}`;
 }
 
-function handleDisconnect() {
-  if (_dcTimer) return;             // already counting down
-  _dcTimer = setTimeout(() => { _dcTimer = null; _closeTab(); }, DISCONNECT_CLOSE_MS);
-}
-
+// One-shot pull used by action handlers to reflect a change immediately. (The mutating
+// POSTs also bump the server version, so other open tabs update via the stream; this just
+// gives the acting tab an instant repaint without waiting for the round-trip push.)
 async function refresh() {
-  if (REPLAY_MODE) return;   // replay pauses live polling; exitReplay() resumes it
   try {
-    const d = await getJSON("/api/state");
-    _lastOkTs = Date.now();
-    if (_dcTimer) clearDisconnect();   // back online -> drop the countdown
-    LAST = d;
-    // Skip the whole render pass when the snapshot is byte-identical to the last one
-    // the poll rendered: setHTML already no-ops the DOM, this also skips building the
-    // HTML strings + cargo packing each 3s tick. User interactions call renderAll()
-    // directly (unguarded), so an open editor/drag still repaints immediately.
-    const sig = JSON.stringify(d);
-    if (sig !== _lastRenderSig) {
-      _lastRenderSig = sig;
-      renderAll(curData());                  // render every tab from the live snapshot
-    }
-    if (TAB === "archive") loadSessions();  // keep archive fresh while viewing
-    const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
-    // App build: the short git hash of the running code (logged-in state already
-    // lives in the header status pill, so the footer shows the version instead).
-    const build = "build " + esc(d.app_version || "?");
-    // RSI's patch-notes page is what the launcher links to pre-update (then hides) —
-    // make the parsed game version a link back to it. Index URL always lists the
-    // current LIVE build first, so it needs no per-patch upkeep.
-    const ver = d.game_version
-      ? ` · game <a class="pn-link" href="https://robertsspaceindustries.com/en/patch-notes" target="_blank" rel="noopener">${esc(d.game_version)} ↗</a>`
-      : "";
-    $("foot").innerHTML = `synced ${esc(new Date().toLocaleTimeString())} · ${build}${ver} · ${esc(last)} · cargo db @ ${esc(d.ship_cargo_version || "?")}`;
+    applySnapshot(await getJSON("/api/state"));
   } catch (e) {
-    const secs = Math.round((Date.now() - _lastOkTs) / 1000);
-    $("foot").textContent = `waiting for tracker… (${e}) · ${secs}s`;
-    handleDisconnect();
+    $("foot").textContent = `waiting for tracker… (${e})`;
   }
 }
-refresh();
+
+function connectStream() {
+  const es = new EventSource("/api/stream");
+  es.onopen = () => hideDisconnect();
+  es.onmessage = (e) => {
+    hideDisconnect();
+    try { applySnapshot(JSON.parse(e.data)); } catch (_) { /* ignore a malformed frame */ }
+  };
+  es.onerror = () => showDisconnect();  // EventSource auto-reconnects; banner clears on reopen
+}
+
+connectStream();
 loadShipList();
-setInterval(refresh, 3000);
 
 // Keep --header-h / --footer-h synced with the sticky header and footer so the
 // Archive's two logs fill exactly the remaining viewport (heights shift as the
