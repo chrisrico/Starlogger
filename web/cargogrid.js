@@ -333,18 +333,34 @@
     "Zeus Mk II ES": { axis: "depth", near: "rear" },
   };
   const OPEN_ACCESS = { open: true };
+  // Per-ship hold hints for geometry the size heuristic mis-ranks. `secondary` is a
+  // regex on cell name: a compartment whose cells ALL match is spillover/grouping-only
+  // (never a primary hold), and EVERY other compartment is primary regardless of size.
+  // Hand-curated like SHIP_ACCESS, for ships where adjacent/stacked cells confuse the
+  // automatic primary/secondary split.
+  //   Ironclad — the secure rooms sit on a catwalk (y=3) inside the tall main holds'
+  //   vertical span, so no X/Z/Y rule cleanly isolates them. Only the FORE secure
+  //   lockers are "extra" space; the four main quadrants AND the rear secure rooms are
+  //   real cargo holds (the fore lockers can still take spillover/grouping cargo).
+  const HOLD_HINTS = {
+    "Ironclad": { secondary: /^Secure Front/i },
+  };
   // Look up a ship's access, tolerant of cargo-DB naming variants (e.g. sc-cargo
   // "C2 Hercules" vs p4k "C2 Hercules Starlifter"): exact, else one name a
   // case-insensitive prefix of the other. Unlisted → open (order doesn't matter).
+  // The resolved entry carries its HOLD_HINTS `hint` (if any) for packGroups.
   function accessFor(name) {
     if (!name) return OPEN_ACCESS;
-    if (SHIP_ACCESS[name]) return SHIP_ACCESS[name];
-    const lc = name.toLowerCase();
-    for (const k in SHIP_ACCESS) {
-      const kl = k.toLowerCase();
-      if (kl === lc || kl.startsWith(lc) || lc.startsWith(kl)) return SHIP_ACCESS[k];
+    let key = SHIP_ACCESS[name] ? name : null;
+    if (!key) {
+      const lc = name.toLowerCase();
+      for (const k in SHIP_ACCESS) {
+        const kl = k.toLowerCase();
+        if (kl === lc || kl.startsWith(lc) || lc.startsWith(kl)) { key = k; break; }
+      }
     }
-    return OPEN_ACCESS;
+    if (!key) return OPEN_ACCESS;
+    return HOLD_HINTS[key] ? { ...SHIP_ACCESS[key], hint: HOLD_HINTS[key] } : SHIP_ACCESS[key];
   }
 
   // ---- hold geometry: partition cells into physical compartments ----
@@ -433,11 +449,24 @@
     }
 
     const comps = compartments(cells);
-    const maxCap = Math.max(...comps.map(c => c.scu), 1);
-    let primary = comps.filter(c => c.scu >= SECONDARY_FRAC * maxCap);
-    if (!primary.length) primary = [comps[0]];
+    // Primary vs spillover-only: a per-ship name hint wins (a compartment whose cells all
+    // match is secondary, everything else primary); otherwise rank by size (a hold below
+    // SECONDARY_FRAC of the largest is a small secondary that fills only after the rest).
+    const hint = access.hint;
+    let primary, secondary;
+    if (hint && hint.secondary) {
+      const isSec = (c) => c.cells.every(cell => hint.secondary.test(cell.c.name || ""));
+      secondary = comps.filter(isSec);
+      primary = comps.filter(c => !isSec(c));
+      if (!primary.length) primary = comps.slice();
+    } else {
+      const maxCap = Math.max(...comps.map(c => c.scu), 1);
+      primary = comps.filter(c => c.scu >= SECONDARY_FRAC * maxCap);
+      if (!primary.length) primary = [comps[0]];
+      secondary = comps.filter(c => !primary.includes(c));
+    }
     const spillIds = new Set();
-    comps.filter(c => !primary.includes(c)).forEach(c => c.ids.forEach(id => spillIds.add(id)));
+    secondary.forEach(c => c.ids.forEach(id => spillIds.add(id)));
 
     const axis = access.axis, wAxis = axis === "width" ? "w" : "d";
     const high = access.near === "front" || access.near === "right";   // hatch at the far end
