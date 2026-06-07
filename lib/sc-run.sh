@@ -29,6 +29,14 @@ tracker_repo="https://github.com/chrisrico/starlogger.git"
 tracker_dir="$HOME/.local/share/starlogger"
 tracker="$tracker_dir/run-tracker.sh"
 
+# Self-update source (see the Self-update block). Defaults to GitHub (origin main).
+# Point STARLOGGER_UPDATE_REMOTE at a local clone -- a filesystem path or any git URL --
+# to pull from there instead, e.g. to test an unreleased launcher/tracker build without
+# pushing to GitHub:  STARLOGGER_UPDATE_REMOTE="$HOME/Code/starlogger" sc-run.sh
+# STARLOGGER_UPDATE_BRANCH overrides the branch (default main).
+update_remote="${STARLOGGER_UPDATE_REMOTE:-origin}"
+update_branch="${STARLOGGER_UPDATE_BRANCH:-main}"
+
 ############################################################################
 # Shared helpers (notify + update prompt), defined up here so the self-update
 # block that runs next can use them.
@@ -77,7 +85,8 @@ ask_update() {  # $1 = dialog text
 # file under the running shell. Skipped entirely when pinned
 # ($STARLOGGER_NO_UPDATE), offline, or not a clone -- a failed or declined
 # update never costs a launch. With no GUI dialog available and no auto-update,
-# we just notify that an update exists.
+# we just notify that an update exists. The fetch source is $update_remote /
+# $update_branch (GitHub origin main by default; see STARLOGGER_UPDATE_REMOTE above).
 ############################################################################
 apply_update() {  # re-exec into the freshly reset copy; never returns on success
     git -C "$tracker_dir" reset --hard --quiet FETCH_HEAD || return 1
@@ -89,25 +98,34 @@ apply_update() {  # re-exec into the freshly reset copy; never returns on succes
 
 if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ -z "${_SCRUN_REEXEC:-}" ] \
     && [ -d "$tracker_dir/.git" ] && command -v git >/dev/null 2>&1 \
-    && git -C "$tracker_dir" fetch --quiet --depth 1 origin main; then
+    && git -C "$tracker_dir" fetch --quiet --depth 1 "$update_remote" "$update_branch"; then
     have="$(git -C "$tracker_dir" rev-parse --short HEAD 2>/dev/null)"
     want="$(git -C "$tracker_dir" rev-parse --short FETCH_HEAD 2>/dev/null)"
     if [ -n "$want" ] && [ "$have" != "$want" ]; then
         if [ -n "${STARLOGGER_AUTO_UPDATE:-}" ]; then
             apply_update "$@"
         else
-            compare="${tracker_repo%.git}/compare/$have...$want"
+            # "View changes" opens a GitHub compare; only meaningful for the default
+            # origin (a local/custom source has no web diff -> show its path instead).
+            src_line=""
+            if [ "$update_remote" = origin ]; then
+                compare="${tracker_repo%.git}/compare/$have...$want"
+            else
+                compare=""
+                src_line="Source:    $update_remote
+"
+            fi
             text="A new version of the Starlogger tracker is available.
 
 Installed: $have
 Latest:    $want
-
+${src_line}
 Update before launching Star Citizen?"
             # Loop so "View changes" opens the diff and re-asks; any other
             # choice (or no GUI dialog) breaks out with $choice set.
             while choice="$(ask_update "$text")"; do
                 [ "$choice" = view ] || break
-                xdg-open "$compare" >/dev/null 2>&1 &
+                [ -n "$compare" ] && xdg-open "$compare" >/dev/null 2>&1 &
             done
             case "${choice:-}" in
                 update) apply_update "$@" ;;
