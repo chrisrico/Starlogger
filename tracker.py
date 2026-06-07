@@ -19,6 +19,8 @@ import json
 import os
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -32,7 +34,7 @@ from starlogger.archive import (
     load_sessions,
     save_backfill_index,
 )
-from starlogger.config import IS_WINDOWS, find_log, find_log_backups
+from starlogger.config import BASE_DIR, IS_WINDOWS, find_log, find_log_backups
 from starlogger.maintenance import run_cleanup
 from starlogger.server import create_app
 from starlogger.snapshot import build_snapshot
@@ -361,6 +363,89 @@ def _open_browser_when_ready(host: str, port: int, url: str) -> None:
         pass
 
 
+# ---- mid-session self-update ---------------------------------------------- #
+# lib/sc-run.sh pulls origin/main + re-execs only at game launch. This polls the
+# same way WHILE running so a push lands without relaunching the game: fetch ->
+# reset --hard -> re-exec. The port handoff + the dashboard's asset-hash reload
+# (server._assets_version) finish the swap. Env knobs mirror sc-run.sh.
+
+def _live_update_secs() -> int:
+    """Poll interval for the self-update loop; <= 0 disables it. Default 900s (15m)."""
+    try:
+        return int(os.environ.get("STARLOGGER_LIVE_UPDATE_SECS", "900"))
+    except ValueError:
+        return 900
+
+
+def _git(repo: str, *args: str, check: bool = True) -> str | None:
+    """Run `git -C repo args`, returning stdout. None on failure when check=False
+    (e.g. an offline fetch); raises CalledProcessError when check=True."""
+    out = subprocess.run(["git", "-C", repo, *args],
+                         capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        if check:
+            raise subprocess.CalledProcessError(out.returncode, out.args, out.stdout, out.stderr)
+        return None
+    return out.stdout
+
+
+def _pull_if_updated() -> bool:
+    """Fetch the configured upstream; if it moved past HEAD, reset --hard to it and
+    report True (caller restarts). Safe no-op (False) when disabled, not a git repo,
+    offline, already current, or the working tree is dirty -- the dirty-tree guard
+    keeps this from ever clobbering a dev checkout mid-edit (a managed install is clean)."""
+    repo = BASE_DIR
+    if os.environ.get("STARLOGGER_NO_UPDATE") or not os.path.isdir(os.path.join(repo, ".git")):
+        return False
+    if (_git(repo, "status", "--porcelain", check=False) or "").strip():
+        return False                          # uncommitted work present -> never reset over it
+    remote = os.environ.get("STARLOGGER_UPDATE_REMOTE", "origin")
+    branch = os.environ.get("STARLOGGER_UPDATE_BRANCH", "main")
+    if _git(repo, "fetch", "--quiet", "--depth", "1", remote, branch, check=False) is None:
+        return False                          # offline / bad remote -> try again next tick
+    have = (_git(repo, "rev-parse", "HEAD") or "").strip()
+    want = (_git(repo, "rev-parse", "FETCH_HEAD") or "").strip()
+    if not want or have == want:
+        return False
+    _git(repo, "reset", "--hard", "FETCH_HEAD")
+    print(f"[update] {have[:9]} -> {want[:9]}; restarting to apply", flush=True)
+    return True
+
+
+def update_loop(stop: threading.Event, restart: threading.Event, shutdown) -> None:
+    """Daemon: periodically pull upstream; on a new commit, flag a restart and stop the
+    server cleanly (shutdown() returns serve_forever() -> main's finally -> _reexec)."""
+    secs = _live_update_secs()
+    if secs <= 0:
+        return
+    while not stop.wait(secs):                # interruptible sleep; True => shutting down
+        try:
+            if _pull_if_updated():
+                restart.set()
+                shutdown()
+                return
+        except Exception as e:                # transient git/network error -> retry next tick
+            print(f"[update] check failed: {e}", flush=True)
+
+
+def _reexec() -> None:
+    """Replace this process with a fresh tracker using the same args/env. The server is
+    already stopped and the port released (main's finally), so the replacement binds
+    directly. POSIX: os.execv keeps the PID, so the setpriv --pdeathsig USR1 launcher
+    link survives (main re-arms the SIGUSR1 handler on start). Windows has neither, so
+    spawn-and-exit and let the existing port handoff take over."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # Preserve interpreter flags (-u, -O, ...) too: they live in orig_argv, not argv.
+    # (orig_argv is 3.10+; fall back to a plain rebuild on older runtimes.)
+    orig = getattr(sys, "orig_argv", None)
+    argv = [sys.executable, *orig[1:]] if orig else [sys.executable, *sys.argv]
+    if IS_WINDOWS:
+        subprocess.Popen(argv)                # new process; we then return -> main exits
+    else:
+        os.execv(sys.executable, argv)        # never returns
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Starlogger -- Star Citizen cargo/flight logger + dashboard")
     ap.add_argument("--log", help="path to Game.log (auto-detected if omitted)")
@@ -420,6 +505,7 @@ def main() -> None:
 
     stop = threading.Event()
     epoch_trigger = threading.Event()
+    restart = threading.Event()   # set by update_loop -> re-exec in the finally below
 
     # Lifecycle: live while a dashboard is open OR (on Linux) the launcher runs. The SSE
     # stream count is the dashboard-presence signal; SIGUSR1 (sent by run-tracker.sh's
@@ -471,6 +557,9 @@ def main() -> None:
                      args=(presence, stop, has_launcher_detection, _idle_timeout(),
                            time.monotonic(), httpd.shutdown, 2.0, _close_timeout()),
                      daemon=True).start()
+    # Self-update: pull upstream mid-session and re-exec when a new commit lands.
+    threading.Thread(target=update_loop, args=(stop, restart, httpd.shutdown),
+                     daemon=True).start()
     try:
         httpd.serve_forever()        # Ctrl-C (foreground) raises KeyboardInterrupt here
     except KeyboardInterrupt:
@@ -478,6 +567,8 @@ def main() -> None:
     finally:
         stop.set()
         httpd.server_close()         # release :8765 promptly for a relaunch to take over
+        if restart.is_set():
+            _reexec()                # replace this process with the updated code (POSIX: no return)
 
 
 if __name__ == "__main__":
