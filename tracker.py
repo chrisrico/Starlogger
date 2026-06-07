@@ -26,7 +26,7 @@ import time
 import urllib.request
 import webbrowser
 
-from starlogger import catalogs, contracts, scdata
+from starlogger import catalogs, contracts, scdata, settings
 from starlogger.archive import (
     ARCHIVE_SCHEMA,
     archive_session,
@@ -59,17 +59,13 @@ CLOSE_TIMEOUT_DEFAULT = 2.0
 
 
 def _idle_timeout() -> float:
-    try:
-        return max(1.0, float(os.environ.get("STARLOGGER_IDLE_TIMEOUT", IDLE_TIMEOUT_DEFAULT)))
-    except (TypeError, ValueError):
-        return IDLE_TIMEOUT_DEFAULT
+    # env STARLOGGER_IDLE_TIMEOUT > settings.json > IDLE_TIMEOUT_DEFAULT (clamped >=1).
+    return settings.resolve_number("idle_timeout")
 
 
 def _close_timeout() -> float:
-    try:
-        return max(0.5, float(os.environ.get("STARLOGGER_CLOSE_TIMEOUT", CLOSE_TIMEOUT_DEFAULT)))
-    except (TypeError, ValueError):
-        return CLOSE_TIMEOUT_DEFAULT
+    # env STARLOGGER_CLOSE_TIMEOUT > settings.json > CLOSE_TIMEOUT_DEFAULT (clamped >=0.5).
+    return settings.resolve_number("close_timeout")
 
 
 class Presence:
@@ -370,11 +366,9 @@ def _open_browser_when_ready(host: str, port: int, url: str) -> None:
 # (server._assets_version) finish the swap. Env knobs mirror sc-run.sh.
 
 def _live_update_secs() -> int:
-    """Poll interval for the self-update loop; <= 0 disables it. Default 900s (15m)."""
-    try:
-        return int(os.environ.get("STARLOGGER_LIVE_UPDATE_SECS", "900"))
-    except ValueError:
-        return 900
+    """Poll interval for the self-update loop; <= 0 disables it. Default 900s (15m).
+    env STARLOGGER_LIVE_UPDATE_SECS > settings.json > default."""
+    return settings.resolve_int("live_update_secs")
 
 
 def _git(repo: str, *args: str, check: bool = True) -> str | None:
@@ -395,12 +389,12 @@ def _pull_if_updated() -> bool:
     offline, already current, or the working tree is dirty -- the dirty-tree guard
     keeps this from ever clobbering a dev checkout mid-edit (a managed install is clean)."""
     repo = BASE_DIR
-    if os.environ.get("STARLOGGER_NO_UPDATE") or not os.path.isdir(os.path.join(repo, ".git")):
-        return False
+    if not settings.resolve_bool("auto_update") or not os.path.isdir(os.path.join(repo, ".git")):
+        return False                          # disabled (STARLOGGER_NO_UPDATE / setting) or not a clone
     if (_git(repo, "status", "--porcelain", check=False) or "").strip():
         return False                          # uncommitted work present -> never reset over it
-    remote = os.environ.get("STARLOGGER_UPDATE_REMOTE", "origin")
-    branch = os.environ.get("STARLOGGER_UPDATE_BRANCH", "main")
+    remote = settings.resolve_str("update_remote")
+    branch = settings.resolve_str("update_branch")
     if _git(repo, "fetch", "--quiet", "--depth", "1", remote, branch, check=False) is None:
         return False                          # offline / bad remote -> try again next tick
     have = (_git(repo, "rev-parse", "HEAD") or "").strip()
@@ -414,13 +408,20 @@ def _pull_if_updated() -> bool:
 
 def update_loop(stop: threading.Event, restart: threading.Event, shutdown) -> None:
     """Daemon: periodically pull upstream; on a new commit, flag a restart and stop the
-    server cleanly (shutdown() returns serve_forever() -> main's finally -> _reexec)."""
-    secs = _live_update_secs()
-    if secs <= 0:
-        return
-    while not stop.wait(secs):                # interruptible sleep; True => shutting down
+    server cleanly (shutdown() returns serve_forever() -> main's finally -> _reexec).
+
+    The interval (and whether checks happen at all) is re-read from settings every tick,
+    so toggling the interval or auto-update in the dashboard takes effect without a
+    restart. When disabled (interval <= 0), idle on a fixed cadence and keep re-checking
+    so re-enabling it from the UI resumes checks on its own."""
+    while True:
+        secs = _live_update_secs()
+        if stop.wait(secs if secs > 0 else 300.0):  # interruptible sleep; True => shutting down
+            return
+        if secs <= 0:                         # disabled -> woke only to re-read the setting
+            continue
         try:
-            if _pull_if_updated():
+            if _pull_if_updated():            # also re-checks the auto_update gate live
                 restart.set()
                 shutdown()
                 return
@@ -543,7 +544,7 @@ def main() -> None:
     # another would pile up a duplicate tab every relaunch.
     if took_over:
         print("  (replaced a running instance -- its dashboard tab will reconnect)")
-    elif not (args.no_browser or os.environ.get("STARLOGGER_NO_BROWSER")):
+    elif not args.no_browser and settings.resolve_bool("open_browser"):
         threading.Thread(target=_open_browser_when_ready,
                          args=(args.host, args.port, url), daemon=True).start()
     # make_server (not app.run) so the watchdog can stop us via httpd.shutdown() -- a

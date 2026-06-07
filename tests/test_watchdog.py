@@ -17,6 +17,18 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import tracker
+from starlogger import settings
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings(tmp_path, monkeypatch):
+    """_idle_timeout/_close_timeout now resolve env > settings.json > default, so point
+    the store at an empty throwaway file -- otherwise these tests would read whatever the
+    real install's settings.json happens to hold and the env/default assertions would
+    drift with it."""
+    monkeypatch.setattr(settings, "SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(settings, "_cache", {"mtime": None, "data": {}})
+
 
 NOW = 1000.0
 T = 30.0  # timeout
@@ -175,6 +187,20 @@ def test_idle_timeout_garbage_falls_back(monkeypatch):
 def test_idle_timeout_clamped_to_one(monkeypatch, val):
     monkeypatch.setenv("STARLOGGER_IDLE_TIMEOUT", val)
     assert tracker._idle_timeout() == 1.0
+
+
+# --- the new settings.json layer flows through the wrappers --------------- #
+
+def test_idle_timeout_from_settings(monkeypatch):
+    monkeypatch.delenv("STARLOGGER_IDLE_TIMEOUT", raising=False)
+    settings.update({"idle_timeout": 45})
+    assert tracker._idle_timeout() == 45.0
+
+
+def test_env_overrides_settings(monkeypatch):
+    settings.update({"idle_timeout": 45})
+    monkeypatch.setenv("STARLOGGER_IDLE_TIMEOUT", "10")
+    assert tracker._idle_timeout() == 10.0   # env is the escape hatch, wins over the file
 
 
 # --- Presence counter ----------------------------------------------------- #

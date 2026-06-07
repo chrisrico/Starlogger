@@ -17,7 +17,8 @@ from .jsonstore import atomic_write, read_json
 from .overrides import set_leg_field, set_leg_states
 from .replay import build_timeline, snapshot_with_overlay, state_at
 from .replay_edit import apply_override_with_siblings, apply_replay_op, seed_overlay
-from .settings import set_setting
+from .settings import describe as describe_settings, set_setting
+from .settings import update as update_settings
 from .blueprints import blueprint_catalog, lookup_blueprint
 from .contracts import load_contracts
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
@@ -253,6 +254,26 @@ def create_app(state: State, log_path: str | None = None, presence=None) -> Flas
             return jsonify({"ok": False, "error": "ship must be a string or null"}), 400
         try:
             set_setting("selected_ship", (ship or "").strip() or None)
+        except Exception as e:  # pragma: no cover
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return _ok()
+
+    @app.get("/api/settings")
+    def api_settings_get():
+        # The configurable knobs with their effective values + env-shadow flags; the
+        # dashboard's Settings panel renders straight from this schema.
+        return jsonify({"schema": describe_settings()})
+
+    @app.post("/api/settings")
+    def api_settings_set():
+        # Persist a batch of knobs to settings.json. update() validates against the
+        # schema (unknown key / bad value -> ValueError -> 400). env vars still win at
+        # read time, so a saved value may be shadowed -- the GET reports that.
+        payload = request.get_json(force=True, silent=True) or {}
+        try:
+            update_settings(payload)
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
         return _ok()
