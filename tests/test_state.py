@@ -118,5 +118,34 @@ def test_reset_clears_boarded(monkeypatch):
     assert st.boarded_ship is None and st.boarded_owner is None
 
 
+# --- snapshot version (drives SSE pushes) --------------------------------- #
+
+def test_bump_version_increments():
+    st = State()
+    assert st.version == 0
+    st.bump_version()
+    st.bump_version()
+    assert st.version == 2
+
+
+def test_bump_version_wakes_a_waiter():
+    import threading
+    import time
+    st = State()
+    woke = []
+
+    def waiter():
+        with st.version_cv:
+            st.version_cv.wait_for(lambda: st.version > 0, timeout=2)
+            woke.append(st.version)
+
+    t = threading.Thread(target=waiter)
+    t.start()
+    time.sleep(0.05)  # let the waiter park on the condition
+    st.bump_version()
+    t.join(2)
+    assert woke == [1]
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

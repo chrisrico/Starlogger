@@ -218,3 +218,48 @@ def test_leg_field_validation(client):
     assert client.post("/api/leg-field",
                        json={"mission_id": "m1", "oid": "o1", "field": "cargo",
                              "value": "Quartz"}).get_json()["ok"] is True
+
+
+# --- SSE stream presence + push ------------------------------------------- #
+
+class _Presence:
+    """Minimal stand-in for tracker.Presence: just counts connect/disconnect."""
+    def __init__(self):
+        self.streams = 0
+        self.max = 0
+
+    def stream_connect(self):
+        self.streams += 1
+        self.max = max(self.max, self.streams)
+
+    def stream_disconnect(self):
+        self.streams -= 1
+
+
+def _stream_client(monkeypatch, presence):
+    monkeypatch.setattr(server, "build_snapshot", lambda st, **kw: {"missions": [], "v": st.version})
+    app = server.create_app(State(), log_path="/fake/Game.log", presence=presence)
+    app.testing = True
+    return app.test_client()
+
+
+def test_stream_pushes_initial_snapshot_and_counts_presence(monkeypatch):
+    p = _Presence()
+    c = _stream_client(monkeypatch, p)
+    # buffered=False keeps the (infinite) generator lazy; pull exactly one frame.
+    r = c.get("/api/stream", buffered=False)
+    assert r.mimetype == "text/event-stream"
+    first = next(r.response)
+    assert b"data:" in first             # initial snapshot pushed on connect
+    assert p.streams == 1                 # the open stream is counted as present
+    r.close()                            # client gone -> generator finally runs
+    assert p.streams == 0                 # ...and presence is released
+    assert p.max == 1
+
+
+def test_stream_optional_without_presence(client):
+    # create_app(presence=None) (the default fixture) must still serve the stream.
+    r = client.get("/api/stream", buffered=False)
+    assert r.mimetype == "text/event-stream"
+    assert b"data:" in next(r.response)
+    r.close()
