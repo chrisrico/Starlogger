@@ -4,8 +4,10 @@ station reference, mineables, blueprints, contracts) behind one version-gated lo
 The heavy StarBreaker extraction lives in ``scdata``; each catalog owns its own
 save/load module (``ships``, ``reference``, ``mineables``, ``blueprints``,
 ``contracts``). This module is the catalog-agnostic engine that decides *when* to
-rebuild (only on a MAJOR game-version move, or if a cache is missing), locates the
-p4k once per pass, and isolates each rebuild from the others' failures."""
+rebuild (a cache is missing, a MAJOR game-version move, or an extract-schema bump --
+each module's ``EXTRACT_VERSION``, raised when its extraction grows/changes fields so
+installs rebuild on a code update too), locates the p4k once per pass, and isolates
+each rebuild from the others' failures."""
 
 from __future__ import annotations
 
@@ -16,7 +18,8 @@ from typing import Callable
 from .config import SHIP_CARGO_PATH
 from .patterns import major_version
 from . import scdata
-from .ships import build_ship_cargo, load_ship_cargo, save_ship_cargo
+from .ships import (build_ship_cargo, load_ship_cargo, save_ship_cargo,
+                    ships_extract_version, EXTRACT_VERSION as SHIPS_EXTRACT_VERSION)
 
 
 @dataclass
@@ -27,14 +30,19 @@ class _Catalog:
     has_cache: Callable[[], bool]            # a usable cache already exists
     cached_version: Callable[[], "str | None"]
     rebuild: Callable[[str, "str | None", str], None]
+    extract_version: int                     # this code's current extract schema (bump on shape change)
+    cached_extract_version: Callable[[], int]  # schema the on-disk cache was built with (0 == absent)
 
 
 def _reason(cat: _Catalog, ver: str | None) -> str | None:
-    """Why ``cat`` needs rebuilding: missing cache, or a MAJOR game-version move; else None."""
+    """Why ``cat`` needs rebuilding: missing cache, a MAJOR game-version move, or an
+    extract-schema bump (the generating code grew/changed fields); else None."""
     if not cat.has_cache():
         return "no cache"
     if ver and major_version(ver) != major_version(cat.cached_version()):
         return f"version {cat.cached_version() or '?'} -> {ver}"
+    if cat.extract_version != cat.cached_extract_version():
+        return f"extract schema v{cat.cached_extract_version()} -> v{cat.extract_version}"
     return None
 
 
@@ -88,23 +96,28 @@ def _build_catalogs(path: str) -> list:
     return [
         _Catalog("ship cargo",
                  lambda: bool(load_ship_cargo(path).get("ships")),
-                 lambda: load_ship_cargo(path).get("game_version"), _ship),
+                 lambda: load_ship_cargo(path).get("game_version"), _ship,
+                 SHIPS_EXTRACT_VERSION, lambda: ships_extract_version(path)),
         # Commodity + station reference data; cheap to build, gated like the rest.
         _Catalog("reference",
                  lambda: bool(reference.load_commodities()) and bool(reference.location_codes()),
-                 reference.commodities_version, _reference),
+                 reference.commodities_version, _reference,
+                 reference.EXTRACT_VERSION, reference.reference_extract_version),
         # Mineable-rock RS + composition (full DataCore extract; own file/trigger).
         _Catalog("mineables",
                  lambda: bool(mineables.load_mineables().get("rocks")),
-                 mineables.mineables_version, _mineables),
+                 mineables.mineables_version, _mineables,
+                 mineables.EXTRACT_VERSION, mineables.mineables_extract_version),
         # Crafting blueprints + requirements (same full-extract source as mineables).
         _Catalog("blueprints",
                  lambda: bool(blueprints.load_blueprints().get("blueprints")),
-                 blueprints.blueprints_version, _blueprints),
+                 blueprints.blueprints_version, _blueprints,
+                 blueprints.EXTRACT_VERSION, blueprints.blueprints_extract_version),
         # Contract taxonomy + cargo manifests (same full-extract source as mineables).
         _Catalog("contracts",
                  lambda: bool(contracts.load_contracts().get("templates")),
-                 contracts.contracts_version, _contracts),
+                 contracts.contracts_version, _contracts,
+                 contracts.EXTRACT_VERSION, contracts.contracts_extract_version),
     ]
 
 

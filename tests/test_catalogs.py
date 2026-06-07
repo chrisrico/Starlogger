@@ -16,9 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from starlogger import catalogs
 
 
-def _cat(label, has_cache, cached_ver, rebuild=None):
+def _cat(label, has_cache, cached_ver, rebuild=None, extract_ver=0, cached_extract_ver=0):
     return catalogs._Catalog(label, lambda: has_cache, lambda: cached_ver,
-                              rebuild or (lambda p4k, ver, reason: None))
+                              rebuild or (lambda p4k, ver, reason: None),
+                              extract_ver, lambda: cached_extract_ver)
 
 
 def test_reason_no_cache():
@@ -33,6 +34,19 @@ def test_reason_version_moved():
 def test_reason_fresh_is_none():
     assert catalogs._reason(_cat("x", True, "4.8.0"), "4.8.3") is None  # same major.minor
     assert catalogs._reason(_cat("x", True, "4.7"), None) is None       # no live version yet
+
+
+def test_reason_extract_schema_bumped():
+    # The code emits v1 but the on-disk cache predates the stamp (v0): rebuild even though
+    # the game version is unchanged -- this is what propagates a new field to existing installs.
+    cat = _cat("x", True, "4.8", extract_ver=1, cached_extract_ver=0)
+    assert catalogs._reason(cat, "4.8") == "extract schema v0 -> v1"
+
+
+def test_reason_extract_schema_current_is_none():
+    # Matching schema -> no rebuild; and v0-vs-absent (both 0) must NOT churn every launch.
+    assert catalogs._reason(_cat("x", True, "4.8", extract_ver=1, cached_extract_ver=1), "4.8") is None
+    assert catalogs._reason(_cat("x", True, "4.8", extract_ver=0, cached_extract_ver=0), "4.8") is None
 
 
 def test_refresh_once_rebuilds_only_stale(monkeypatch):

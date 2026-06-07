@@ -19,6 +19,11 @@ from . import scdata
 _cache = {"mtime": None, "data": {"ships": {}, "fetched_at": None, "game_version": None},
           "by_class": {}, "by_name": {}}
 
+# Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
+# dropped fields), so installs rebuild the cache on update even without a major game-version
+# move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
+EXTRACT_VERSION = 0
+
 
 def build_ship_cargo(p4k: str, progress=lambda m: None) -> dict:
     """Extract every cargo ship from the local install and re-key by display name."""
@@ -38,6 +43,7 @@ def save_ship_cargo(ships: dict, game_version: str | None = None,
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "game_version": game_version,
+        "extract_version": EXTRACT_VERSION,
         "count": len(ships),
         "ships": ships,
     })
@@ -56,6 +62,11 @@ def _parse_ships(data: dict) -> dict:
 
 def load_ship_cargo(path: str = SHIP_CARGO_PATH) -> dict:
     return load_cached(path, _cache, _parse_ships)
+
+
+def ships_extract_version(path: str = SHIP_CARGO_PATH) -> int:
+    """Extract-schema version the cache was built with (0 == absent / pre-stamp)."""
+    return int((load_ship_cargo(path) or {}).get("extract_version") or 0)
 
 
 def _lookup(name: str | None, db: dict | None) -> dict | None:

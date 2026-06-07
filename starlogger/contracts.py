@@ -31,6 +31,12 @@ _cache = {"mtime": None,
                    "fetched_at": None, "game_version": None},
           "by_template": {}}
 
+# Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
+# dropped fields), so installs rebuild the cache on update even without a major game-version
+# move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
+# v1: templates gained authoritative mission ``type``/``icon`` (commit f401e3c, 2026-06-07).
+EXTRACT_VERSION = 1
+
 
 def save_contracts(templates: list, cargo_manifests: list,
                    game_version: str | None = None, icons: dict | None = None,
@@ -39,6 +45,7 @@ def save_contracts(templates: list, cargo_manifests: list,
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "game_version": game_version,
+        "extract_version": EXTRACT_VERSION,
         "count": len(templates),
         "templates": templates,
         "cargo_manifests": cargo_manifests,
@@ -92,6 +99,11 @@ def load_contracts(path: str = CONTRACTS_PATH) -> dict:
 def contracts_version(path: str = CONTRACTS_PATH) -> str | None:
     """Game version the data was built for -- gates the rebuild on a major bump."""
     return (load_contracts(path) or {}).get("game_version")
+
+
+def contracts_extract_version(path: str = CONTRACTS_PATH) -> int:
+    """Extract-schema version the cache was built with (0 == absent / pre-stamp)."""
+    return int((load_contracts(path) or {}).get("extract_version") or 0)
 
 
 def catalog(path: str = CONTRACTS_PATH) -> list:

@@ -24,6 +24,11 @@ from .jsonstore import atomic_write, load_cached
 _cache = {"mtime": None, "data": {"blueprints": [], "fetched_at": None, "game_version": None},
           "by_name": {}}
 
+# Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
+# dropped fields), so installs rebuild the cache on update even without a major game-version
+# move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
+EXTRACT_VERSION = 0
+
 
 def save_blueprints(blueprints: list, game_version: str | None = None,
                     path: str = BLUEPRINTS_PATH) -> None:
@@ -31,6 +36,7 @@ def save_blueprints(blueprints: list, game_version: str | None = None,
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "game_version": game_version,
+        "extract_version": EXTRACT_VERSION,
         "count": len(blueprints),
         "blueprints": blueprints,
     })
@@ -53,6 +59,11 @@ def load_blueprints(path: str = BLUEPRINTS_PATH) -> dict:
 def blueprints_version(path: str = BLUEPRINTS_PATH) -> str | None:
     """Game version the data was built for -- gates the rebuild on a major bump."""
     return (load_blueprints(path) or {}).get("game_version")
+
+
+def blueprints_extract_version(path: str = BLUEPRINTS_PATH) -> int:
+    """Extract-schema version the cache was built with (0 == absent / pre-stamp)."""
+    return int((load_blueprints(path) or {}).get("extract_version") or 0)
 
 
 def blueprint_names(path: str = BLUEPRINTS_PATH) -> list:

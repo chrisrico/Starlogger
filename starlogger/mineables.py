@@ -26,6 +26,11 @@ from .jsonstore import atomic_write, load_cached
 
 _cache = {"mtime": None, "data": {"rocks": [], "fetched_at": None, "game_version": None}}
 
+# Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
+# dropped fields), so installs rebuild the cache on update even without a major game-version
+# move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
+EXTRACT_VERSION = 0
+
 
 def save_mineables(rocks: list, game_version: str | None = None,
                    path: str = MINEABLES_PATH) -> None:
@@ -33,6 +38,7 @@ def save_mineables(rocks: list, game_version: str | None = None,
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "game_version": game_version,
+        "extract_version": EXTRACT_VERSION,
         "count": len(rocks),
         "rocks": rocks,
     })
@@ -52,6 +58,11 @@ def catalog(path: str = MINEABLES_PATH) -> list:
 def mineables_version(path: str = MINEABLES_PATH) -> str | None:
     """Game version the data was built for -- gates the rebuild on a major bump."""
     return (load_mineables(path) or {}).get("game_version")
+
+
+def mineables_extract_version(path: str = MINEABLES_PATH) -> int:
+    """Extract-schema version the cache was built with (0 == absent / pre-stamp)."""
+    return int((load_mineables(path) or {}).get("extract_version") or 0)
 
 
 def rock_signatures(path: str = MINEABLES_PATH) -> list:

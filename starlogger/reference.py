@@ -33,6 +33,11 @@ _cache = {"mtime": None, "data": None,
           "commodities": {}, "commodity_names": [], "codes": {}, "station_names": [],
           "commodity_types": {}, "categories": []}
 
+# Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
+# dropped fields), so installs rebuild the cache on update even without a major game-version
+# move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
+EXTRACT_VERSION = 0
+
 
 def save_reference(commodities: dict, location_codes: dict,
                    commodity_names: list | None = None, station_names: list | None = None,
@@ -43,6 +48,7 @@ def save_reference(commodities: dict, location_codes: dict,
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "game_version": game_version,
+        "extract_version": EXTRACT_VERSION,
         "commodities": commodities,
         "commodity_names": sorted(commodity_names) if commodity_names else sorted(set(commodities.values())),
         "codes": location_codes,
@@ -108,6 +114,12 @@ def commodities_version(path: str = REFERENCE_PATH) -> str | None:
     both commodities and locations, since they're built together)."""
     data = load_cached(path, _cache, _parse)
     return (data or {}).get("game_version")
+
+
+def reference_extract_version(path: str = REFERENCE_PATH) -> int:
+    """Extract-schema version the cache was built with (0 == absent / pre-stamp)."""
+    data = load_cached(path, _cache, _parse)
+    return int((data or {}).get("extract_version") or 0)
 
 
 def location_codes(path: str = REFERENCE_PATH) -> dict:
