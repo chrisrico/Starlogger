@@ -1398,7 +1398,7 @@ function typeMark(label, icon) {
   const s = ctSlug(l, icon);
   return `<span class="ct-mark ct-${s}" title="${esc(l)}"><img class="ct-ico" alt="${esc(l)}"`
     + ` src="/mission-icons/${s}.svg" onerror="this.closest('.ct-mark').classList.add('noico')">`
-    + `<span class="ct-lbl">${esc(l)}</span></span>`;
+    + `<span class="ct-lbl lt-tag ct-${s}">${esc(l)}</span></span>`;
 }
 
 // Contract Log type filter — a set of EXCLUDED types (empty = show all), persisted.
@@ -1447,7 +1447,7 @@ function contractLogView(sessions) {
     return `<tr>
       <td class="lt-when">${fmtWhen(r.when)}</td>
       <td><span class="badge b-${r.m.status}">${esc(r.m.status)}</span></td>
-      <td>${typeMark(r.type, r.m.icon)}</td>
+      <td class="lt-type">${typeMark(r.type, r.m.icon)}</td>
       <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
       <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
   }).join("") || `<tr><td colspan="5" class="lt-empty">No contracts match the selected types.</td></tr>`;

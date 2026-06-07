@@ -388,10 +388,12 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
    and is revealed as text only when the SVG is missing (contracts not yet extracted). */
 .ct-mark{display:inline-flex;align-items:center;gap:5px;vertical-align:middle}
 .ct-ico{width:16px;height:16px;object-fit:contain;flex:none;opacity:.9}
-.ct-mark .ct-lbl{display:none;font-family:var(--mono);font-size:9.5px;
-  text-transform:uppercase;letter-spacing:.05em;color:var(--ink-1)}
+/* the label is a real .lt-tag chip (color-coded per type, matching the filter dropdown);
+   hidden by default, shown beside the icon in the Contract Log, or as the no-icon fallback. */
+.ct-mark .ct-lbl{display:none}
+.logtable .lt-type .ct-lbl{display:inline-block;font-size:10.5px;padding:3px 9px}
 .ct-mark.noico .ct-ico{display:none}
-.ct-mark.noico .ct-lbl{display:inline}
+.ct-mark.noico .ct-lbl{display:inline-block}
 .opt-ico{width:14px;height:14px;object-fit:contain;flex:none;vertical-align:middle;margin-right:2px}
 /* Type-column multiselect dropdown (header) */
 .th-type{overflow:visible}
