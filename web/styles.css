@@ -890,4 +890,15 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sp-btn.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan)}
 .sp-btn.primary:hover{color:#04121d;filter:brightness(1.07)}
 
+/* ---- update-available banner (top of the content column) ---- */
+/* #updatebar is an ID (outranks .hide) and sets display:flex, so the hidden state needs
+   the more-specific #updatebar.hide to win -- same lesson as .ovl.hide. */
+#updatebar.hide{display:none}
+#updatebar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+  padding:9px 16px;font-family:var(--mono);font-size:12.5px;color:var(--ink);
+  background:linear-gradient(90deg,rgba(var(--amber-rgb),.16),rgba(var(--amber-rgb),.04));
+  border-bottom:1px solid rgba(var(--amber-rgb),.5)}
+#updatebar .ub-msg code{color:var(--amber);font-weight:600;font-size:12px}
+#updatebar .ub-actions{display:flex;gap:8px;flex-wrap:wrap}
+
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}

@@ -1904,9 +1904,49 @@ function hideDisconnect() {
   if (el) el.style.display = "none";
 }
 
+// ---- update-available banner (tracker owns updating; this is the prompt) ----
+// The snapshot carries `update` = {available,current,latest,compare_url,mode}. In prompt
+// mode a new build shows this bar; Update now POSTs to apply (the tracker resets + restarts
+// and the asset-hash reload swaps the page), View changes opens the GitHub compare, Dismiss
+// hides it (the server won't re-offer that commit). auto/off never show a banner.
+let _updBusy = false;
+function renderUpdateBar(u) {
+  const el = $("updatebar");
+  if (!el) return;
+  if (!u || !u.available) { el.classList.add("hide"); el.innerHTML = ""; _updBusy = false; return; }
+  const view = u.compare_url
+    ? `<button class="sp-btn" onclick="window.open('${esc(u.compare_url)}','_blank','noopener')">View changes</button>`
+    : "";
+  el.innerHTML =
+    `<span class="ub-msg">⟳ New build available <code>${esc(u.current || "?")}</code> → ` +
+    `<code>${esc(u.latest || "?")}</code></span>` +
+    `<span class="ub-actions"><button class="sp-btn primary" onclick="applyUpdate(this)">Update now</button>` +
+    `${view}<button class="sp-btn" onclick="dismissUpdate()">Dismiss</button></span>`;
+  el.classList.remove("hide");
+}
+async function applyUpdate(btn) {
+  if (_updBusy) return;
+  _updBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = "Updating…"; }
+  try {
+    await postJSON("/api/update/apply");
+    // The tracker is restarting; its asset-hash bump reloads this tab into the new build.
+    // Leave the button disabled until that happens.
+  } catch (e) {
+    _updBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
+    alert("Update failed: " + e);
+  }
+}
+async function dismissUpdate() {
+  try { await postJSON("/api/update/dismiss"); } catch (_) { /* best-effort */ }
+  $("updatebar").classList.add("hide");
+}
+
 // Apply a freshly-received live snapshot — from the SSE push or a manual refresh().
 function applySnapshot(d) {
   LAST = d;
+  renderUpdateBar(d.update);   // update banner is global — show it even in replay mode
   if (REPLAY_MODE) return;   // keep LAST fresh underneath; the replay view owns the screen
   // Skip the whole render pass when the snapshot is byte-identical to the last one
   // rendered: setHTML already no-ops the DOM, this also skips building the HTML strings +
