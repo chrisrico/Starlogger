@@ -288,6 +288,24 @@ def test_quit_noop_without_fn(client):
     assert client.post("/api/quit").get_json()["ok"] is True
 
 
+# --- /api/update/check (explicit "Check for updates" button) -------------- #
+
+def test_update_check_unavailable_without_fn(client):
+    # No ON_CHECK_NOW wired (e.g. a --once host) -> 503, status "unavailable".
+    r = client.post("/api/update/check")
+    assert r.status_code == 503
+    assert r.get_json()["status"] == "unavailable"
+
+
+def test_update_check_passes_through_status(monkeypatch):
+    monkeypatch.setattr(server, "build_snapshot", lambda st, **kw: {})
+    app = server.create_app(State(), log_path="/fake/Game.log")
+    app.config["ON_CHECK_NOW"] = lambda: {"ok": True, "status": "updating", "latest": "abc1234"}
+    app.testing = True
+    j = app.test_client().post("/api/update/check").get_json()
+    assert j == {"ok": True, "status": "updating", "latest": "abc1234"}
+
+
 # --- /api/closing (deliberate tab close beacon) --------------------------- #
 
 def test_closing_marks_presence(monkeypatch):

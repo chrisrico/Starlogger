@@ -523,6 +523,30 @@ def _check_update(ustate: "UpdateState", state, trigger_restart) -> None:
         state.bump_version()                  # push the banner to every open dashboard
 
 
+def _manual_check(ustate: "UpdateState", state, trigger_restart) -> dict:
+    """The dashboard's explicit 'Check for updates' button: fetch now and, if a new build
+    exists, apply it immediately -- the click is the approval, so no banner/prompt and the
+    Updates mode is bypassed entirely. Returns a status the panel surfaces inline."""
+    repo = _repo_ready()
+    if not repo:
+        return {"ok": False, "status": "blocked"}    # dirty tree / not a clone
+    remote = settings.resolve_str("update_remote")
+    branch = settings.resolve_str("update_branch")
+    target = _fetch_target(repo, remote, branch)
+    if not target:
+        return {"ok": False, "status": "offline"}     # fetch failed / no network
+    have, want = target
+    if have == want:
+        if ustate.available:                          # drop a now-stale banner, push the clear
+            ustate.clear()
+            state.bump_version()
+        return {"ok": True, "status": "current", "build": have[:9]}
+    # New build -> apply now, off the request thread (httpd.shutdown blocks); the asset-hash
+    # reload swaps this tab into it and the completion toast fires post-reload.
+    threading.Thread(target=lambda: _apply(ustate, trigger_restart), daemon=True).start()
+    return {"ok": True, "status": "updating", "current": have[:9], "latest": want[:9]}
+
+
 def update_loop(stop: threading.Event, ustate: "UpdateState", state, trigger_restart) -> None:
     """Daemon: an initial check ~20s after start (so a launch-time update is offered promptly,
     like the old dialog), then every live_update_secs. Mode + interval are re-read each tick,
@@ -676,6 +700,8 @@ def main() -> None:
     def on_apply() -> None:
         threading.Thread(target=lambda: _apply(ustate, trigger_restart), daemon=True).start()
     app.config["ON_APPLY"] = on_apply
+    # The 'Check for updates' button: check synchronously + apply immediately if there's a build.
+    app.config["ON_CHECK_NOW"] = lambda: _manual_check(ustate, state, trigger_restart)
     threading.Thread(target=shutdown_watchdog,
                      args=(presence, stop, has_launcher_detection, _idle_timeout(),
                            time.monotonic(), httpd.shutdown, 2.0, _close_timeout()),

@@ -312,6 +312,19 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         fn()
         return _ok()
 
+    @app.post("/api/update/check")
+    def api_update_check():
+        # Explicit "Check for updates" button: fetch now and apply immediately if there's a
+        # new build (no prompt -- the click is the approval, bypassing the Updates mode). The
+        # status comes straight back; an "updating" result means the server is restarting.
+        fn = app.config.get("ON_CHECK_NOW")
+        if fn is None:
+            return jsonify({"ok": False, "status": "unavailable"}), 503
+        try:
+            return jsonify(fn())
+        except Exception as e:  # pragma: no cover
+            return jsonify({"ok": False, "status": "error", "error": str(e)}), 500
+
     @app.post("/api/update/dismiss")
     def api_update_dismiss():
         # Hide the banner for this commit (re-offered only when a newer one lands).

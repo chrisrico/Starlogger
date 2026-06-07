@@ -254,8 +254,10 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
 }
 
 /* z-index:3 lifts main above the footer (both were :2, footer later in DOM so it won
-   the tie) — lets an open dropdown overflow over the footer, still under the :6 header */
-main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
+   the tie) — lets an open dropdown overflow over the footer, still under the :6 header.
+   flex:1 0 auto grows main to fill the content column so the footer sits at the bottom of
+   the viewport on short pages (the column is min-height:100dvh), not directly under main. */
+main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3;flex:1 0 auto}
 
 /* ---- card grid ---- */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
@@ -890,6 +892,25 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sp-btn:hover{border-color:var(--cyan);color:var(--cyan)}
 .sp-btn.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan)}
 .sp-btn.primary:hover{color:#04121d;filter:brightness(1.07)}
+.sp-btn:disabled{opacity:.5;cursor:not-allowed;border-color:var(--line-2);color:var(--ink)}
+/* "Check for updates" action row: separated from the knobs above it; right-aligned status. */
+.sp-action{border-top:1px dashed var(--line);margin-top:4px;padding-top:14px}
+.sp-note{font-size:10.5px;font-family:var(--mono);color:var(--ink-3);text-align:right;max-width:160px}
+.sp-note.err{color:var(--red)}
+
+/* ---- toasts (transient bottom-right notifications, e.g. "update complete") ---- */
+.toaster{position:fixed;right:18px;bottom:18px;z-index:40;display:flex;flex-direction:column;
+  gap:8px;align-items:flex-end;pointer-events:none}
+.toast{pointer-events:auto;cursor:pointer;max-width:340px;
+  font-family:var(--mono);font-size:12px;line-height:1.4;color:var(--ink);
+  background:linear-gradient(180deg,rgba(12,20,34,.98),rgba(8,13,24,.98));
+  border:1px solid var(--line-2);border-left:3px solid var(--cyan);border-radius:3px;
+  padding:10px 14px;box-shadow:0 10px 30px -10px rgba(0,0,0,.7);
+  opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.ok{border-left-color:var(--green,#4ad991)}
+@media (max-width:640px){.toaster{left:12px;right:12px;bottom:12px;align-items:stretch}
+  .toast{max-width:none}}
 
 /* ---- update-available banner (top of the content column) ---- */
 /* #updatebar is an ID (outranks .hide) and sets display:flex, so the hidden state needs

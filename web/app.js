@@ -173,7 +173,33 @@ function renderSettings(schema) {
     g.fields.map(f =>
       `<div class="sp-row"><div class="sp-label"><span class="t">${esc(f.label)}</span>` +
       `<span class="h">${esc(f.help)}</span></div>${_settingsCtl(f)}</div>`).join("") +
+    (g.name === "Updates" ? _updateCheckRow() : "") +
     `</div>`).join("");
+  const cb = $("checkUpdateBtn");
+  if (cb) cb.onclick = checkForUpdate;
+}
+// A "Check for updates" action row appended to the Updates group: fetch + apply on the spot,
+// no prompt (the click is the approval). Distinct from the banner, which is the passive prompt.
+function _updateCheckRow() {
+  return `<div class="sp-row sp-action"><div class="sp-label">` +
+    `<span class="t">Check for updates</span>` +
+    `<span class="h">Fetch the latest build now and apply it immediately — no prompt.</span></div>` +
+    `<div class="sp-ctl"><button class="sp-btn" id="checkUpdateBtn">Check now</button>` +
+    `<span class="sp-note" id="checkUpdateMsg"></span></div></div>`;
+}
+async function checkForUpdate() {
+  const btn = $("checkUpdateBtn"), msg = $("checkUpdateMsg");
+  if (!btn) return;
+  btn.disabled = true; msg.textContent = "Checking…"; msg.classList.remove("err");
+  try {
+    const r = await postJSON("/api/update/check");
+    if (r.status === "updating") msg.textContent = `Updating → ${esc(r.latest)}…`;  // server restarts; page reloads
+    else if (r.status === "current") { msg.textContent = "Already up to date."; btn.disabled = false; }
+    else if (r.status === "offline") { msg.textContent = "Couldn't reach the update source."; btn.disabled = false; }
+    else { msg.textContent = "Updates can't run on this install."; btn.disabled = false; }
+  } catch (e) {
+    msg.textContent = "Check failed."; msg.classList.add("err"); btn.disabled = false;
+  }
 }
 async function openSettings() {
   const ov = $("settingsOverlay");
@@ -1946,10 +1972,36 @@ async function dismissUpdate() {
   $("updatebar").classList.add("hide");
 }
 
+// ---- transient toast notifications ----
+function toast(msg, kind) {
+  const host = $("toaster");
+  if (!host) return;
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.textContent = msg;
+  host.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));   // trigger the enter transition
+  const kill = () => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
+  t.onclick = kill;
+  setTimeout(kill, 7000);
+}
+
+// Always announce a completed update. app_version is the running build's git hash; when it
+// changes from the one this browser last saw (a restart re-execed into new code), an update
+// just landed — covers every path (banner, Check now, auto, settings-change). localStorage
+// dedupes across the reload and across tabs; the first load just seeds it (no toast).
+function notifyIfUpdated(v) {
+  if (!v) return;
+  const k = "starlogger_build", prev = localStorage.getItem(k);
+  if (prev && prev !== v) toast(`Update complete — now on build ${v} ✓`, "ok");
+  localStorage.setItem(k, v);
+}
+
 // Apply a freshly-received live snapshot — from the SSE push or a manual refresh().
 function applySnapshot(d) {
   LAST = d;
   renderUpdateBar(d.update);   // update banner is global — show it even in replay mode
+  notifyIfUpdated(d.app_version);   // toast once when the running build changed under us
   if (REPLAY_MODE) return;   // keep LAST fresh underneath; the replay view owns the screen
   // Skip the whole render pass when the snapshot is byte-identical to the last one
   // rendered: setHTML already no-ops the DOM, this also skips building the HTML strings +
