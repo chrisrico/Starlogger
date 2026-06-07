@@ -289,8 +289,11 @@ def create_app(state: State, log_path: str | None = None, presence=None,
             return jsonify({"ok": False, "error": str(e)}), 400
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
-        # Changing the update source is a deliberate "switch me to that build" -> apply it
-        # now (no prompt), unless updates are off. on_apply restarts only if it differs.
+        # Changing the update source here is a deliberate "switch me to that build" -> the
+        # save itself is the approval, so apply it now without a second prompt (unless updates
+        # are off). This is distinct from merely *having* a remote configured, which never
+        # bypasses the Updates mode -- the background poll still prompts there. Restarts only
+        # if the new source actually differs.
         after = (settings_str("update_remote"), settings_str("update_branch"))
         if after != before and settings_str("update_mode") != "off":
             fn = app.config.get("ON_APPLY")

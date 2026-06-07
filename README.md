@@ -25,14 +25,17 @@ curl -fsSL https://raw.githubusercontent.com/chrisrico/starlogger/main/install.s
 Then just launch Star Citizen as usual: the tracker rides along with the game and
 **checks for updates on every launch**. Nothing else to do.
 
-- **Updating**: when a new version is available, launching pops up a dialog
-  (Update / View changes / Skip). "View changes" opens the GitHub diff between your
-  installed and the latest commit. Set `STARLOGGER_AUTO_UPDATE=1` to apply updates
-  silently without the prompt, or `STARLOGGER_NO_UPDATE=1` to pin and never check.
-  Set `STARLOGGER_UPDATE_REMOTE` to a local clone path (or any git URL) to update from
-  there instead of GitHub — useful for testing an unreleased build (`STARLOGGER_UPDATE_BRANCH`
-  overrides the branch, default `main`). A non-origin source **auto-applies without
-  prompting** (you only point there to test a build you already want).
+- **Updating**: the running tracker owns updates. It checks for a new build shortly after
+  launch and periodically thereafter, and the dashboard shows a banner
+  (Update now / View changes / Dismiss). "View changes" opens the GitHub diff between your
+  installed and the latest commit. The **Updates** setting governs this: *Prompt* (default —
+  the banner), *Automatic* (apply silently), or *Off* (never check); `STARLOGGER_UPDATE_MODE`
+  (or the legacy `STARLOGGER_AUTO_UPDATE` / `STARLOGGER_NO_UPDATE`) is the env escape hatch.
+  Set `STARLOGGER_UPDATE_REMOTE` to a local clone path (or any git URL) to update from there
+  instead of GitHub (`STARLOGGER_UPDATE_BRANCH` overrides the branch, default `main`) —
+  configuring a non-origin source **still honors the Updates mode**; it no longer forces a
+  silent update. Changing the remote/branch in the Settings panel and saving applies that
+  source immediately (the save is the approval).
 - To install elsewhere, set `STARLOGGER_DATA_DIR` before running the command.
 - If the [LUG Helper](https://github.com/starcitizen-lug/lug-helper) ever reverts the
   `.desktop` launcher, **re-run the install command** — it re-asserts the launcher
@@ -83,9 +86,8 @@ game. The LIVE `Game.log` is auto-detected (Windows:
 ## Run it with the game
 
 **Linux:** the [installer](#install-linux) wires this up — your Star Citizen
-`.desktop` runs `lib/sc-run.sh`, which checks for updates (prompting unless
-`STARLOGGER_AUTO_UPDATE`/`STARLOGGER_NO_UPDATE` is set), backgrounds the dashboard, and
-then `exec`s LUG's `sc-launch.sh`. The tracker is tied to the game's lifetime via
+`.desktop` runs `lib/sc-run.sh`, which backgrounds the dashboard (the running tracker
+handles updates itself — see **Updating** above) and then `exec`s LUG's `sc-launch.sh`. The tracker is tied to the game's lifetime via
 `run-tracker.sh`'s `setpriv --pdeathsig`, so the kernel stops it whenever the game
 launcher exits — even on SIGKILL — with no `kill` line to get wrong. It skips if
 `:8765` is already serving. (The LUG Helper may revert the `.desktop` on update;

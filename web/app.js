@@ -144,7 +144,7 @@ document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activa
 
 // ---- settings overlay (sidebar gear -> dashboard-managed settings.json) ----
 // Renders straight from /api/settings' schema: one row per knob, grouped, with bool ->
-// checkbox / int|number -> number input / string -> text input. A knob shadowed by an
+// checkbox / int|number -> number input / enum -> <select> / string -> text input. A knob shadowed by an
 // env var comes back env_override:true and is shown read-only ("set via $VAR"), since
 // env wins at read time. Save POSTs only the rows the user actually changed.
 let SETTINGS_SCHEMA = null;
@@ -154,6 +154,9 @@ function _settingsCtl(f) {
   if (f.type === "bool") ctl = `<input type="checkbox" id="${id}"${f.value ? " checked" : ""}${dis}>`;
   else if (f.type === "int" || f.type === "number")
     ctl = `<input type="number" id="${id}" step="${f.type === "int" ? "1" : "0.5"}" value="${esc(f.value)}"${dis}>`;
+  else if (f.type === "enum")
+    ctl = `<select id="${id}"${dis}>` + (f.options || []).map(o =>
+      `<option value="${esc(o)}"${o === f.value ? " selected" : ""}>${esc(o[0].toUpperCase() + o.slice(1))}</option>`).join("") + `</select>`;
   else ctl = `<input type="text" id="${id}" value="${esc(f.value)}"${dis}>`;
   const env = f.env_override ? `<span class="sp-env">set via ${esc(f.env)}</span>` : "";
   return `<div class="sp-ctl">${ctl}${env}</div>`;
