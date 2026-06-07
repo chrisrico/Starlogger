@@ -18,6 +18,7 @@ from .overrides import set_leg_field, set_leg_states
 from .replay import build_timeline, snapshot_with_overlay, state_at
 from .replay_edit import apply_override_with_siblings, apply_replay_op, seed_overlay
 from .settings import describe as describe_settings, set_setting
+from .settings import resolve_str as settings_str
 from .settings import update as update_settings
 from .blueprints import blueprint_catalog, lookup_blueprint
 from .contracts import load_contracts
@@ -58,12 +59,15 @@ def _assets_version() -> str:
     return h.hexdigest()[:16]
 
 
-def create_app(state: State, log_path: str | None = None, presence=None) -> Flask:
+def create_app(state: State, log_path: str | None = None, presence=None,
+               update_state=None) -> Flask:
     # static_url_path="" serves web/ assets at the root (/styles.css, /app.js).
     # log_path (when known) backs the Archive's session-replay feature, which
     # reconstructs a past session's dashboard by re-feeding its source log.
     # presence (when given) tracks open SSE streams so the entry point's watchdog
     # knows whether a dashboard is still attached (see tracker.py).
+    # update_state (when given) carries the tracker's 'new build available?' status,
+    # merged into the snapshot so the dashboard's update banner rides the SSE push.
     app = Flask(__name__, static_folder=WEB_DIR, static_url_path="")
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
@@ -73,6 +77,14 @@ def create_app(state: State, log_path: str | None = None, presence=None) -> Flas
         # dashboard stream -- not just the tab that made the edit.
         state.bump_version()
         return jsonify({"ok": True})
+
+    def _snap(trade_only=False):
+        # The dashboard snapshot + the tracker's update status (when wired), so the
+        # "update available" banner is pushed by the same version-bump as everything else.
+        snap = build_snapshot(state, trade_only=trade_only)
+        if update_state is not None:
+            snap["update"] = update_state.as_dict()
+        return snap
 
     @app.get("/")
     def index():
@@ -87,7 +99,7 @@ def create_app(state: State, log_path: str | None = None, presence=None) -> Flas
 
     @app.get("/api/state")
     def api_state():
-        return jsonify(build_snapshot(state, trade_only=request.args.get("trade") == "1"))
+        return jsonify(_snap(trade_only=request.args.get("trade") == "1"))
 
     @app.get("/api/stream")
     def api_stream():
@@ -116,7 +128,7 @@ def create_app(state: State, log_path: str | None = None, presence=None) -> Flas
                         # Build the snapshot OUTSIDE version_cv (build_snapshot re-acquires
                         # state.lock, which is reentrant -- no deadlock).
                         last = cur
-                        snap = build_snapshot(state, trade_only=trade_only)
+                        snap = _snap(trade_only=trade_only)
                         yield f"data: {json.dumps(snap)}\n\n"
                     else:
                         yield ": keepalive\n\n"  # a failed write here -> finally -> disconnect
@@ -270,12 +282,38 @@ def create_app(state: State, log_path: str | None = None, presence=None) -> Flas
         # schema (unknown key / bad value -> ValueError -> 400). env vars still win at
         # read time, so a saved value may be shadowed -- the GET reports that.
         payload = request.get_json(force=True, silent=True) or {}
+        before = (settings_str("update_remote"), settings_str("update_branch"))
         try:
             update_settings(payload)
         except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
+        # Changing the update source is a deliberate "switch me to that build" -> apply it
+        # now (no prompt), unless updates are off. on_apply restarts only if it differs.
+        after = (settings_str("update_remote"), settings_str("update_branch"))
+        if after != before and settings_str("update_mode") != "off":
+            fn = app.config.get("ON_APPLY")
+            if fn:
+                fn()
+        return _ok()
+
+    @app.post("/api/update/apply")
+    def api_update_apply():
+        # User clicked "Update now" (prompt mode). on_apply fetches + resets + restarts off
+        # the request thread, so this returns first; the dashboard's asset-hash reload then
+        # swaps in the new build. 503 if the tracker didn't wire updating (e.g. --once host).
+        fn = app.config.get("ON_APPLY")
+        if fn is None:
+            return jsonify({"ok": False, "error": "updates unavailable"}), 503
+        fn()
+        return _ok()
+
+    @app.post("/api/update/dismiss")
+    def api_update_dismiss():
+        # Hide the banner for this commit (re-offered only when a newer one lands).
+        if update_state is not None:
+            update_state.dismiss()
         return _ok()
 
     @app.get("/api/sessions")
