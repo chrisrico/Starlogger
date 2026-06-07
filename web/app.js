@@ -1982,8 +1982,12 @@ async function refresh() {
   }
 }
 
+let _es = null;            // current EventSource, so we can tell a live one from a dead one
+let _reconnectTimer = null;
+
 function connectStream() {
-  const es = new EventSource("/api/stream");
+  if (_es) { try { _es.close(); } catch (_) {} }   // drop any stale handle before reopening
+  const es = _es = new EventSource("/api/stream");
   es.onopen = () => hideDisconnect();
   // Named `meta` event (NOT onmessage) carries the served-asset hash. First connect
   // records the baseline; a reconnect with a different hash means a new build replaced
@@ -1999,8 +2003,32 @@ function connectStream() {
     hideDisconnect();
     try { applySnapshot(JSON.parse(e.data)); } catch (_) { /* ignore a malformed frame */ }
   };
-  es.onerror = () => showDisconnect();  // EventSource auto-reconnects; banner clears on reopen
+  es.onerror = () => {
+    showDisconnect();
+    // EventSource auto-reconnects on a transient drop (readyState stays CONNECTING). But
+    // once the browser marks it CLOSED -- which mobile Firefox/Chrome do when the tab is
+    // backgrounded and the socket is reaped -- it never retries on its own, so reopen it.
+    if (es.readyState === EventSource.CLOSED) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = setTimeout(ensureStream, 2000);
+    }
+  };
 }
+
+// Reopen the stream if it isn't currently OPEN or CONNECTING. Cheap no-op when it's healthy.
+function ensureStream() {
+  if (_es && _es.readyState !== EventSource.CLOSED) return;
+  connectStream();
+}
+
+// A backgrounded tab can have its SSE socket killed without a usable error event, leaving a
+// stale/closed stream when you return. Re-establish it (and pull a fresh snapshot so the view
+// isn't stale) the moment the tab is shown again or connectivity returns.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { ensureStream(); refresh(); }
+});
+window.addEventListener("online", ensureStream);
+window.addEventListener("pageshow", ensureStream);
 
 connectStream();
 loadShipList();
