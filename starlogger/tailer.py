@@ -26,11 +26,13 @@ def tail_loop(path: str, state: State, stop: threading.Event) -> None:
             continue
 
         key = (st.st_dev, st.st_ino)
+        changed = False
         if cur_key is None or (key != cur_key and st.st_ino) or st.st_size < pos:
             # first pass, new file (relaunch), or truncated -> reparse from the top
             cur_key = key
             pos = 0
             state.reset(full=True)
+            changed = True
 
         if st.st_size > pos:
             try:
@@ -40,12 +42,17 @@ def tail_loop(path: str, state: State, stop: threading.Event) -> None:
                         if not line.endswith("\n") and not stop.is_set():
                             break  # partial trailing line; re-read next tick
                         state.feed(line)
+                        changed = True
                     pos = f.tell()
             except OSError:
                 pass
         # Flush a live archive upsert at most once per read batch (coalesces a burst of
         # completions/trades into one write; no-op unless something finished).
         state.maybe_archive()
+        # Wake SSE streamers once per batch when this tick actually changed state, so the
+        # dashboard repaints in ~real time without them polling a version number.
+        if changed:
+            state.bump_version()
         time.sleep(0.5)
 
 

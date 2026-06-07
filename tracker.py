@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import socket
 import threading
 import time
@@ -30,13 +31,97 @@ from starlogger.archive import (
     load_sessions,
     save_backfill_index,
 )
-from starlogger.config import find_log, find_log_backups
+from starlogger.config import IS_WINDOWS, find_log, find_log_backups
 from starlogger.maintenance import run_cleanup
 from starlogger.server import create_app
 from starlogger.snapshot import build_snapshot
 from starlogger.state import State
 from starlogger.stations import seed_station_names, zone_epoch
 from starlogger.tailer import parse_whole_file, tail_loop
+
+
+# Seconds an unattended tracker lingers before exiting (default; STARLOGGER_IDLE_TIMEOUT
+# overrides). "Unattended" = no dashboard SSE stream is connected AND, on Linux, the
+# launcher is gone. Comfortably covers a page reload (the stream drops, then reconnects
+# in ~1s) so a reload never trips a shutdown.
+IDLE_TIMEOUT_DEFAULT = 30.0
+
+
+def _idle_timeout() -> float:
+    try:
+        return max(1.0, float(os.environ.get("STARLOGGER_IDLE_TIMEOUT", IDLE_TIMEOUT_DEFAULT)))
+    except (TypeError, ValueError):
+        return IDLE_TIMEOUT_DEFAULT
+
+
+class Presence:
+    """Shared liveness state between the SSE endpoint (which connects/disconnects streams)
+    and the shutdown watchdog. `streams` is the count of open dashboard connections;
+    `launcher_dead` is flagged by the SIGUSR1 handler when the launcher exits (Linux)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.streams = 0
+        self.last_empty: float | None = None   # monotonic when streams last hit 0
+        self.launcher_dead = False
+        self.launcher_dead_at: float | None = None  # monotonic when SIGUSR1 arrived
+
+    def stream_connect(self) -> None:
+        with self.lock:
+            self.streams += 1
+            self.last_empty = None
+
+    def stream_disconnect(self) -> None:
+        with self.lock:
+            self.streams = max(0, self.streams - 1)
+            if self.streams == 0:
+                self.last_empty = time.monotonic()
+
+    def snapshot(self) -> tuple[int, float | None, bool, float | None]:
+        with self.lock:
+            return (self.streams, self.last_empty, self.launcher_dead, self.launcher_dead_at)
+
+
+def should_shutdown(*, streams: int, launcher_dead: bool, has_launcher_detection: bool,
+                    last_empty: float | None, launcher_dead_at: float | None,
+                    start_ts: float, now: float, timeout: float) -> bool:
+    """Pure decision: should the tracker exit now?
+
+    Stay up while a dashboard stream is open, or (on Linux) while the launcher runs.
+    Once neither holds, exit after `timeout` seconds idle. The reference time is when the
+    last stream closed; if no stream was ever opened, fall back to when the launcher died
+    (Linux) or process start (Windows, where launcher death is undetectable)."""
+    if streams > 0:
+        return False
+    if has_launcher_detection and not launcher_dead:
+        return False
+    if last_empty is not None:
+        ref = last_empty
+    elif has_launcher_detection:        # never connected; launcher has died (checked above)
+        ref = launcher_dead_at if launcher_dead_at is not None else start_ts
+    else:                               # Windows: no launcher signal -> start grace from boot
+        ref = start_ts
+    return (now - ref) > timeout
+
+
+def shutdown_watchdog(presence: Presence, stop: threading.Event,
+                      has_launcher_detection: bool, timeout: float,
+                      start_ts: float, poll: float = 2.0) -> None:
+    """Exit the process once no dashboard is attached and the launcher is gone (or, on
+    Windows, just no dashboard). Triggers a clean shutdown by raising KeyboardInterrupt in
+    the main thread (where Werkzeug's serve_forever blocks and swallows it), so main()'s
+    `finally: stop.set()` still runs. SIGINT is the cross-platform way in -- Werkzeug 3.x
+    removed the old werkzeug.server.shutdown request hook."""
+    while not stop.wait(poll):
+        streams, last_empty, launcher_dead, launcher_dead_at = presence.snapshot()
+        if should_shutdown(streams=streams, launcher_dead=launcher_dead,
+                           has_launcher_detection=has_launcher_detection,
+                           last_empty=last_empty, launcher_dead_at=launcher_dead_at,
+                           start_ts=start_ts, now=time.monotonic(), timeout=timeout):
+            why = "launcher gone + no dashboard" if has_launcher_detection else "no dashboard"
+            print(f"[watchdog] shutting down ({why} for >{timeout:.0f}s)")
+            os.kill(os.getpid(), signal.SIGINT)
+            return
 
 
 def rebuild_history(log_path: str) -> int:
@@ -277,6 +362,19 @@ def main() -> None:
     stop = threading.Event()
     epoch_trigger = threading.Event()
 
+    # Lifecycle: live while a dashboard is open OR (on Linux) the launcher runs. The SSE
+    # stream count is the dashboard-presence signal; SIGUSR1 (sent by run-tracker.sh's
+    # setpriv --pdeathsig USR1) flags launcher death without killing us, so we linger for
+    # post-session review and the watchdog releases us once the last tab closes.
+    presence = Presence()
+    has_launcher_detection = hasattr(signal, "SIGUSR1") and not IS_WINDOWS
+    if has_launcher_detection:
+        # Register before serving: the default SIGUSR1 disposition terminates the process.
+        def _on_launcher_death(signum, frame):  # main thread; keep trivial
+            presence.launcher_dead = True
+            presence.launcher_dead_at = time.monotonic()
+        signal.signal(signal.SIGUSR1, _on_launcher_death)
+
     def on_epoch_change(prev: int, new: int) -> None:  # runs under state.lock -> stay cheap
         print(f"[epoch] server build {prev} -> {new}; scheduling cleanup")
         epoch_trigger.set()
@@ -288,6 +386,9 @@ def main() -> None:
     threading.Thread(target=backfill_archive, args=(log_path, stop), daemon=True).start()
     threading.Thread(target=catalogs.refresh_loop, args=(state, stop, log_path), daemon=True).start()
     threading.Thread(target=cleanup_loop, args=(log_path, epoch_trigger, stop), daemon=True).start()
+    threading.Thread(target=shutdown_watchdog,
+                     args=(presence, stop, has_launcher_detection, _idle_timeout(),
+                           time.monotonic()), daemon=True).start()
 
     url = f"http://{args.host}:{args.port}"
     print("Starlogger -- Star Citizen cargo/flight logger")
@@ -296,15 +397,15 @@ def main() -> None:
     print("  Ctrl-C to stop")
 
     # Auto-open the dashboard only on a fresh start. On a relaunch we take over the
-    # previous instance's port (above), so its tab keeps polling the same URL and just
-    # reconnects to us -- opening another would pile up a duplicate tab every relaunch.
+    # previous instance's port (above), so its tab's SSE stream auto-reconnects to the
+    # same URL -- opening another would pile up a duplicate tab every relaunch.
     if took_over:
         print("  (took over a running instance -- its dashboard tab will reconnect)")
     elif not (args.no_browser or os.environ.get("STARLOGGER_NO_BROWSER")):
         threading.Thread(target=_open_browser_when_ready,
                          args=(args.host, args.port, url), daemon=True).start()
     try:
-        create_app(state, log_path).run(host=args.host, port=args.port, threaded=True)
+        create_app(state, log_path, presence=presence).run(host=args.host, port=args.port, threaded=True)
     finally:
         stop.set()
 

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
 from .archive import filter_sessions, load_sessions
 from .config import MISSION_ICONS_DIR, OVERRIDES_PATH, WEB_DIR
@@ -24,12 +25,26 @@ from .state import State
 from .stations import set_station_name
 
 
-def create_app(state: State, log_path: str | None = None) -> Flask:
+# How long an idle SSE stream waits before emitting a keepalive comment. Bounds how
+# fast we notice a dead socket (the next write fails -> the generator's finally runs).
+SSE_KEEPALIVE_SECS = 15.0
+
+
+def create_app(state: State, log_path: str | None = None, presence=None) -> Flask:
     # static_url_path="" serves web/ assets at the root (/styles.css, /app.js).
     # log_path (when known) backs the Archive's session-replay feature, which
     # reconstructs a past session's dashboard by re-feeding its source log.
+    # presence (when given) tracks open SSE streams so the entry point's watchdog
+    # knows whether a dashboard is still attached (see tracker.py).
     app = Flask(__name__, static_folder=WEB_DIR, static_url_path="")
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+    def _ok():
+        # A manual edit (override/leg/ship/etc.) changed what build_snapshot returns but
+        # didn't touch the log, so bump the version to push the new snapshot to every open
+        # dashboard stream -- not just the tab that made the edit.
+        state.bump_version()
+        return jsonify({"ok": True})
 
     @app.get("/")
     def index():
@@ -45,6 +60,44 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
     @app.get("/api/state")
     def api_state():
         return jsonify(build_snapshot(state, trade_only=request.args.get("trade") == "1"))
+
+    @app.get("/api/stream")
+    def api_stream():
+        # Server-Sent Events: push the full snapshot on connect, then again whenever the
+        # tailer bumps state.version (real-time, no client polling). The open connection
+        # also doubles as the dashboard's presence signal for the lifecycle watchdog.
+        trade_only = request.args.get("trade") == "1"
+
+        @stream_with_context
+        def gen():
+            if presence is not None:
+                presence.stream_connect()
+            try:
+                last = None
+                while True:
+                    with state.version_cv:
+                        if last is not None:
+                            # Wait for a new version, or time out to send a keepalive.
+                            state.version_cv.wait_for(
+                                lambda: state.version != last, timeout=SSE_KEEPALIVE_SECS)
+                        cur = state.version
+                    if cur != last:
+                        # Build the snapshot OUTSIDE version_cv (build_snapshot re-acquires
+                        # state.lock, which is reentrant -- no deadlock).
+                        last = cur
+                        snap = build_snapshot(state, trade_only=trade_only)
+                        yield f"data: {json.dumps(snap)}\n\n"
+                    else:
+                        yield ": keepalive\n\n"  # a failed write here -> finally -> disconnect
+            finally:
+                if presence is not None:
+                    presence.stream_disconnect()
+
+        return Response(gen(), mimetype="text/event-stream", headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        })
 
     @app.get("/api/ships")
     def api_ships():
@@ -149,7 +202,7 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
             set_setting("selected_ship", (ship or "").strip() or None)
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
-        return jsonify({"ok": True})
+        return _ok()
 
     @app.get("/api/sessions")
     def api_sessions():
@@ -234,7 +287,7 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
             atomic_write(OVERRIDES_PATH, data)
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
-        return jsonify({"ok": True})
+        return _ok()
 
     @app.post("/api/trade-lost")
     def api_trade_lost():
@@ -249,7 +302,7 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
             set_lost(tid, bool(payload.get("lost", True)))
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
-        return jsonify({"ok": True})
+        return _ok()
 
     @app.post("/api/station-name")
     def api_station_name():
@@ -266,7 +319,7 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
             set_station_name(str(zone), (name or "").strip() or None)
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
-        return jsonify({"ok": True})
+        return _ok()
 
     @app.post("/api/leg-state")
     def api_leg_state():
@@ -286,7 +339,7 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
             set_leg_states(legs, done)
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
-        return jsonify({"ok": True})
+        return _ok()
 
     @app.post("/api/leg-field")
     def api_leg_field():
@@ -318,6 +371,6 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
             set_leg_field(mid, oid, field, value)
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
-        return jsonify({"ok": True})
+        return _ok()
 
     return app

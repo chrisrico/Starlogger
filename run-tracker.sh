@@ -4,9 +4,12 @@
 # Meant to be backgrounded from the LUG sc-launch.sh:
 #   STARLOGGER_LOG="$user_cfg_dir/Game.log" "$HOME/Code/starlogger/run-tracker.sh" &
 #
-# Lifetime: `setpriv --pdeathsig` asks the kernel to send the tracker SIGTERM the
-# moment the calling process (sc-launch) dies -- normal exit, closed terminal, or
-# even SIGKILL -- so the caller needs no PID tracking, trap, or explicit kill.
+# Lifetime: `setpriv --pdeathsig USR1` asks the kernel to send the tracker SIGUSR1 the
+# moment the calling process (sc-launch) dies -- normal exit, closed terminal, or even
+# SIGKILL -- so the caller needs no PID tracking, trap, or explicit kill. SIGUSR1 only
+# *flags* launcher death (tracker.py handles it): the tracker then lingers so you can keep
+# reviewing the dashboard after the game closes, and shuts itself down once the last tab
+# closes (STARLOGGER_IDLE_TIMEOUT seconds later, default 30).
 # Data dir: $STARLOGGER_DATA_DIR (default XDG).
 #
 # The "already serving?" decision lives in tracker.py (_wait_to_bind): on a relaunch
@@ -29,7 +32,7 @@ mkdir -p "$STARLOGGER_DATA_DIR"
 # setpriv sets the parent-death signal relative to it. Fall back to a plain exec
 # where setpriv is unavailable -- there the caller must stop the tracker itself.
 if command -v setpriv >/dev/null 2>&1; then
-    exec setpriv --pdeathsig TERM -- "$py" "$repo/tracker.py" "$@" \
+    exec setpriv --pdeathsig USR1 -- "$py" "$repo/tracker.py" "$@" \
         >> "$STARLOGGER_DATA_DIR/tracker.log" 2>&1
 fi
 exec "$py" "$repo/tracker.py" "$@" >> "$STARLOGGER_DATA_DIR/tracker.log" 2>&1

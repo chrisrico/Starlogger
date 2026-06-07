@@ -20,6 +20,11 @@ class State:
 
     def __init__(self) -> None:
         self.lock = threading.RLock()
+        # Monotonic snapshot version + a condition (sharing self.lock) used to wake SSE
+        # streamers the instant new log lines land. bump_version() advances it; the
+        # tailer calls that once per non-empty read batch (and after a reset).
+        self.version = 0
+        self.version_cv = threading.Condition(self.lock)
         self.missions: dict[str, Mission] = {}
         self.trades: dict[str, Trade] = {}  # manual terminal trades this session
         self.kiosk_names: dict[str, str] = {}  # kioskId -> place name (from kiosk entity)
@@ -167,6 +172,12 @@ class State:
                 cb(self)
             except Exception as e:
                 print(f"[archive] live upsert failed: {e}")
+
+    def bump_version(self) -> None:
+        """Advance the snapshot version and wake any SSE streamers waiting on it."""
+        with self.version_cv:
+            self.version += 1
+            self.version_cv.notify_all()
 
     # -- handlers -------------------------------------------------------- #
     def _session_boundary(self, line: str, ts: str | None) -> bool:
