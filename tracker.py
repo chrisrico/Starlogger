@@ -38,6 +38,7 @@ from starlogger.snapshot import build_snapshot
 from starlogger.state import State
 from starlogger.stations import seed_station_names, zone_epoch
 from starlogger.tailer import parse_whole_file, tail_loop
+from werkzeug.serving import make_server
 
 
 # Seconds an unattended tracker lingers before exiting (default; STARLOGGER_IDLE_TIMEOUT
@@ -106,12 +107,14 @@ def should_shutdown(*, streams: int, launcher_dead: bool, has_launcher_detection
 
 def shutdown_watchdog(presence: Presence, stop: threading.Event,
                       has_launcher_detection: bool, timeout: float,
-                      start_ts: float, poll: float = 2.0) -> None:
-    """Exit the process once no dashboard is attached and the launcher is gone (or, on
-    Windows, just no dashboard). Triggers a clean shutdown by raising KeyboardInterrupt in
-    the main thread (where Werkzeug's serve_forever blocks and swallows it), so main()'s
-    `finally: stop.set()` still runs. SIGINT is the cross-platform way in -- Werkzeug 3.x
-    removed the old werkzeug.server.shutdown request hook."""
+                      start_ts: float, shutdown_cb, poll: float = 2.0) -> None:
+    """Stop the server once no dashboard is attached and the launcher is gone (or, on
+    Windows, just no dashboard). shutdown_cb is the WSGI server's thread-safe .shutdown(),
+    which makes serve_forever() return so main()'s `finally: stop.set()` runs.
+
+    NOT a signal: a self-SIGINT is silently dropped here. run-tracker.sh backgrounds us
+    from a non-interactive shell, which sets SIGINT/SIGQUIT to SIG_IGN, and Python keeps an
+    inherited SIG_IGN -- so os.kill(getpid(), SIGINT) would be a no-op and we'd never die."""
     while not stop.wait(poll):
         streams, last_empty, launcher_dead, launcher_dead_at = presence.snapshot()
         if should_shutdown(streams=streams, launcher_dead=launcher_dead,
@@ -120,7 +123,7 @@ def shutdown_watchdog(presence: Presence, stop: threading.Event,
                            start_ts=start_ts, now=time.monotonic(), timeout=timeout):
             why = "launcher gone + no dashboard" if has_launcher_detection else "no dashboard"
             print(f"[watchdog] shutting down ({why} for >{timeout:.0f}s)")
-            os.kill(os.getpid(), signal.SIGINT)
+            shutdown_cb()
             return
 
 
@@ -386,9 +389,6 @@ def main() -> None:
     threading.Thread(target=backfill_archive, args=(log_path, stop), daemon=True).start()
     threading.Thread(target=catalogs.refresh_loop, args=(state, stop, log_path), daemon=True).start()
     threading.Thread(target=cleanup_loop, args=(log_path, epoch_trigger, stop), daemon=True).start()
-    threading.Thread(target=shutdown_watchdog,
-                     args=(presence, stop, has_launcher_detection, _idle_timeout(),
-                           time.monotonic()), daemon=True).start()
 
     url = f"http://{args.host}:{args.port}"
     print("Starlogger -- Star Citizen cargo/flight logger")
@@ -404,10 +404,21 @@ def main() -> None:
     elif not (args.no_browser or os.environ.get("STARLOGGER_NO_BROWSER")):
         threading.Thread(target=_open_browser_when_ready,
                          args=(args.host, args.port, url), daemon=True).start()
+    # make_server (not app.run) so the watchdog can stop us via httpd.shutdown() -- a
+    # thread-safe call that returns serve_forever() cleanly, without relying on a signal
+    # (a self-SIGINT is dropped when we're backgrounded; see shutdown_watchdog).
+    httpd = make_server(args.host, args.port,
+                        create_app(state, log_path, presence=presence), threaded=True)
+    threading.Thread(target=shutdown_watchdog,
+                     args=(presence, stop, has_launcher_detection, _idle_timeout(),
+                           time.monotonic(), httpd.shutdown), daemon=True).start()
     try:
-        create_app(state, log_path, presence=presence).run(host=args.host, port=args.port, threaded=True)
+        httpd.serve_forever()        # Ctrl-C (foreground) raises KeyboardInterrupt here
+    except KeyboardInterrupt:
+        pass
     finally:
         stop.set()
+        httpd.server_close()         # release :8765 promptly for a relaunch to take over
 
 
 if __name__ == "__main__":
