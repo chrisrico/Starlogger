@@ -48,12 +48,26 @@ from werkzeug.serving import make_server
 # in ~1s) so a reload never trips a shutdown.
 IDLE_TIMEOUT_DEFAULT = 30.0
 
+# Once a tab beacons /api/closing on pagehide it withdraws its "keep me alive" claim, so a
+# tracker whose launcher is already gone needn't wait out the full idle timeout -- it may
+# exit after only this short grace (STARLOGGER_CLOSE_TIMEOUT overrides). The grace exists
+# purely to outlast a reload: a reload also fires pagehide, but its EventSource reconnects
+# in ~1s and re-asserts presence, cancelling the shutdown before this elapses.
+CLOSE_TIMEOUT_DEFAULT = 2.0
+
 
 def _idle_timeout() -> float:
     try:
         return max(1.0, float(os.environ.get("STARLOGGER_IDLE_TIMEOUT", IDLE_TIMEOUT_DEFAULT)))
     except (TypeError, ValueError):
         return IDLE_TIMEOUT_DEFAULT
+
+
+def _close_timeout() -> float:
+    try:
+        return max(0.5, float(os.environ.get("STARLOGGER_CLOSE_TIMEOUT", CLOSE_TIMEOUT_DEFAULT)))
+    except (TypeError, ValueError):
+        return CLOSE_TIMEOUT_DEFAULT
 
 
 class Presence:
@@ -67,11 +81,13 @@ class Presence:
         self.last_empty: float | None = None   # monotonic when streams last hit 0
         self.launcher_dead = False
         self.launcher_dead_at: float | None = None  # monotonic when SIGUSR1 arrived
+        self.closing = False                   # a tab beaconed a deliberate close
 
     def stream_connect(self) -> None:
         with self.lock:
             self.streams += 1
             self.last_empty = None
+            self.closing = False               # a (re)connect re-asserts the keep-alive claim
 
     def stream_disconnect(self) -> None:
         with self.lock:
@@ -79,20 +95,31 @@ class Presence:
             if self.streams == 0:
                 self.last_empty = time.monotonic()
 
-    def snapshot(self) -> tuple[int, float | None, bool, float | None]:
+    def mark_closing(self) -> None:
+        """A tab signalled (via /api/closing on pagehide) that it is deliberately leaving,
+        withdrawing its keep-alive claim. Doesn't shut anything down -- just lets the
+        watchdog use the short close grace instead of the full idle timeout once the
+        launcher is also gone. Cleared by the next stream_connect (e.g. a reload)."""
         with self.lock:
-            return (self.streams, self.last_empty, self.launcher_dead, self.launcher_dead_at)
+            self.closing = True
+
+    def snapshot(self) -> tuple[int, float | None, bool, float | None, bool]:
+        with self.lock:
+            return (self.streams, self.last_empty, self.launcher_dead,
+                    self.launcher_dead_at, self.closing)
 
 
 def should_shutdown(*, streams: int, launcher_dead: bool, has_launcher_detection: bool,
                     last_empty: float | None, launcher_dead_at: float | None,
-                    start_ts: float, now: float, timeout: float) -> bool:
+                    start_ts: float, now: float, timeout: float,
+                    closing: bool = False, close_timeout: float = CLOSE_TIMEOUT_DEFAULT) -> bool:
     """Pure decision: should the tracker exit now?
 
     Stay up while a dashboard stream is open, or (on Linux) while the launcher runs.
-    Once neither holds, exit after `timeout` seconds idle. The reference time is when the
-    last stream closed; if no stream was ever opened, fall back to when the launcher died
-    (Linux) or process start (Windows, where launcher death is undetectable)."""
+    Once neither holds, exit after `timeout` seconds idle -- or, when the last stream
+    departed via a deliberate beaconed close (`closing`), after only `close_timeout`. The
+    reference time is when the last stream closed; if no stream was ever opened, fall back
+    to when the launcher died (Linux) or process start (Windows, undetectable)."""
     if streams > 0:
         return False
     if has_launcher_detection and not launcher_dead:
@@ -103,12 +130,13 @@ def should_shutdown(*, streams: int, launcher_dead: bool, has_launcher_detection
         ref = launcher_dead_at if launcher_dead_at is not None else start_ts
     else:                               # Windows: no launcher signal -> start grace from boot
         ref = start_ts
-    return (now - ref) > timeout
+    return (now - ref) > (close_timeout if closing else timeout)
 
 
 def shutdown_watchdog(presence: Presence, stop: threading.Event,
                       has_launcher_detection: bool, timeout: float,
-                      start_ts: float, shutdown_cb, poll: float = 2.0) -> None:
+                      start_ts: float, shutdown_cb, poll: float = 2.0,
+                      close_timeout: float = CLOSE_TIMEOUT_DEFAULT) -> None:
     """Stop the server once no dashboard is attached and the launcher is gone (or, on
     Windows, just no dashboard). shutdown_cb is the WSGI server's thread-safe .shutdown(),
     which makes serve_forever() return so main()'s `finally: stop.set()` runs.
@@ -117,13 +145,15 @@ def shutdown_watchdog(presence: Presence, stop: threading.Event,
     from a non-interactive shell, which sets SIGINT/SIGQUIT to SIG_IGN, and Python keeps an
     inherited SIG_IGN -- so os.kill(getpid(), SIGINT) would be a no-op and we'd never die."""
     while not stop.wait(poll):
-        streams, last_empty, launcher_dead, launcher_dead_at = presence.snapshot()
+        streams, last_empty, launcher_dead, launcher_dead_at, closing = presence.snapshot()
         if should_shutdown(streams=streams, launcher_dead=launcher_dead,
                            has_launcher_detection=has_launcher_detection,
                            last_empty=last_empty, launcher_dead_at=launcher_dead_at,
-                           start_ts=start_ts, now=time.monotonic(), timeout=timeout):
+                           start_ts=start_ts, now=time.monotonic(), timeout=timeout,
+                           closing=closing, close_timeout=close_timeout):
+            grace = close_timeout if closing else timeout
             why = "launcher gone + no dashboard" if has_launcher_detection else "no dashboard"
-            print(f"[watchdog] shutting down ({why} for >{timeout:.0f}s)")
+            print(f"[watchdog] shutting down ({why} for >{grace:.0f}s)")
             shutdown_cb()
             return
 
@@ -427,7 +457,8 @@ def main() -> None:
     app.config["QUIT_FN"] = httpd.shutdown
     threading.Thread(target=shutdown_watchdog,
                      args=(presence, stop, has_launcher_detection, _idle_timeout(),
-                           time.monotonic(), httpd.shutdown), daemon=True).start()
+                           time.monotonic(), httpd.shutdown, 2.0, _close_timeout()),
+                     daemon=True).start()
     try:
         httpd.serve_forever()        # Ctrl-C (foreground) raises KeyboardInterrupt here
     except KeyboardInterrupt:

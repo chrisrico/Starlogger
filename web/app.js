@@ -1866,6 +1866,14 @@ function connectStream() {
 connectStream();
 loadShipList();
 
+// On a deliberate close, tell the tracker it may stop sooner (it still waits a short grace,
+// so a reload -- which also fires pagehide -- reconnects and cancels it). pagehide is the
+// reliable unload hook (fires on mobile/bfcache where unload doesn't); sendBeacon survives
+// the page going away. Purely an optimization: if it's missed, the normal idle timeout applies.
+window.addEventListener("pagehide", () => {
+  try { navigator.sendBeacon("/api/closing"); } catch (_) { /* best effort */ }
+});
+
 // Keep --header-h / --footer-h synced with the sticky header and footer so the
 // Archive's two logs fill exactly the remaining viewport (heights shift as the
 // readouts/gauge/footer text update) without making the page itself scroll.

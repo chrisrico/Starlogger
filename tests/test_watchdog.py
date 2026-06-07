@@ -96,6 +96,64 @@ def test_windows_never_connected_recent_start_stays():
     assert _call(has_launcher_detection=False, last_empty=None, start_ts=NOW - 5) is False
 
 
+# --- deliberate close (beacon) -> short grace once launcher gone ---------- #
+
+def test_closing_uses_short_grace_not_full_timeout():
+    # last tab closed 5s ago: under the 30s idle timeout (stays), but over the 2s close
+    # grace -> a beaconed close lets it shut down now.
+    assert _call(launcher_dead=True, last_empty=NOW - 5) is False
+    assert _call(launcher_dead=True, last_empty=NOW - 5, closing=True, close_timeout=2.0) is True
+
+
+def test_closing_still_waits_the_short_grace():
+    # within the close grace (e.g. a reload that hasn't reconnected yet) -> still alive.
+    assert _call(launcher_dead=True, last_empty=NOW - 1, closing=True, close_timeout=2.0) is False
+
+
+def test_closing_does_not_override_launcher_alive():
+    # the beacon is permission, not a trigger: launcher still running -> stay up regardless.
+    assert _call(launcher_dead=False, last_empty=NOW - 100, closing=True, close_timeout=2.0) is False
+
+
+def test_closing_does_not_override_open_stream():
+    assert _call(streams=1, launcher_dead=True, last_empty=NOW - 100,
+                 closing=True, close_timeout=2.0) is False
+
+
+# --- Presence.closing flag ------------------------------------------------ #
+
+def test_mark_closing_sets_flag_and_connect_clears_it():
+    p = tracker.Presence()
+    assert p.snapshot()[4] is False
+    p.mark_closing()
+    assert p.snapshot()[4] is True
+    p.stream_connect()                 # a reload reconnecting re-asserts presence
+    assert p.snapshot()[4] is False
+
+
+# --- _close_timeout env parsing ------------------------------------------- #
+
+def test_close_timeout_default(monkeypatch):
+    monkeypatch.delenv("STARLOGGER_CLOSE_TIMEOUT", raising=False)
+    assert tracker._close_timeout() == tracker.CLOSE_TIMEOUT_DEFAULT
+
+
+def test_close_timeout_valid(monkeypatch):
+    monkeypatch.setenv("STARLOGGER_CLOSE_TIMEOUT", "5")
+    assert tracker._close_timeout() == 5.0
+
+
+def test_close_timeout_garbage_falls_back(monkeypatch):
+    monkeypatch.setenv("STARLOGGER_CLOSE_TIMEOUT", "soon")
+    assert tracker._close_timeout() == tracker.CLOSE_TIMEOUT_DEFAULT
+
+
+@pytest.mark.parametrize("val", ["0", "-5", "0.1"])
+def test_close_timeout_clamped(monkeypatch, val):
+    monkeypatch.setenv("STARLOGGER_CLOSE_TIMEOUT", val)
+    assert tracker._close_timeout() == 0.5
+
+
 # --- _idle_timeout env parsing ------------------------------------------- #
 
 def test_idle_timeout_default(monkeypatch):
@@ -126,12 +184,12 @@ def test_presence_tracks_open_streams():
     assert p.snapshot()[0] == 0
     p.stream_connect()
     p.stream_connect()
-    streams, last_empty, _, _ = p.snapshot()
+    streams, last_empty, _, _, _ = p.snapshot()
     assert streams == 2 and last_empty is None  # still attached
     p.stream_disconnect()
     assert p.snapshot()[0] == 1 and p.snapshot()[1] is None  # one tab left, still attached
     p.stream_disconnect()
-    streams, last_empty, _, _ = p.snapshot()
+    streams, last_empty, _, _, _ = p.snapshot()
     assert streams == 0 and last_empty is not None  # last tab closed -> grace clock starts
 
 

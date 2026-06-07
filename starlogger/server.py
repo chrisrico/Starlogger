@@ -112,6 +112,17 @@ def create_app(state: State, log_path: str | None = None, presence=None) -> Flas
             threading.Thread(target=fn, daemon=True).start()
         return jsonify({"ok": True})
 
+    @app.post("/api/closing")
+    def api_closing():
+        # The dashboard beacons this on pagehide (a deliberate tab close). It does NOT shut
+        # us down -- it just withdraws that tab's keep-alive claim so the watchdog may use a
+        # short grace instead of the full idle timeout once the launcher is also gone. A
+        # reload also fires pagehide, but its stream reconnects (clearing the flag) within
+        # the grace. No-op when no presence tracker is wired (e.g. tests).
+        if presence is not None:
+            presence.mark_closing()
+        return jsonify({"ok": True})
+
     @app.get("/api/ships")
     def api_ships():
         # The whole cargo-grid database (name → {scu, manufacturer, groups}) plus

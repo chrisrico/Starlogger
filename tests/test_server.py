@@ -228,6 +228,7 @@ class _Presence:
     def __init__(self):
         self.streams = 0
         self.max = 0
+        self.closing = False
 
     def stream_connect(self):
         self.streams += 1
@@ -235,6 +236,9 @@ class _Presence:
 
     def stream_disconnect(self):
         self.streams -= 1
+
+    def mark_closing(self):
+        self.closing = True
 
 
 def _stream_client(monkeypatch, presence):
@@ -282,3 +286,18 @@ def test_quit_invokes_shutdown(monkeypatch):
 def test_quit_noop_without_fn(client):
     # No QUIT_FN wired (default fixture) -> still returns ok, just does nothing.
     assert client.post("/api/quit").get_json()["ok"] is True
+
+
+# --- /api/closing (deliberate tab close beacon) --------------------------- #
+
+def test_closing_marks_presence(monkeypatch):
+    p = _Presence()
+    c = _stream_client(monkeypatch, p)
+    assert p.closing is False
+    assert c.post("/api/closing").get_json()["ok"] is True
+    assert p.closing is True               # withdraws the keep-alive claim (no shutdown)
+
+
+def test_closing_noop_without_presence(client):
+    # No presence wired (default fixture) -> still returns ok, just does nothing.
+    assert client.post("/api/closing").get_json()["ok"] is True
