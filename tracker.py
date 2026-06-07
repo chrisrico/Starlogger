@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -359,14 +360,62 @@ def _open_browser_when_ready(host: str, port: int, url: str) -> None:
         pass
 
 
-# ---- mid-session self-update ---------------------------------------------- #
-# lib/sc-run.sh pulls origin/main + re-execs only at game launch. This polls the
-# same way WHILE running so a push lands without relaunching the game: fetch ->
-# reset --hard -> re-exec. The port handoff + the dashboard's asset-hash reload
-# (server._assets_version) finish the swap. Env knobs mirror sc-run.sh.
+# ---- update lifecycle: detect upstream, prompt the dashboard, apply on request ---- #
+# The tracker owns ALL updating now (lib/sc-run.sh no longer fetches/prompts). A background
+# loop fetches the configured remote/branch; when it moves past HEAD it either applies
+# (update_mode=auto) or records an UpdateState + bumps the snapshot version so every open
+# dashboard shows an "update available" banner (update_mode=prompt). Applying does
+# fetch -> reset --hard -> optional pip -> re-exec; the port handoff + the dashboard's
+# asset-hash reload (server._assets_version) finish the swap.
+
+
+class UpdateState:
+    """Shared 'is a new build available?' state between the poller, the SSE snapshot (which
+    surfaces it to the dashboard banner), the apply endpoint, and a settings-driven apply.
+    Thread-safe."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.available = False
+        self.current = ""             # short hash we're running
+        self.latest = ""              # short hash upstream offers
+        self.latest_full = ""         # full hash, for dismiss bookkeeping
+        self.compare_url: str | None = None
+        self.dismissed = ""           # full hash the user dismissed (don't re-prompt for it)
+        self.applying = False
+
+    def offer(self, current: str, latest: str, latest_full: str,
+              compare_url: str | None) -> bool:
+        """Record an available update unless the user already dismissed this exact commit.
+        Returns True when the banner state changed, so the caller bumps the snapshot version."""
+        with self.lock:
+            if latest_full and latest_full == self.dismissed:
+                return False
+            changed = not (self.available and self.latest_full == latest_full)
+            self.available = True
+            self.current, self.latest, self.latest_full = current, latest, latest_full
+            self.compare_url = compare_url
+            return changed
+
+    def clear(self) -> None:
+        with self.lock:
+            self.available = False
+
+    def dismiss(self) -> None:
+        with self.lock:
+            self.dismissed = self.latest_full
+            self.available = False
+
+    def as_dict(self) -> dict:
+        with self.lock:
+            d = {"available": self.available, "current": self.current,
+                 "latest": self.latest, "compare_url": self.compare_url}
+        d["mode"] = settings.resolve_str("update_mode")   # cheap read, outside the lock
+        return d
+
 
 def _live_update_secs() -> int:
-    """Poll interval for the self-update loop; <= 0 disables it. Default 900s (15m).
+    """Poll interval for the update loop; <= 0 disables periodic checks. Default 900s (15m).
     env STARLOGGER_LIVE_UPDATE_SECS > settings.json > default."""
     return settings.resolve_int("live_update_secs")
 
@@ -383,50 +432,112 @@ def _git(repo: str, *args: str, check: bool = True) -> str | None:
     return out.stdout
 
 
-def _pull_if_updated() -> bool:
-    """Fetch the configured upstream; if it moved past HEAD, reset --hard to it and
-    report True (caller restarts). Safe no-op (False) when disabled, not a git repo,
-    offline, already current, or the working tree is dirty -- the dirty-tree guard
-    keeps this from ever clobbering a dev checkout mid-edit (a managed install is clean)."""
+def _repo_ready() -> str | None:
+    """BASE_DIR if updates may run there: a git clone with a CLEAN tree. The dirty-tree guard
+    keeps reset --hard from ever clobbering a dev checkout mid-edit; a managed install stays
+    clean (runtime/p4k data is gitignored), so this only ever returns a path there."""
     repo = BASE_DIR
-    if not settings.resolve_bool("auto_update") or not os.path.isdir(os.path.join(repo, ".git")):
-        return False                          # disabled (STARLOGGER_NO_UPDATE / setting) or not a clone
+    if not os.path.isdir(os.path.join(repo, ".git")):
+        return None
     if (_git(repo, "status", "--porcelain", check=False) or "").strip():
-        return False                          # uncommitted work present -> never reset over it
-    remote = settings.resolve_str("update_remote")
-    branch = settings.resolve_str("update_branch")
+        return None
+    return repo
+
+
+def _remote_compare_url(repo: str, remote: str, have: str, want: str) -> str | None:
+    """A GitHub compare URL (current...latest) for the banner's 'View changes' link, or None
+    for a non-GitHub / local remote (a filesystem path, or a fork with no web diff)."""
+    url = (_git(repo, "remote", "get-url", remote, check=False) or "").strip() or remote
+    m = re.search(r"github\.com[:/]+([^/]+/[^/]+?)(?:\.git)?/?$", url)
+    return f"https://github.com/{m.group(1)}/compare/{have}...{want}" if m else None
+
+
+def _fetch_target(repo: str, remote: str, branch: str) -> tuple[str, str] | None:
+    """git fetch the remote/branch and return (have, want) = HEAD vs FETCH_HEAD full hashes,
+    or None when offline / the fetch failed. Detection only -- never resets."""
     if _git(repo, "fetch", "--quiet", "--depth", "1", remote, branch, check=False) is None:
-        return False                          # offline / bad remote -> try again next tick
+        return None
     have = (_git(repo, "rev-parse", "HEAD") or "").strip()
     want = (_git(repo, "rev-parse", "FETCH_HEAD") or "").strip()
-    if not want or have == want:
-        return False
-    _git(repo, "reset", "--hard", "FETCH_HEAD")
-    print(f"[update] {have[:9]} -> {want[:9]}; restarting to apply", flush=True)
-    return True
+    return (have, want) if have and want else None
 
 
-def update_loop(stop: threading.Event, restart: threading.Event, shutdown) -> None:
-    """Daemon: periodically pull upstream; on a new commit, flag a restart and stop the
-    server cleanly (shutdown() returns serve_forever() -> main's finally -> _reexec).
+def _apply(ustate: "UpdateState", trigger_restart) -> bool:
+    """Fetch + reset --hard to upstream, pip-install if requirements.txt changed, then
+    trigger a restart (re-exec into the new code). Lock-guarded so the poller, the apply
+    endpoint, and a settings-change can't apply at once. False = nothing to do."""
+    with ustate.lock:
+        if ustate.applying:
+            return False
+        ustate.applying = True
+    try:
+        repo = _repo_ready()
+        if not repo:
+            return False
+        remote = settings.resolve_str("update_remote")
+        branch = settings.resolve_str("update_branch")
+        target = _fetch_target(repo, remote, branch)
+        if not target or target[0] == target[1]:
+            return False                      # offline or already current
+        have, want = target
+        changed = (_git(repo, "diff", "--name-only", "HEAD", "FETCH_HEAD", check=False) or "")
+        _git(repo, "reset", "--hard", "FETCH_HEAD")
+        if "requirements.txt" in changed.split():
+            try:                              # deps moved -> install before re-exec (sc-run.sh used to)
+                subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                                "--disable-pip-version-check", "-r",
+                                os.path.join(repo, "requirements.txt")], timeout=300)
+            except Exception as e:
+                print(f"[update] pip install failed (continuing): {e}", flush=True)
+        print(f"[update] {have[:9]} -> {want[:9]}; restarting to apply", flush=True)
+        trigger_restart()                     # restart Event + httpd.shutdown() -> main finally -> _reexec
+        return True
+    finally:
+        with ustate.lock:
+            ustate.applying = False
 
-    The interval (and whether checks happen at all) is re-read from settings every tick,
-    so toggling the interval or auto-update in the dashboard takes effect without a
-    restart. When disabled (interval <= 0), idle on a fixed cadence and keep re-checking
-    so re-enabling it from the UI resumes checks on its own."""
+
+def _check_update(ustate: "UpdateState", state, trigger_restart) -> None:
+    """One poll: skip when off / not a clean clone / offline. A new upstream commit either
+    applies immediately (update_mode=auto) or is recorded + pushed to the dashboard banner
+    (update_mode=prompt)."""
+    mode = settings.resolve_str("update_mode")
+    if mode == "off":
+        return
+    repo = _repo_ready()
+    if not repo:
+        return
+    remote = settings.resolve_str("update_remote")
+    branch = settings.resolve_str("update_branch")
+    target = _fetch_target(repo, remote, branch)
+    if not target:
+        return                                # offline / fetch failed
+    have, want = target
+    if have == want:
+        ustate.clear()                        # in sync (e.g. right after applying)
+        return
+    if mode == "auto":
+        _apply(ustate, trigger_restart)
+        return
+    if ustate.offer(have[:9], want[:9], want, _remote_compare_url(repo, remote, have, want)):
+        state.bump_version()                  # push the banner to every open dashboard
+
+
+def update_loop(stop: threading.Event, ustate: "UpdateState", state, trigger_restart) -> None:
+    """Daemon: an initial check ~20s after start (so a launch-time update is offered promptly,
+    like the old dialog), then every live_update_secs. Mode + interval are re-read each tick,
+    so a settings change takes effect without a restart; interval <= 0 idles but keeps the
+    loop alive so re-enabling resumes checks."""
+    if stop.wait(20):                         # interruptible initial delay; True => shutting down
+        return
     while True:
+        try:
+            _check_update(ustate, state, trigger_restart)
+        except Exception as e:                # transient git/network error -> retry next tick
+            print(f"[update] check failed: {e}", flush=True)
         secs = _live_update_secs()
         if stop.wait(secs if secs > 0 else 300.0):  # interruptible sleep; True => shutting down
             return
-        if secs <= 0:                         # disabled -> woke only to re-read the setting
-            continue
-        try:
-            if _pull_if_updated():            # also re-checks the auto_update gate live
-                restart.set()
-                shutdown()
-                return
-        except Exception as e:                # transient git/network error -> retry next tick
-            print(f"[update] check failed: {e}", flush=True)
 
 
 def _reexec() -> None:
@@ -506,7 +617,8 @@ def main() -> None:
 
     stop = threading.Event()
     epoch_trigger = threading.Event()
-    restart = threading.Event()   # set by update_loop -> re-exec in the finally below
+    restart = threading.Event()   # set by an apply -> re-exec in the finally below
+    ustate = UpdateState()        # 'new build available?' state shared with the dashboard banner
 
     # Lifecycle: live while a dashboard is open OR (on Linux) the launcher runs. The SSE
     # stream count is the dashboard-presence signal; SIGUSR1 (sent by run-tracker.sh's
@@ -550,16 +662,26 @@ def main() -> None:
     # make_server (not app.run) so the watchdog can stop us via httpd.shutdown() -- a
     # thread-safe call that returns serve_forever() cleanly, without relying on a signal
     # (a self-SIGINT is dropped when we're backgrounded; see shutdown_watchdog).
-    app = create_app(state, log_path, presence=presence)
+    app = create_app(state, log_path, presence=presence, update_state=ustate)
     httpd = make_server(args.host, args.port, app, threaded=True)
     # Let a newer launch replace us via POST /api/quit (see _ask_existing_to_quit).
     app.config["QUIT_FN"] = httpd.shutdown
+    # Restart = re-exec into freshly-applied code: flag it, then stop the server cleanly
+    # (shutdown returns serve_forever -> the finally below -> _reexec). The apply endpoint
+    # and the settings-driven apply run on_apply OFF-thread so their HTTP response returns
+    # before the server goes down.
+    def trigger_restart() -> None:
+        restart.set()
+        httpd.shutdown()
+    def on_apply() -> None:
+        threading.Thread(target=lambda: _apply(ustate, trigger_restart), daemon=True).start()
+    app.config["ON_APPLY"] = on_apply
     threading.Thread(target=shutdown_watchdog,
                      args=(presence, stop, has_launcher_detection, _idle_timeout(),
                            time.monotonic(), httpd.shutdown, 2.0, _close_timeout()),
                      daemon=True).start()
-    # Self-update: pull upstream mid-session and re-exec when a new commit lands.
-    threading.Thread(target=update_loop, args=(stop, restart, httpd.shutdown),
+    # The tracker owns updating: poll upstream, prompt the dashboard (or auto-apply).
+    threading.Thread(target=update_loop, args=(stop, ustate, state, trigger_restart),
                      daemon=True).start()
     try:
         httpd.serve_forever()        # Ctrl-C (foreground) raises KeyboardInterrupt here
