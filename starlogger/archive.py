@@ -32,7 +32,9 @@ _write_lock = threading.Lock()  # serialize sessions.json writers (live tailer +
 # session(s) — so a deploy that adds a summary field still self-heals history.
 # 2: per-mission `type` now prefers the authoritative ContractTemplate class (+ `icon`),
 #    replacing the keyword heuristic where a template matches.
-ARCHIVE_SCHEMA = 2
+# 3: `type`/`icon` now also resolve named/scripted ContractGenerator missions (guild & story
+#    contracts) via their debugName -- see contracts.decode / scdata.build_contract_generators.
+ARCHIVE_SCHEMA = 3
 
 
 def _session_key(state: State) -> str:

@@ -9,7 +9,8 @@ from ._reference import build_reference_data, _resource_maps
 from ._mineables import build_mineables, build_mineables_from_p4k
 from ._blueprints import build_blueprints, build_blueprints_from_p4k
 from ._contracts import (
-    build_contract_taxonomy, build_cargo_manifests, build_contracts_from_p4k,
+    build_contract_taxonomy, build_contract_generators, build_cargo_manifests,
+    build_contracts_from_p4k,
 )
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "build_reference_data", "_resource_maps",
     "build_mineables", "build_mineables_from_p4k",
     "build_blueprints", "build_blueprints_from_p4k",
-    "build_contract_taxonomy", "build_cargo_manifests", "build_contracts_from_p4k",
+    "build_contract_taxonomy", "build_contract_generators", "build_cargo_manifests",
+    "build_contracts_from_p4k",
 ]

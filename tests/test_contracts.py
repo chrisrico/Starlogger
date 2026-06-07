@@ -129,6 +129,73 @@ def test_unmapped_mission_type_localises_and_slugs(tmp_path):
     assert row["icon"] == "escort"        # slug of the basename
 
 
+def _contract_node(debug_name: str, template_base: str | None = None,
+                   type_override: str | None = None) -> dict:
+    """One generator ``Contract``: its ``debugName`` is the live log token (minus the runtime
+    suffix); type comes from ``missionTypeOverride`` when set, else the base ``template``."""
+    node: dict = {"_Type_": "Contract", "debugName": debug_name, "paramOverrides": {}}
+    if template_base:
+        node["template"] = (f"file://./../../contracttemplates/{template_base}.json")
+    if type_override:
+        node["paramOverrides"]["missionTypeOverride"] = (
+            f"file://./../../missiontype/pu/{type_override}.json")
+    return node
+
+
+def _generator(root: str, fname: str, record_name: str, contracts_list: list,
+               intro: list | None = None) -> None:
+    _write(os.path.join(root, "libs/foundry/records/contracts/contractgenerator", fname),
+           record_name,
+           {"_Type_": "ContractGenerator",
+            "generators": [{"_Type_": "ContractGeneratorEntry",
+                            "contracts": contracts_list, "introContracts": intro or []}]})
+
+
+def test_build_contract_generators_override_and_template_inheritance(tmp_path):
+    root = str(tmp_path)
+    _fixture_contracts(root)                      # gives HaulCargo_AtoB (Hauling) template
+    _missiontype(root, "investigation", "@x", "UI/.../icon_investigation.svg")
+    templates = scdata.build_contract_taxonomy(root, {})
+    _generator(root, "hockrow.json", "ContractGenerator.Hockrow_FacilityDelve",
+               [_contract_node("Hockrow_FacilityDelve_P1M1", type_override="investigation")],
+               # an intro contract with no override inherits its base template's type
+               intro=[_contract_node("Redwind_Intro", template_base="haulcargo_atob")])
+    rows = scdata.build_contract_generators(root, templates)
+    by = {r["template"]: r for r in rows}
+    assert by["Hockrow_FacilityDelve_P1M1"]["type"] == "Investigation"   # via override
+    assert by["Redwind_Intro"]["type"] == "Hauling"                      # via base template
+    assert by["Redwind_Intro"]["icon"] == "haul"
+
+
+def test_build_contract_generators_skips_short_and_untyped(tmp_path):
+    root = str(tmp_path)
+    _fixture_contracts(root)
+    templates = scdata.build_contract_taxonomy(root, {})
+    _generator(root, "g.json", "ContractGenerator.X", [
+        _contract_node("RoX", type_override="hauling_solar"),        # too short -> skipped
+        _contract_node("Mystery_Contract_99", template_base="nope"),  # no known type -> skipped
+    ])
+    rows = scdata.build_contract_generators(root, templates)
+    assert rows == []
+
+
+def test_decode_matches_generator_debugname_by_prefix(tmp_path):
+    path = str(tmp_path / "contracts.json")
+    contracts.save_contracts(
+        templates=[{"template": "HaulCargo_AtoB", "type": "Hauling", "icon": "haul",
+                    "illegal": False}],
+        cargo_manifests=[],
+        generators=[{"template": "Hockrow_FacilityDelve_P1M1", "type": "Investigation",
+                     "icon": "investigation"}],
+        game_version="4.8", path=path)
+    contracts._cache["mtime"] = None
+    # the live token is the debugName + a runtime suffix -> matched by PREFIX
+    dec = contracts.decode("Hockrow_FacilityDelve_P1M1_0", path=path)
+    assert dec == {"legal": True, "type": "Investigation", "icon": "investigation"}
+    # a token that merely CONTAINS the debugName mid-string must NOT match (prefix only)
+    assert contracts.decode("Other_Hockrow_FacilityDelve_P1M1", path=path) == {}
+
+
 def test_build_cargo_manifests_resolves_resources(tmp_path):
     root = str(tmp_path)
     _fixture_contracts(root)

@@ -10,7 +10,7 @@ import tempfile
 
 from ..patterns import camel_split
 from ._p4k import (
-    _load_json, _run, ensure_binary, extract_records, load_localization,
+    _deep_walk, _load_json, _run, ensure_binary, extract_records, load_localization,
 )
 
 
@@ -59,6 +59,12 @@ _TYPE_MAP = {
     "investigation": ("Investigation", "investigation"),
     "salvage": ("Salvage", "salvage"),
     "local": ("Salvage", "salvage"),
+    # the three mining variants fold into "Mining" (like hauling*), each keeping its own
+    # method icon (hand / ground vehicle / spaceship) -- they reach us only via a
+    # ContractGenerator missionTypeOverride (no ContractTemplate carries a mining type).
+    "fpsmining": ("Mining", "fpsmining"),
+    "groundmining": ("Mining", "groundmining"),
+    "shipmining": ("Mining", "shipmining"),
     "bountyhunter": ("Bounty Hunter", "bounty"),
     "refueling": ("Refueling", "refuel"),
     "maintenance": ("Maintenance", "maintenance"),
@@ -134,6 +140,69 @@ def build_contract_taxonomy(records_root: str, loc: dict, mtidx: dict | None = N
     return rows
 
 
+# --------------------------------------------------------------------------- #
+# Named / scripted contracts (ContractGenerator -> per-contract debugName)
+# --------------------------------------------------------------------------- #
+# Guild- and story-given missions (Hockrow facility-delve, Gilly's Pilot School, Redwind
+# intro, Eckhart/Foxwell mercenary intros, BHG bounty intro, Shubin mining...) don't ride a
+# generic ContractTemplate name. They live under contracts/contractgenerator/ as
+# ContractGenerator records: generators[] -> {contracts, introContracts}[] -> each a
+# ``Contract`` with a ``debugName`` (== the log's ``contract [...]`` token, plus a runtime
+# location/loop suffix) and a base ``template`` ref. The authoritative mission class is the
+# contract's ``paramOverrides.missionTypeOverride`` (a MissionType ref) when present, else
+# the base template's own type. Without this map these tokens match no template and fall to
+# the keyword heuristic (mis-typed as the coarse "Bounty / Combat"/"Delivery"/"Other").
+_MIN_GEN_KEY = 5  # skip ultra-short debugNames (e.g. "RoX"); too generic for a safe prefix
+
+
+def build_contract_generators(records_root: str, templates: list,
+                              mtidx: dict | None = None, loc: dict | None = None) -> list:
+    """Every named/scripted ContractGenerator contract -> ``{template: debugName, type,
+    icon}``. ``decode()`` matches the log token to ``debugName`` by prefix (the token is the
+    debugName + runtime suffix), so these resolve the same authoritative MissionType the
+    templates do. Type = the contract's ``missionTypeOverride`` (MissionType) when set, else
+    the type of the base ContractTemplate it instantiates (looked up in ``templates``)."""
+    if mtidx is None:
+        mtidx = _mission_type_index(records_root, loc or load_localization(records_root))
+    by_base = {t["template"].lower(): t for t in templates if t.get("type")}
+
+    def _basename(ref) -> str:
+        if not isinstance(ref, str) or not ref:
+            return ""
+        b = os.path.basename(ref.split("?")[0])
+        return (b[:-5] if b.endswith(".json") else b).lower()
+
+    rows: dict[str, dict] = {}
+
+    def _visit(node) -> None:
+        dn = node.get("debugName")
+        if isinstance(dn, str) and dn and len(_slug(dn)) >= _MIN_GEN_KEY:
+            label = slug = None
+            ov = (node.get("paramOverrides") or {}).get("missionTypeOverride")
+            info = mtidx.get(_type_basename(ov)) if isinstance(ov, str) and ov else None
+            if info:
+                label, slug = info["label"], info["slug"]
+            else:                                  # inherit the base template's type
+                base = by_base.get(_basename(node.get("template")))
+                if base:
+                    label, slug = base["type"], base["icon"]
+            if label:
+                rows.setdefault(dn, {"template": dn, "type": label, "icon": slug})
+
+    for p in glob.glob(os.path.join(records_root, "**", "contractgenerator", "**", "*.json"),
+                       recursive=True):
+        try:
+            cv = _load_json(p)["_RecordValue_"]
+        except (OSError, ValueError, KeyError):
+            continue
+        _deep_walk(cv, _visit)
+    return sorted(rows.values(), key=lambda r: r["template"])
+
+
+def _slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
 def _resource_name(res) -> str:
     """Commodity display name from a CargoResource.resource ref -- an inline record
     (``{_RecordName_: ResourceType.Scrap_Metal}``) or a ``file://...`` string."""
@@ -203,9 +272,10 @@ def extract_mission_icons(p4k: str, sb: str, workdir: str, mtidx: dict) -> dict:
 
 def build_contracts_from_p4k(p4k: str, sb: str | None = None,
                              progress=lambda m: None) -> dict:
-    """Full-extract orchestrator for the contract taxonomy + cargo manifests + mission-type
-    icons (gated like mineables/blueprints). Returns ``{templates, cargo_manifests,
-    icons}`` -- ``icons`` is ``{slug: svg_text}`` for the caller to persist (gitignored)."""
+    """Full-extract orchestrator for the contract taxonomy + named/scripted generators +
+    cargo manifests + mission-type icons (gated like mineables/blueprints). Returns
+    ``{templates, generators, cargo_manifests, icons}`` -- ``icons`` is ``{slug: svg_text}``
+    for the caller to persist (gitignored)."""
     sb = sb or ensure_binary()
     workdir = tempfile.mkdtemp(prefix="starlogger-contracts-")
     try:
@@ -213,7 +283,9 @@ def build_contracts_from_p4k(p4k: str, sb: str | None = None,
         recs = extract_records(workdir, p4k, sb)
         loc = load_localization(recs)
         mtidx = _mission_type_index(recs, loc)
-        return {"templates": build_contract_taxonomy(recs, loc, mtidx),
+        templates = build_contract_taxonomy(recs, loc, mtidx)
+        return {"templates": templates,
+                "generators": build_contract_generators(recs, templates, mtidx, loc),
                 "cargo_manifests": build_cargo_manifests(recs, loc),
                 "icons": extract_mission_icons(p4k, sb, workdir, mtidx)}
     finally:

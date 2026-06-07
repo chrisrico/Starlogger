@@ -27,19 +27,22 @@ from . import scdata
 from .jsonstore import atomic_write, load_cached
 
 _cache = {"mtime": None,
-          "data": {"templates": [], "cargo_manifests": [],
+          "data": {"templates": [], "contract_generators": [], "cargo_manifests": [],
                    "fetched_at": None, "game_version": None},
-          "by_template": {}}
+          "by_template": {}, "by_generator": {}}
 
 # Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
 # dropped fields), so installs rebuild the cache on update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
 # v1: templates gained authoritative mission ``type``/``icon`` (commit f401e3c, 2026-06-07).
-EXTRACT_VERSION = 1
+# v2: ``contract_generators`` -- named/scripted ContractGenerator contracts keyed by their
+#     ``debugName`` (the log token for guild/story missions that ride no ContractTemplate).
+EXTRACT_VERSION = 2
 
 
 def save_contracts(templates: list, cargo_manifests: list,
                    game_version: str | None = None, icons: dict | None = None,
+                   generators: list | None = None,
                    path: str = CONTRACTS_PATH, icons_dir: str = MISSION_ICONS_DIR) -> None:
     atomic_write(path, {
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
@@ -48,6 +51,9 @@ def save_contracts(templates: list, cargo_manifests: list,
         "extract_version": EXTRACT_VERSION,
         "count": len(templates),
         "templates": templates,
+        # named/scripted contracts keyed by debugName; decode() matches the log token to
+        # these by PREFIX (token == debugName + runtime suffix). See _parse / decode.
+        "contract_generators": generators or [],
         "cargo_manifests": cargo_manifests,
     })
     save_icons(icons or {}, icons_dir)
@@ -88,6 +94,14 @@ def _parse(data: dict) -> dict:
         if key:
             by_t[key] = t
     _cache["by_template"] = dict(sorted(by_t.items(), key=lambda kv: -len(kv[0])))
+    # Named/scripted generator contracts, matched by PREFIX (the log token is the debugName
+    # plus a runtime suffix), longest key first so the most specific debugName wins.
+    by_g = {}
+    for g in data.get("contract_generators", []):
+        key = _norm(g.get("template", ""))
+        if key:
+            by_g[key] = g
+    _cache["by_generator"] = dict(sorted(by_g.items(), key=lambda kv: -len(kv[0])))
     return data
 
 
@@ -131,7 +145,18 @@ def decode(contract_id: str, path: str = CONTRACTS_PATH) -> dict:
     load_contracts(path)
     tmpl = next((t for tkey, t in _cache["by_template"].items() if tkey in key), None)
     if not tmpl:
-        return {}
+        # Named/scripted contract (guild/story mission): the log token is a generator
+        # contract's debugName + runtime suffix, so match it by PREFIX, not containment.
+        gen = next((g for gkey, g in _cache["by_generator"].items() if key.startswith(gkey)),
+                   None)
+        if not gen:
+            return {}
+        out = {"legal": True}      # legality isn't carried for these; default lawful
+        if gen.get("type"):
+            out["type"] = gen["type"]
+        if gen.get("icon"):
+            out["icon"] = gen["icon"]
+        return out
     out = {"legal": not tmpl.get("illegal")}
     if tmpl.get("route"):
         out["route"] = tmpl["route"]

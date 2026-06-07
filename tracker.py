@@ -24,7 +24,7 @@ import time
 import urllib.request
 import webbrowser
 
-from starlogger import catalogs
+from starlogger import catalogs, contracts, scdata
 from starlogger.archive import (
     ARCHIVE_SCHEMA,
     archive_session,
@@ -189,6 +189,18 @@ def backfill_archive(log_path: str, stop: threading.Event) -> None:
     than ARCHIVE_SCHEMA (a deploy that adds a summary field bumps the version, so history
     self-heals on the next run). The index shares sessions.json, so wiping that file
     resets both together."""
+    # A schema bump re-archives history, but the per-mission `type` is only as good as the
+    # contract taxonomy on disk -- and that taxonomy rebuilds (minutes) in a sibling thread
+    # on the same update. Wait for it to reach the current extract version first, so history
+    # picks up newly-added mission types instead of re-stamping against the stale cache and
+    # never retrying. Only wait when a rebuild is actually possible (Data.p4k present); bail
+    # after a grace period so an offline install still backfills with the keyword heuristic.
+    if scdata.find_p4k(log_path):
+        deadline = time.monotonic() + 900
+        while (contracts.contracts_extract_version() < contracts.EXTRACT_VERSION
+               and not stop.is_set() and time.monotonic() < deadline):
+            stop.wait(2)
+
     index = load_backfill_index()
     before = len(load_sessions())
     dirty = False
