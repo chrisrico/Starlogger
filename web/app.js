@@ -142,6 +142,87 @@ if (_collapseBtn) _collapseBtn.onclick = () => setCollapsed(!$("sidebar").classL
 
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
 
+// ---- settings overlay (sidebar gear -> dashboard-managed settings.json) ----
+// Renders straight from /api/settings' schema: one row per knob, grouped, with bool ->
+// checkbox / int|number -> number input / string -> text input. A knob shadowed by an
+// env var comes back env_override:true and is shown read-only ("set via $VAR"), since
+// env wins at read time. Save POSTs only the rows the user actually changed.
+let SETTINGS_SCHEMA = null;
+function _settingsCtl(f) {
+  const id = "set_" + f.key, dis = f.env_override ? " disabled" : "";
+  let ctl;
+  if (f.type === "bool") ctl = `<input type="checkbox" id="${id}"${f.value ? " checked" : ""}${dis}>`;
+  else if (f.type === "int" || f.type === "number")
+    ctl = `<input type="number" id="${id}" step="${f.type === "int" ? "1" : "0.5"}" value="${esc(f.value)}"${dis}>`;
+  else ctl = `<input type="text" id="${id}" value="${esc(f.value)}"${dis}>`;
+  const env = f.env_override ? `<span class="sp-env">set via ${esc(f.env)}</span>` : "";
+  return `<div class="sp-ctl">${ctl}${env}</div>`;
+}
+function renderSettings(schema) {
+  const groups = [];
+  for (const f of schema) {
+    let g = groups.find(x => x.name === f.group);
+    if (!g) { g = { name: f.group, fields: [] }; groups.push(g); }
+    g.fields.push(f);
+  }
+  $("settingsBody").innerHTML = groups.map(g =>
+    `<div class="sp-group"><h3 class="sp-group-h">${esc(g.name)}</h3>` +
+    g.fields.map(f =>
+      `<div class="sp-row"><div class="sp-label"><span class="t">${esc(f.label)}</span>` +
+      `<span class="h">${esc(f.help)}</span></div>${_settingsCtl(f)}</div>`).join("") +
+    `</div>`).join("");
+}
+async function openSettings() {
+  const ov = $("settingsOverlay");
+  $("settingsMsg").textContent = ""; $("settingsMsg").className = "sp-msg";
+  $("settingsBody").innerHTML = `<div class="sp-row"><span class="h">loading…</span></div>`;
+  ov.classList.remove("hide"); ov.setAttribute("aria-hidden", "false");
+  try {
+    const r = await getJSON("/api/settings");
+    SETTINGS_SCHEMA = r.schema || [];
+    renderSettings(SETTINGS_SCHEMA);
+  } catch (e) {
+    $("settingsBody").innerHTML = `<div class="sp-row"><span class="h">couldn't load settings: ${esc(e)}</span></div>`;
+  }
+}
+function closeSettings() {
+  const ov = $("settingsOverlay");
+  ov.classList.add("hide"); ov.setAttribute("aria-hidden", "true");
+}
+function _settingsErr(msg) { const m = $("settingsMsg"); m.textContent = msg; m.className = "sp-msg err"; }
+async function saveSettings() {
+  if (!SETTINGS_SCHEMA) return closeSettings();
+  const payload = {};
+  for (const f of SETTINGS_SCHEMA) {
+    if (f.env_override) continue;                  // read-only: env wins at read time
+    const el = $("set_" + f.key);
+    if (!el) continue;
+    let v;
+    if (f.type === "bool") v = el.checked;
+    else if (f.type === "int" || f.type === "number") {
+      if (el.value.trim() === "") continue;        // left blank -> leave unchanged
+      v = Number(el.value);
+      if (Number.isNaN(v)) return _settingsErr(`“${f.label}” must be a number`);
+    } else v = el.value.trim();
+    if (v !== f.value) payload[f.key] = v;          // only send genuine changes
+  }
+  if (!Object.keys(payload).length) return closeSettings();
+  const btn = $("settingsSave"); btn.disabled = true;
+  try { await postJSON("/api/settings", payload); closeSettings(); }
+  catch (e) { _settingsErr(String(e)); }
+  finally { btn.disabled = false; }
+}
+$("navsettings") && ($("navsettings").onclick = openSettings);
+$("settingsClose") && ($("settingsClose").onclick = closeSettings);
+$("settingsCancel") && ($("settingsCancel").onclick = closeSettings);
+$("settingsSave") && ($("settingsSave").onclick = saveSettings);
+// Backdrop click closes (clicks on the panel don't reach the overlay element itself).
+$("settingsOverlay") && ($("settingsOverlay").onclick = (e) => { if (e.target.id === "settingsOverlay") closeSettings(); });
+// Escape closes (matches the type-filter / combobox / inline-editor convention).
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("settingsOverlay").classList.contains("hide")) closeSettings();
+});
+
 // ---- mining vs cargo mode ---- //
 // Mode normally follows the snapshot: a mining vehicle (mining_ship — Prospector, MOLE,
 // ROC…) hides the cargo-hauling tabs and shows Mining, and the header stats/gauge swap to

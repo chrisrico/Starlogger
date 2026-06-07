@@ -116,13 +116,25 @@ nav button.active::before{content:"";position:absolute;left:0;top:7px;bottom:7px
 .sb-chevron{flex:none;width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;
   stroke-linecap:round;stroke-linejoin:round;transition:transform .18s}
 
+/* ---- settings entry (sits just above Collapse, same bottom group) ---- */
+/* Same chrome as .sb-collapse. The single divider above the bottom group lives on
+   .sb-settings, so .sb-collapse drops its own top border when it follows Settings. */
+.sb-settings{display:flex;align-items:center;gap:13px;width:100%;
+  background:transparent;color:var(--ink-3);border:0;border-top:1px solid var(--line);
+  padding:13px 14px;cursor:pointer;font-family:var(--display);font-size:11px;
+  text-transform:uppercase;letter-spacing:.12em}
+.sb-settings:hover{color:var(--cyan)}
+.sb-settings + .sb-collapse{border-top:0}
+
 /* ---- skinny mode: an icons-only rail (default on mobile; toggle on desktop) ---- */
 .sidebar.collapsed{flex-basis:62px;width:62px}
 .sidebar.collapsed .sb-brand{justify-content:center;padding-left:0;padding-right:0}
 .sidebar.collapsed .sb-brand h1,
 .sidebar.collapsed nav button .lbl,
+.sidebar.collapsed .sb-settings .lbl,
 .sidebar.collapsed .sb-collapse .lbl{display:none}
 .sidebar.collapsed nav button{justify-content:center;gap:0;padding-left:0;padding-right:0}
+.sidebar.collapsed .sb-settings,
 .sidebar.collapsed .sb-collapse{justify-content:center;padding-left:0;padding-right:0}
 .sidebar.collapsed .sb-chevron{transform:rotate(180deg)}
 
@@ -834,5 +846,47 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mn-prob{color:var(--amber)}
 .mn-dim{color:var(--ink-3)}
 .mplan-srcs{padding:6px 16px 14px;display:flex;flex-direction:column;gap:10px}
+
+/* ---- settings overlay panel ---- */
+.ovl{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+  background:rgba(2,6,14,.72);backdrop-filter:blur(3px);padding:20px}
+.settings-panel{width:min(560px,100%);max-height:88dvh;display:flex;flex-direction:column;
+  background:var(--panel-2);border:1px solid var(--line-2);border-radius:5px;
+  box-shadow:var(--panel-shadow);overflow:hidden}
+.sp-head{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid var(--line)}
+.sp-head h2{margin:0;font-family:var(--display);font-size:15px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--ink)}
+.sp-x{background:transparent;border:0;color:var(--ink-3);font-size:15px;cursor:pointer;
+  line-height:1;padding:4px}
+.sp-x:hover{color:var(--cyan)}
+.sp-body{padding:4px 18px 10px;overflow-y:auto}
+.sp-group{margin-top:14px}
+.sp-group-h{font-family:var(--display);font-size:10.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--cyan);margin:0 0 4px;
+  border-bottom:1px solid var(--line);padding-bottom:5px}
+.sp-row{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;
+  padding:10px 0;border-bottom:1px solid rgba(var(--line-rgb),.5)}
+.sp-row:last-child{border-bottom:0}
+.sp-label{display:flex;flex-direction:column;gap:3px;min-width:0}
+.sp-label .t{font-size:12.5px;color:var(--ink);font-family:var(--mono)}
+.sp-label .h{font-size:10.5px;color:var(--ink-3);line-height:1.4}
+.sp-ctl{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.sp-ctl input[type=number],.sp-ctl input[type=text]{
+  background:var(--input-bg);color:var(--ink);border:1px solid var(--line-2);
+  border-radius:2px;padding:6px 8px;font-family:var(--mono);font-size:12.5px;width:130px}
+.sp-ctl input:focus{outline:none;border-color:var(--cyan);box-shadow:var(--focus-ring)}
+.sp-ctl input:disabled{opacity:.5;cursor:not-allowed}
+.sp-ctl input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--cyan)}
+.sp-env{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--amber)}
+.sp-foot{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--line)}
+.sp-msg{flex:1;font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.sp-msg.err{color:var(--red)}
+.sp-btn{font-family:var(--display);font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  font-size:12px;background:rgba(var(--line-rgb),.06);color:var(--ink);
+  border:1px solid var(--line-2);border-radius:2px;padding:7px 15px;cursor:pointer;transition:all .14s}
+.sp-btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.sp-btn.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan)}
+.sp-btn.primary:hover{color:#04121d;filter:brightness(1.07)}
 
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
