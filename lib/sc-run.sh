@@ -29,134 +29,20 @@ tracker_repo="https://github.com/chrisrico/starlogger.git"
 tracker_dir="$HOME/.local/share/starlogger"
 tracker="$tracker_dir/run-tracker.sh"
 
-# Read one knob from the tracker's settings.json (the same store the dashboard's Settings
-# panel writes), lowercasing booleans, best-effort: a missing venv/file/key -> the default.
-# Lets launch-time update behavior follow what the user set in the UI, matching the Python
-# resolver's precedence (env > settings.json > default). Asking the venv resolves the path
-# (honors $STARLOGGER_DATA_DIR) instead of hardcoding it here.
-settings_get() {  # $1 = key   $2 = default
-    [ -x "$tracker_dir/.venv/bin/python" ] || { printf '%s' "$2"; return; }
-    ( cd "$tracker_dir" && .venv/bin/python -c '
-import json, sys
-try:
-    from starlogger.config import SETTINGS_PATH
-    with open(SETTINGS_PATH) as f:
-        d = json.load(f)
-except Exception:
-    d = {}
-v = d.get(sys.argv[1])
-print(str(v).lower() if isinstance(v, bool) else (sys.argv[2] if v is None else v), end="")
-' "$1" "$2" ) 2>/dev/null || printf '%s' "$2"
-}
-
-# Self-update source (see the Self-update block). Defaults to GitHub (origin main); the
-# dashboard's Settings panel can override the remote/branch (stored in settings.json) and
-# turn auto-update off. Env vars still win over both -- point STARLOGGER_UPDATE_REMOTE at a
-# local clone (a filesystem path or any git URL) to test an unreleased build without
-# pushing to GitHub:  STARLOGGER_UPDATE_REMOTE="$HOME/Code/starlogger" sc-run.sh
-# STARLOGGER_UPDATE_BRANCH overrides the branch.
-update_remote="${STARLOGGER_UPDATE_REMOTE:-$(settings_get update_remote origin)}"
-update_branch="${STARLOGGER_UPDATE_BRANCH:-$(settings_get update_branch main)}"
-# auto_update (settings.json) gates the launch-time update alongside $STARLOGGER_NO_UPDATE;
-# either turning it off skips the self-update block below.
-auto_update="$(settings_get auto_update true)"
+# Updating is the TRACKER's job now (not this launcher). The running dashboard checks
+# GitHub, prompts in the UI (Settings -> Updates: prompt / automatic / off), and self-applies
+# + restarts -- so the remote/branch/mode knobs live in settings.json and are read by the
+# Python tracker, not here. This launcher only installs the tracker on first use
+# (ensure_tracker); it no longer fetches or prompts for updates.
 
 ############################################################################
-# Shared helpers (notify + update prompt), defined up here so the self-update
-# block that runs next can use them.
+# Shared helpers (notify).
 ############################################################################
 # Desktop notification, guarded so a missing notify-send never breaks launch.
 notify() {  # $1 = app   $2 = urgency (normal|critical)   $3 = summary
     command -v notify-send >/dev/null 2>&1 \
         && notify-send --app-name="$1" --urgency="$2" "$3"
 }
-
-# Ask whether to apply an available update. Echoes update|view|skip; returns
-# nonzero when no GUI dialog tool exists. Launched from the .desktop there's no
-# TTY, so a graphical prompt is the only way to ask -- kdialog on KDE, else zenity.
-ask_update() {  # $1 = dialog text
-    local text="$1" resp rc
-    if command -v kdialog >/dev/null 2>&1 && [[ "${XDG_CURRENT_DESKTOP:-}" == *KDE* ]]; then
-        kdialog --title "Starlogger update" \
-            --yes-label "Update" --no-label "Skip" --cancel-label "View changes" \
-            --warningyesnocancel "$text"
-        case $? in 0) echo update ;; 2) echo view ;; *) echo skip ;; esac
-    elif command -v zenity >/dev/null 2>&1; then
-        resp=$(zenity --question --title "Starlogger update" --text "$text" \
-            --ok-label "Update" --cancel-label "Skip" --extra-button "View changes" 2>/dev/null)
-        rc=$?
-        if [ "$resp" = "View changes" ]; then echo view
-        elif [ "$rc" -eq 0 ]; then echo update
-        else echo skip
-        fi
-    elif command -v kdialog >/dev/null 2>&1; then   # kdialog outside KDE
-        kdialog --title "Starlogger update" \
-            --yes-label "Update" --no-label "Skip" --cancel-label "View changes" \
-            --warningyesnocancel "$text"
-        case $? in 0) echo update ;; 2) echo view ;; *) echo skip ;; esac
-    else
-        return 1
-    fi
-}
-
-############################################################################
-# Self-update. Fetch the latest tracker; if it differs from the installed copy,
-# prompt the user (Update / View changes on GitHub / Skip) -- unless
-# $STARLOGGER_AUTO_UPDATE is set, which applies it unprompted (the old silent
-# behavior). Applying does `git reset --hard` (safe for user data: sessions/
-# overrides/etc. are gitignored and untracked) then re-execs the fresh copy
-# exactly once ($_SCRUN_REEXEC guards the loop), because git rewrites this very
-# file under the running shell. Skipped entirely when pinned
-# ($STARLOGGER_NO_UPDATE), offline, or not a clone -- a failed or declined
-# update never costs a launch. With no GUI dialog available and no auto-update,
-# we just notify that an update exists. The fetch source is $update_remote /
-# $update_branch (GitHub origin main by default; see STARLOGGER_UPDATE_REMOTE
-# above). A non-origin (local/custom) source auto-applies without prompting --
-# you only point there to test a build you already want.
-############################################################################
-apply_update() {  # re-exec into the freshly reset copy; never returns on success
-    git -C "$tracker_dir" reset --hard --quiet FETCH_HEAD || return 1
-    [ -x "$tracker_dir/.venv/bin/python" ] \
-        && "$tracker_dir/.venv/bin/pip" install -q --disable-pip-version-check -r "$tracker_dir/requirements.txt" 2>/dev/null
-    export _SCRUN_REEXEC=1
-    exec "$tracker_dir/lib/sc-run.sh" "$@"
-}
-
-if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ "$auto_update" != false ] && [ -z "${_SCRUN_REEXEC:-}" ] \
-    && [ -d "$tracker_dir/.git" ] && command -v git >/dev/null 2>&1 \
-    && git -C "$tracker_dir" fetch --quiet --depth 1 "$update_remote" "$update_branch"; then
-    have="$(git -C "$tracker_dir" rev-parse --short HEAD 2>/dev/null)"
-    want="$(git -C "$tracker_dir" rev-parse --short FETCH_HEAD 2>/dev/null)"
-    if [ -n "$want" ] && [ "$have" != "$want" ]; then
-        # Auto-apply (no prompt) when explicitly asked OR when pulling from a
-        # custom local source -- a non-origin remote means you're deliberately
-        # testing an unreleased build, so the prompt + GitHub "View changes" are
-        # just friction (and there'd be no web compare for unpushed commits).
-        if [ -n "${STARLOGGER_AUTO_UPDATE:-}" ] || [ "$update_remote" != origin ]; then
-            apply_update "$@"
-        else
-            compare="${tracker_repo%.git}/compare/$have...$want"
-            text="A new version of the Starlogger tracker is available.
-
-Installed: $have
-Latest:    $want
-
-Update before launching Star Citizen?"
-            # Loop so "View changes" opens the GitHub diff and re-asks; any other
-            # choice (or no GUI dialog) breaks out with $choice set.
-            while choice="$(ask_update "$text")"; do
-                [ "$choice" = view ] || break
-                xdg-open "$compare" >/dev/null 2>&1 &
-            done
-            case "${choice:-}" in
-                update) apply_update "$@" ;;
-                skip)   : ;;   # declined -> run the current copy
-                *)      notify Starlogger normal "Starlogger update available ($want) — re-run install.sh" ;;
-            esac
-        fi
-    fi
-    # fetch failed (offline) -> if-condition false, skip update, launch current copy.
-fi
 
 ############################################################################
 # StarStrings: fetch the latest community global.ini if newer than local, and
