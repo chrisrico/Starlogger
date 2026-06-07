@@ -86,7 +86,9 @@ ask_update() {  # $1 = dialog text
 # ($STARLOGGER_NO_UPDATE), offline, or not a clone -- a failed or declined
 # update never costs a launch. With no GUI dialog available and no auto-update,
 # we just notify that an update exists. The fetch source is $update_remote /
-# $update_branch (GitHub origin main by default; see STARLOGGER_UPDATE_REMOTE above).
+# $update_branch (GitHub origin main by default; see STARLOGGER_UPDATE_REMOTE
+# above). A non-origin (local/custom) source auto-applies without prompting --
+# you only point there to test a build you already want.
 ############################################################################
 apply_update() {  # re-exec into the freshly reset copy; never returns on success
     git -C "$tracker_dir" reset --hard --quiet FETCH_HEAD || return 1
@@ -102,30 +104,25 @@ if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ -z "${_SCRUN_REEXEC:-}" ] \
     have="$(git -C "$tracker_dir" rev-parse --short HEAD 2>/dev/null)"
     want="$(git -C "$tracker_dir" rev-parse --short FETCH_HEAD 2>/dev/null)"
     if [ -n "$want" ] && [ "$have" != "$want" ]; then
-        if [ -n "${STARLOGGER_AUTO_UPDATE:-}" ]; then
+        # Auto-apply (no prompt) when explicitly asked OR when pulling from a
+        # custom local source -- a non-origin remote means you're deliberately
+        # testing an unreleased build, so the prompt + GitHub "View changes" are
+        # just friction (and there'd be no web compare for unpushed commits).
+        if [ -n "${STARLOGGER_AUTO_UPDATE:-}" ] || [ "$update_remote" != origin ]; then
             apply_update "$@"
         else
-            # "View changes" opens a GitHub compare; only meaningful for the default
-            # origin (a local/custom source has no web diff -> show its path instead).
-            src_line=""
-            if [ "$update_remote" = origin ]; then
-                compare="${tracker_repo%.git}/compare/$have...$want"
-            else
-                compare=""
-                src_line="Source:    $update_remote
-"
-            fi
+            compare="${tracker_repo%.git}/compare/$have...$want"
             text="A new version of the Starlogger tracker is available.
 
 Installed: $have
 Latest:    $want
-${src_line}
+
 Update before launching Star Citizen?"
-            # Loop so "View changes" opens the diff and re-asks; any other
+            # Loop so "View changes" opens the GitHub diff and re-asks; any other
             # choice (or no GUI dialog) breaks out with $choice set.
             while choice="$(ask_update "$text")"; do
                 [ "$choice" = view ] || break
-                [ -n "$compare" ] && xdg-open "$compare" >/dev/null 2>&1 &
+                xdg-open "$compare" >/dev/null 2>&1 &
             done
             case "${choice:-}" in
                 update) apply_update "$@" ;;

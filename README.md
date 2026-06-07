@@ -31,7 +31,8 @@ Then just launch Star Citizen as usual: the tracker rides along with the game an
   silently without the prompt, or `STARLOGGER_NO_UPDATE=1` to pin and never check.
   Set `STARLOGGER_UPDATE_REMOTE` to a local clone path (or any git URL) to update from
   there instead of GitHub — useful for testing an unreleased build (`STARLOGGER_UPDATE_BRANCH`
-  overrides the branch, default `main`).
+  overrides the branch, default `main`). A non-origin source **auto-applies without
+  prompting** (you only point there to test a build you already want).
 - To install elsewhere, set `STARLOGGER_DATA_DIR` before running the command.
 - If the [LUG Helper](https://github.com/starcitizen-lug/lug-helper) ever reverts the
   `.desktop` launcher, **re-run the install command** — it re-asserts the launcher
