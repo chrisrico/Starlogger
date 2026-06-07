@@ -29,13 +29,37 @@ tracker_repo="https://github.com/chrisrico/starlogger.git"
 tracker_dir="$HOME/.local/share/starlogger"
 tracker="$tracker_dir/run-tracker.sh"
 
-# Self-update source (see the Self-update block). Defaults to GitHub (origin main).
-# Point STARLOGGER_UPDATE_REMOTE at a local clone -- a filesystem path or any git URL --
-# to pull from there instead, e.g. to test an unreleased launcher/tracker build without
+# Read one knob from the tracker's settings.json (the same store the dashboard's Settings
+# panel writes), lowercasing booleans, best-effort: a missing venv/file/key -> the default.
+# Lets launch-time update behavior follow what the user set in the UI, matching the Python
+# resolver's precedence (env > settings.json > default). Asking the venv resolves the path
+# (honors $STARLOGGER_DATA_DIR) instead of hardcoding it here.
+settings_get() {  # $1 = key   $2 = default
+    [ -x "$tracker_dir/.venv/bin/python" ] || { printf '%s' "$2"; return; }
+    ( cd "$tracker_dir" && .venv/bin/python -c '
+import json, sys
+try:
+    from starlogger.config import SETTINGS_PATH
+    with open(SETTINGS_PATH) as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+v = d.get(sys.argv[1])
+print(str(v).lower() if isinstance(v, bool) else (sys.argv[2] if v is None else v), end="")
+' "$1" "$2" ) 2>/dev/null || printf '%s' "$2"
+}
+
+# Self-update source (see the Self-update block). Defaults to GitHub (origin main); the
+# dashboard's Settings panel can override the remote/branch (stored in settings.json) and
+# turn auto-update off. Env vars still win over both -- point STARLOGGER_UPDATE_REMOTE at a
+# local clone (a filesystem path or any git URL) to test an unreleased build without
 # pushing to GitHub:  STARLOGGER_UPDATE_REMOTE="$HOME/Code/starlogger" sc-run.sh
-# STARLOGGER_UPDATE_BRANCH overrides the branch (default main).
-update_remote="${STARLOGGER_UPDATE_REMOTE:-origin}"
-update_branch="${STARLOGGER_UPDATE_BRANCH:-main}"
+# STARLOGGER_UPDATE_BRANCH overrides the branch.
+update_remote="${STARLOGGER_UPDATE_REMOTE:-$(settings_get update_remote origin)}"
+update_branch="${STARLOGGER_UPDATE_BRANCH:-$(settings_get update_branch main)}"
+# auto_update (settings.json) gates the launch-time update alongside $STARLOGGER_NO_UPDATE;
+# either turning it off skips the self-update block below.
+auto_update="$(settings_get auto_update true)"
 
 ############################################################################
 # Shared helpers (notify + update prompt), defined up here so the self-update
@@ -98,7 +122,7 @@ apply_update() {  # re-exec into the freshly reset copy; never returns on succes
     exec "$tracker_dir/lib/sc-run.sh" "$@"
 }
 
-if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ -z "${_SCRUN_REEXEC:-}" ] \
+if [ -z "${STARLOGGER_NO_UPDATE:-}" ] && [ "$auto_update" != false ] && [ -z "${_SCRUN_REEXEC:-}" ] \
     && [ -d "$tracker_dir/.git" ] && command -v git >/dev/null 2>&1 \
     && git -C "$tracker_dir" fetch --quiet --depth 1 "$update_remote" "$update_branch"; then
     have="$(git -C "$tracker_dir" rev-parse --short HEAD 2>/dev/null)"
