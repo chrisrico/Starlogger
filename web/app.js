@@ -25,6 +25,7 @@ let LAST = null;      // latest snapshot
 let _lastRenderSig = null;  // serialized snapshot last rendered by the poll (skip identical re-renders)
 let EDIT = null;      // mission_id whose editor is open (Contracts tab)
 let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
+let ASSET_VER = null; // frontend asset hash from the SSE `meta` frame; reload if it changes
 let SESSIONS = null;  // archived sessions
 
 // ---- session replay ---- //
@@ -1863,6 +1864,16 @@ async function refresh() {
 function connectStream() {
   const es = new EventSource("/api/stream");
   es.onopen = () => hideDisconnect();
+  // Named `meta` event (NOT onmessage) carries the served-asset hash. First connect
+  // records the baseline; a reconnect with a different hash means a new build replaced
+  // the tracker on this port -> reload to run the new code. (The active tab survives via
+  // location.hash.) A server-only relaunch keeps the same hash, so the reconnect is silent.
+  es.addEventListener("meta", (e) => {
+    let m; try { m = JSON.parse(e.data); } catch (_) { return; }
+    if (!m || !m.assets) return;
+    if (ASSET_VER === null) { ASSET_VER = m.assets; return; }
+    if (m.assets !== ASSET_VER) location.reload();
+  });
   es.onmessage = (e) => {
     hideDisconnect();
     try { applySnapshot(JSON.parse(e.data)); } catch (_) { /* ignore a malformed frame */ }

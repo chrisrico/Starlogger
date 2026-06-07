@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import threading
+from functools import lru_cache
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
@@ -29,6 +32,29 @@ from .stations import set_station_name
 # How long an idle SSE stream waits before emitting a keepalive comment. Bounds how
 # fast we notice a dead socket (the next write fails -> the generator's finally runs).
 SSE_KEEPALIVE_SECS = 15.0
+
+
+# The four frontend files this process serves. A relaunch with a new build changes
+# their bytes; a server-only relaunch leaves them identical.
+_ASSET_FILES = ("index.html", "app.js", "styles.css", "cargogrid.js")
+
+
+@lru_cache(maxsize=1)
+def _assets_version() -> str:
+    """Content hash of the served frontend assets. An open dashboard compares this
+    across SSE reconnects: a relaunch that changed any of these files -> the tab
+    reloads to pick up the new code; a server-only relaunch -> same hash, no reload.
+    Cached for process life -- the tracker is re-exec'd per launch, so it can't go
+    stale (same reasoning as snapshot._app_version)."""
+    h = hashlib.sha256()
+    for name in _ASSET_FILES:
+        try:
+            with open(os.path.join(WEB_DIR, name), "rb") as f:
+                h.update(f.read())
+        except OSError:
+            h.update(b"\0")  # missing file still contributes a stable token
+        h.update(b"\x00")  # delimiter so concatenation can't alias
+    return h.hexdigest()[:16]
 
 
 def create_app(state: State, log_path: str | None = None, presence=None) -> Flask:
@@ -74,6 +100,9 @@ def create_app(state: State, log_path: str | None = None, presence=None) -> Flas
             if presence is not None:
                 presence.stream_connect()
             try:
+                # First frame: the asset version, so a reconnecting dashboard can tell
+                # a new-build relaunch (reload to get new code) from a server-only one.
+                yield f"event: meta\ndata: {json.dumps({'assets': _assets_version()})}\n\n"
                 last = None
                 while True:
                     with state.version_cv:
