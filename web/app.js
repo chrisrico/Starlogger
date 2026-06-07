@@ -675,15 +675,24 @@ function cargoChip(it, maxBox) {
   return `<span class="cargochip">${legCheck(it.mission_id, it.oid, false)}<span class="cc-name">${cargoCell(it.cargo, it.mission_id, it.oid)}</span> <span class="cc-qty">${qtyCell(it.qty, it.mission_id, it.oid)}</span>${brk ? ` <span class="cc-box sub">${brk}</span>` : ""}</span>`;
 }
 
+// How the hold was packed, in words — branches on the strategy packGroups chose.
+function strategyCopy(packed) {
+  const s = packed && packed.strategy;
+  if (s === "split") return (packed.split === "width" ? "loaded left/right by stop" : "loaded fore/aft by stop")
+    + (packed.spill ? " · spillover hold last" : "");
+  if (s === "linear") return "loaded front-to-back" + (packed.spill ? " · spillover hold last" : "");
+  return "load order doesn't matter";   // open
+}
+
 // The section header — matches the app's .arch-sub header language (was the unstyled .archbar).
-function planHead(d, stops, jumps, hasGrid, access, banded, cap, placed, totalScu, empty) {
+function planHead(d, stops, jumps, hasGrid, access, packed, cap, placed, totalScu, empty) {
   const free = (hasGrid && cap) ? ` · ${num(Math.max(0, cap - placed))} SCU free` : "";
   const shipBit = hasGrid ? ` · ${esc(d.ship)} ${num(totalScu)}/${num(cap)} SCU`
     : (d.ship ? ` · ${esc(d.ship)}` : "");
   const title = empty ? `Trip Plan${shipBit}` : `Trip Plan · ${stops} stop(s) · ${jumps} jump(s)${shipBit}`;
   const sub = empty
     ? "no cargo staged — accept hauling contracts and your route &amp; load plan appear here"
-    : (hasGrid ? `${accessLabel(access)} · ${banded ? "loaded front-to-back" : "load order doesn't matter"}${free}`
+    : (hasGrid ? `${accessLabel(access)} · ${strategyCopy(packed)}${free}`
                : "drag a stop to set your visit &amp; load order");
   const reset = ROUTE_ORDER
     ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
@@ -724,7 +733,7 @@ function planView(d) {
   ((hasGrid && banded) ? [...order].reverse() : order).forEach((g, i) => { loadPos[g.dest] = i + 1; });
 
   if (!hasStops)
-    return `<div class="planwrap">${planHead(d, 0, 0, hasGrid, access, banded, cap, placed, totalScu, true)}
+    return `<div class="planwrap">${planHead(d, 0, 0, hasGrid, access, shipPacked, cap, placed, totalScu, true)}
       <div class="sub" style="margin:10px 2px 14px">No cargo staged yet — accept hauling contracts and your route &amp; load plan appear here.</div>
       ${hold}</div>`;
 
@@ -787,7 +796,7 @@ function planView(d) {
       <div class="plan-chips">${loadItems || '<span class="sub">no cargo outstanding</span>'}</div></div>
     <div class="scu">${num(planSorted.scu_total || 0)} SCU</div></div>`;
 
-  return `<div class="planwrap">${planHead(d, planSorted.stops.length, n, hasGrid, access, banded, cap, placed, totalScu, false)}${over}${ambig}
+  return `<div class="planwrap">${planHead(d, planSorted.stops.length, n, hasGrid, access, shipPacked, cap, placed, totalScu, false)}${over}${ambig}
     ${loadCard}
     <ol class="plan-stops" id="routegrid" onmouseover="rowHover(event)" onmouseout="rowHover(event)">${stopRows}</ol>
     ${hold}</div>` + partialNote(d);

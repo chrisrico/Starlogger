@@ -201,12 +201,15 @@
 
     const placed = [], overflow = [];
     let placedScu = 0;
-    const place = (item, win) => {
+    // `win` confines the box to a slice of the access axis (front-to-back banding);
+    // `cellSet` (a Set of "bi:ci" ids) confines it to one compartment. Either may be null.
+    const place = (item, win, cellSet) => {
       const orients = orientations(item.dims);
       for (let oz = 0; oz < maxH; oz++)
         for (let bi = 0; bi < bays.length; bi++) {
           const { cells, box } = bays[bi];
           for (let ci = 0; ci < cells.length; ci++) {
+            if (cellSet && !cellSet.has(bi + ":" + ci)) continue;
             const c = cells[ci], set = occ[bi][ci];
             const dz = c.z - box.minZ, dx = c.x - box.minX;
             for (let oi = 0; oi < orients.length; oi++) {
@@ -237,7 +240,11 @@
     };
 
     for (const item of boxList) {
-      const done = place(item, item.win) || (item.win && place(item, null));
+      // try each placement option in order (its band → its compartment → spillover →
+      // anywhere); packGroups builds the list, by-size packing passes a bare box.
+      const tries = item.tries || [{ win: item.win }];
+      let done = false;
+      for (const t of tries) if (place(item, t.win || null, t.cells || null)) { done = true; break; }
       if (!done) overflow.push(item);
     }
     return { placed, overflow, placedScu, capacity };
@@ -340,73 +347,149 @@
     return OPEN_ACCESS;
   }
 
-  // Capacity profile along the access axis: prof[d] = SCU that fits in slice d (its
-  // cross-section area), normalized per bay. Used to size each group's band to its
-  // real capacity, so bands aren't undersized where the hold narrows or has a gap.
-  function axisProfile(grid, axis) {
-    const segs = [];
-    let span = 0;
-    for (const bay of grid) {
-      const cells = bay.grids || [];
-      if (!cells.length) continue;
-      const minX = Math.min(...cells.map(c => c.x)), minZ = Math.min(...cells.map(c => c.z));
-      for (const c of cells) {
-        const start = axis === "width" ? c.x - minX : c.z - minZ;
-        const len = axis === "width" ? c.width : c.length;
-        const cross = axis === "width" ? c.length * c.height : c.width * c.height;
-        segs.push({ start, len, cross });
-        if (start + len > span) span = start + len;
-      }
-    }
-    const prof = new Array(span).fill(0);
-    for (const s of segs) for (let d = s.start; d < s.start + s.len; d++) prof[d] += s.cross;
-    return prof;
+  // ---- hold geometry: partition cells into physical compartments ----
+  // Flatten every cell with a stable "bi:ci" id and BAY-NORMALIZED footprint (the same
+  // frame packBoxes/the renderer use), plus its SCU.
+  function flattenCells(grid) {
+    const out = [];
+    grid.forEach((bay, bi) => {
+      const list = bay.grids || [];
+      if (!list.length) return;
+      const box = bayBox(list);
+      list.forEach((c, ci) => out.push({
+        id: bi + ":" + ci, bi, ci, c, scu: cellScu(c),
+        nx0: c.x - box.minX, nx1: c.x - box.minX + c.width,
+        nz0: c.z - box.minZ, nz1: c.z - box.minZ + c.length,
+      }));
+    });
+    return out;
+  }
+  // A compartment is a maximal cluster of cells touching on the X/Z plane (union-find).
+  // Cells separated by a gap (a corridor, a deck break) fall into separate compartments,
+  // so left/right holds (Hermes, Carrack) and fore/aft holds (C2) are distinct loadable
+  // regions — the basis for keeping different destinations physically apart.
+  function compartments(cells) {
+    const GAP = 1;   // touching/adjacent cells merge; a ≥1-unit gap splits them
+    const parent = cells.map((_, i) => i);
+    const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    const adj = (a, b) => a.bi === b.bi
+      && a.nx0 < b.nx1 + GAP && b.nx0 < a.nx1 + GAP
+      && a.nz0 < b.nz1 + GAP && b.nz0 < a.nz1 + GAP;
+    for (let i = 0; i < cells.length; i++)
+      for (let j = i + 1; j < cells.length; j++)
+        if (adj(cells[i], cells[j])) parent[find(i)] = find(j);
+    const by = {};
+    cells.forEach((cell, i) => {
+      const r = find(i);
+      const g = by[r] || (by[r] = { cells: [], ids: new Set(), scu: 0 });
+      g.cells.push(cell); g.ids.add(cell.id); g.scu += cell.scu;
+    });
+    return Object.values(by);
+  }
+  // Capacity profile of one compartment along the access axis (bay-normalized), so a
+  // band is sized to the real cross-section where the hold narrows or has a gap.
+  function compProfile(comp, axis) {
+    const start = (cell) => axis === "width" ? cell.nx0 : cell.nz0;
+    const len = (cell) => axis === "width" ? cell.c.width : cell.c.length;
+    const cross = (cell) => axis === "width" ? cell.c.length * cell.c.height : cell.c.width * cell.c.height;
+    let lo = Infinity, hi = -Infinity;
+    for (const cell of comp.cells) { lo = Math.min(lo, start(cell)); hi = Math.max(hi, start(cell) + len(cell)); }
+    const prof = new Array(hi - lo).fill(0);
+    for (const cell of comp.cells)
+      for (let d = start(cell); d < start(cell) + len(cell); d++) prof[d - lo] += cross(cell);
+    return { prof, lo, hi };
   }
 
-  // Pack elevator groups into the hold. Each group's index becomes its boxes' `gid`
-  // (so the UI can highlight one elevator's cargo). Boxes carry their own {hue,dest}
-  // when set, else the group's; largest first keeps a group contiguous.
+  // Pack delivery-ordered groups (one per destination) into the hold, choosing a
+  // strategy by the ship's hold geometry. Each group's index becomes its boxes' `gid`;
+  // boxes carry their own {hue,dest} when set, else the group's.
   //
-  // Open ships pack plain floor-first. With an `access` spec the cargo packs
-  // FRONT-TO-BACK: `orderedGroups` must be in delivery order (first-delivered first),
-  // and each group is given a contiguous band along the access axis starting at the
-  // hatch end, sized (with slack for packing waste) to its SCU. So the first delivery
-  // sits against the hatch and each later group lands in a band behind it — nothing
-  // earlier ends up buried. Bands fill floor-first internally (no floating boxes).
+  //   OPEN   (no access axis): dense floor-first, order irrelevant — every box reachable.
+  //   LINEAR (1 primary compartment): one band per destination along the access axis,
+  //          hatch-first, so the first delivery sits at the hatch and nothing buries it.
+  //   SPLIT  (≥2 primary compartments — left/right or fore/aft holds): whole destinations
+  //          assigned to whole compartments (balanced by capacity), banded within each, so
+  //          a stop's cargo stays in one physically-separate, independently-reachable hold.
+  //
+  // Small secondary holds (a closet < SECONDARY_FRAC of the largest — e.g. the Star
+  // Runner's 6-SCU side hold) are SPILLOVER-ONLY: filled only once the primaries are full.
   function packGroups(grid, orderedGroups, access) {
-    const SLACK = 1.3;   // oversize bands a touch so 3D packing waste doesn't spill
-    const banded = access && access.axis;
-    let prof = [], span = 0, wAxis = null, high = false, frontier = 0;
-    if (banded) {
-      prof = axisProfile(grid, access.axis);
-      span = prof.length;
-      wAxis = access.axis === "width" ? "w" : "d";
-      high = access.near === "front" || access.near === "right";   // hatch at the far end
+    const SLACK = 1.3, SECONDARY_FRAC = 0.25;
+    const cells = flattenCells(grid);
+    const banded = !!(access && access.axis) && cells.length > 0;
+
+    const boxesOf = (g, gi) => [...g.boxes].sort((a, b) => b.scu - a.scu).map(bx => ({
+      dims: bx.dims, scu: bx.scu, gid: gi,
+      hue: bx.hue != null ? bx.hue : g.hue,
+      dest: bx.dest != null ? bx.dest : g.dest,
+    }));
+
+    if (!banded) {                          // OPEN: plain floor-first, any order
+      const list = [];
+      orderedGroups.forEach((g, gi) => boxesOf(g, gi).forEach(b => { b.tries = [{}]; list.push(b); }));
+      const r = packBoxes(grid, list);
+      r.strategy = "open";
+      return r;
     }
-    const list = [];
+
+    const comps = compartments(cells);
+    const maxCap = Math.max(...comps.map(c => c.scu), 1);
+    let primary = comps.filter(c => c.scu >= SECONDARY_FRAC * maxCap);
+    if (!primary.length) primary = [comps[0]];
+    const spillIds = new Set();
+    comps.filter(c => !primary.includes(c)).forEach(c => c.ids.forEach(id => spillIds.add(id)));
+
+    const axis = access.axis, wAxis = axis === "width" ? "w" : "d";
+    const high = access.near === "front" || access.near === "right";   // hatch at the far end
+
+    // assign each destination to the primary compartment with the most room left, so
+    // different stops land in different compartments while the fill stays balanced.
+    const rem = primary.map(c => c.scu);
+    const assigned = primary.map(() => []);
     orderedGroups.forEach((g, gi) => {
-      let win;
-      if (banded) {
+      let best = 0;
+      for (let i = 1; i < primary.length; i++) if (rem[i] > rem[best]) best = i;
+      assigned[best].push({ g, gi });
+      rem[best] -= (g.scu || 0);
+    });
+
+    // within each compartment, band its destinations front-to-back from the hatch
+    const list = [];
+    primary.forEach((comp, ci) => {
+      const { prof, lo, hi } = compProfile(comp, axis);
+      const span = hi - lo;
+      let frontier = 0;
+      assigned[ci].forEach(({ g, gi }) => {
         const need = (g.scu || 0) * SLACK;
         let acc = 0, k = 0;
-        while (frontier + k < span && acc < need) {
-          acc += prof[high ? span - 1 - (frontier + k) : frontier + k];
-          k++;
-        }
+        while (frontier + k < span && acc < need) { acc += prof[high ? span - 1 - (frontier + k) : frontier + k]; k++; }
         if (k === 0) k = 1;
-        win = high ? { axis: wAxis, lo: span - frontier - k, hi: span - frontier }
-                   : { axis: wAxis, lo: frontier, hi: frontier + k };
+        const win = high
+          ? { axis: wAxis, lo: lo + span - frontier - k, hi: lo + span - frontier }
+          : { axis: wAxis, lo: lo + frontier, hi: lo + frontier + k };
         frontier += k;
-      }
-      for (const bx of [...g.boxes].sort((a, b) => b.scu - a.scu))
-        list.push({
-          dims: bx.dims, scu: bx.scu, gid: gi,
-          hue: bx.hue != null ? bx.hue : g.hue,
-          dest: bx.dest != null ? bx.dest : g.dest,
-          win,
+        boxesOf(g, gi).forEach(b => {
+          b.tries = [{ cells: comp.ids, win }, { cells: comp.ids }];   // its band, then anywhere in its compartment
+          if (spillIds.size) b.tries.push({ cells: spillIds });        // then a secondary hold
+          b.tries.push({});                                            // last resort: anywhere
+          list.push(b);
         });
+      });
     });
-    return packBoxes(grid, list);
+
+    // describe the chosen strategy for the UI: how the primary holds are separated.
+    let split = null;
+    if (primary.length > 1) {
+      const cen = (c, k) => c.cells.reduce((a, x) => a + (k === "w" ? (x.nx0 + x.nx1) : (x.nz0 + x.nz1)) / 2, 0) / c.cells.length;
+      const cx = primary.map(c => cen(c, "w")), cz = primary.map(c => cen(c, "z"));
+      split = (Math.max(...cx) - Math.min(...cx)) >= (Math.max(...cz) - Math.min(...cz)) ? "width" : "depth";
+    }
+    const r = packBoxes(grid, list);
+    r.strategy = primary.length > 1 ? "split" : "linear";
+    r.holds = primary.length;
+    r.split = split;
+    r.spill = spillIds.size > 0;
+    return r;
   }
 
   // a sized, solid, color-tinted cargo box with 1-SCU grid lines on its faces.
