@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
@@ -98,6 +99,18 @@ def create_app(state: State, log_path: str | None = None, presence=None) -> Flas
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         })
+
+    @app.post("/api/quit")
+    def api_quit():
+        # A newer launch is taking over the port -> shut this instance down cleanly. QUIT_FN
+        # (the WSGI server's thread-safe .shutdown(), wired in by tracker.py) runs in a
+        # daemon thread so this response returns first. No-op if not wired (e.g. in tests
+        # without a real server). Localhost-only tool, so no auth -- worst case is stopping
+        # your own dev server.
+        fn = app.config.get("QUIT_FN")
+        if fn is not None:
+            threading.Thread(target=fn, daemon=True).start()
+        return jsonify({"ok": True})
 
     @app.get("/api/ships")
     def api_ships():

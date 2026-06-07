@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 
 import pytest
 
@@ -263,3 +264,21 @@ def test_stream_optional_without_presence(client):
     assert r.mimetype == "text/event-stream"
     assert b"data:" in next(r.response)
     r.close()
+
+
+# --- /api/quit (a newer launch replacing this instance) ------------------- #
+
+def test_quit_invokes_shutdown(monkeypatch):
+    monkeypatch.setattr(server, "build_snapshot", lambda st, **kw: {})
+    app = server.create_app(State(), log_path="/fake/Game.log")
+    called = threading.Event()
+    app.config["QUIT_FN"] = called.set    # stand in for httpd.shutdown
+    app.testing = True
+    r = app.test_client().post("/api/quit")
+    assert r.get_json()["ok"] is True
+    assert called.wait(2)                  # the daemon thread invoked QUIT_FN
+
+
+def test_quit_noop_without_fn(client):
+    # No QUIT_FN wired (default fixture) -> still returns ok, just does nothing.
+    assert client.post("/api/quit").get_json()["ok"] is True

@@ -21,6 +21,7 @@ import signal
 import socket
 import threading
 import time
+import urllib.request
 import webbrowser
 
 from starlogger import catalogs
@@ -276,21 +277,31 @@ def _port_in_use(host: str, port: int, timeout: float = 0.5) -> bool:
 
 
 def _wait_to_bind(host: str, port: int, timeout: float = 20.0) -> bool:
-    """Something already serves host:port. Wait a bounded window for it to free,
-    then report whether we may bind. This disambiguates the two reasons the port is
-    busy at startup:
-      - a relaunch is tearing the *previous* session's server down (sc-launch's
-        `wineserver -k` kills the old game -> its sc-launch exits -> pdeathsig
-        releases :8765 within a second or two) -> the port frees -> take over;
-      - a healthy other instance is serving and isn't going anywhere -> the port
-        stays busy the whole window -> leave it alone.
-    Returns True once the port is free (bind/take over), False if it stayed busy."""
+    """Wait a bounded window for host:port to free, then report whether we may bind.
+    Used after asking an existing instance to quit (see _ask_existing_to_quit): a new
+    launch replaces the old tracker rather than deferring to it, so the latest code runs
+    and the new game session owns the tracker. Returns True once free, False if it
+    stayed busy (the old instance wedged / a non-starlogger squatter holds the port)."""
     deadline = time.monotonic() + timeout
     while _port_in_use(host, port):
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.25)
     return True
+
+
+def _ask_existing_to_quit(host: str, port: int) -> None:
+    """Tell an instance already serving host:port to shut down, so this newer launch can
+    take over the port. Best-effort POST /api/quit -- if it's a starlogger it exits
+    cleanly (and its dashboard tab's SSE stream reconnects to us); if it's something else
+    or already gone, the call just fails and _wait_to_bind decides whether we may bind."""
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request(f"http://{_probe_host(host)}:{port}/api/quit",
+                                   data=b"", method="POST"),
+            timeout=2.0).close()
+    except OSError:
+        pass
 
 
 def _open_browser_when_ready(host: str, port: int, url: str) -> None:
@@ -352,15 +363,18 @@ def main() -> None:
         print(json.dumps(build_snapshot(state), indent=2))
         return
 
-    # Only the live-serving path dedups + auto-opens; the one-shot/maintenance modes
-    # above have already returned. If the port looks busy, wait briefly: a relaunch's
-    # wineserver -k is tearing the previous server down and will free it, whereas a
-    # healthy other instance holds it through the window (and we leave it be).
+    # Only the live-serving path takes over + auto-opens; the one-shot/maintenance modes
+    # above have already returned. A new launch REPLACES any instance already on the port:
+    # ask it to quit, then wait for the port to free. This guarantees the latest code runs
+    # (sc-run.sh updates on each launch) and the new game session owns the tracker. If it
+    # won't release the port (wedged, or a non-starlogger squatter), bail rather than fight.
     took_over = _port_in_use(args.host, args.port)
-    if took_over and not _wait_to_bind(args.host, args.port):
-        print(f"Starlogger already running at http://{args.host}:{args.port} -- "
-              f"not starting a second instance.")
-        return
+    if took_over:
+        _ask_existing_to_quit(args.host, args.port)
+        if not _wait_to_bind(args.host, args.port):
+            print(f"Another server is holding http://{args.host}:{args.port} and won't "
+                  f"release it -- not starting.")
+            return
 
     stop = threading.Event()
     epoch_trigger = threading.Event()
@@ -396,19 +410,21 @@ def main() -> None:
     print(f"  dashboard: {url}")
     print("  Ctrl-C to stop")
 
-    # Auto-open the dashboard only on a fresh start. On a relaunch we take over the
-    # previous instance's port (above), so its tab's SSE stream auto-reconnects to the
-    # same URL -- opening another would pile up a duplicate tab every relaunch.
+    # Auto-open the dashboard only on a fresh start. On a relaunch we replaced the previous
+    # instance (above), so its tab's SSE stream auto-reconnects to the same URL -- opening
+    # another would pile up a duplicate tab every relaunch.
     if took_over:
-        print("  (took over a running instance -- its dashboard tab will reconnect)")
+        print("  (replaced a running instance -- its dashboard tab will reconnect)")
     elif not (args.no_browser or os.environ.get("STARLOGGER_NO_BROWSER")):
         threading.Thread(target=_open_browser_when_ready,
                          args=(args.host, args.port, url), daemon=True).start()
     # make_server (not app.run) so the watchdog can stop us via httpd.shutdown() -- a
     # thread-safe call that returns serve_forever() cleanly, without relying on a signal
     # (a self-SIGINT is dropped when we're backgrounded; see shutdown_watchdog).
-    httpd = make_server(args.host, args.port,
-                        create_app(state, log_path, presence=presence), threaded=True)
+    app = create_app(state, log_path, presence=presence)
+    httpd = make_server(args.host, args.port, app, threaded=True)
+    # Let a newer launch replace us via POST /api/quit (see _ask_existing_to_quit).
+    app.config["QUIT_FN"] = httpd.shutdown
     threading.Thread(target=shutdown_watchdog,
                      args=(presence, stop, has_launcher_detection, _idle_timeout(),
                            time.monotonic(), httpd.shutdown), daemon=True).start()
