@@ -30,7 +30,9 @@ _write_lock = threading.Lock()  # serialize sessions.json writers (live tailer +
 # backfill records this version per processed logbackup (the `backfill` map in
 # sessions.json) and re-parses any backup stamped with an older schema, refreshing its
 # session(s) — so a deploy that adds a summary field still self-heals history.
-ARCHIVE_SCHEMA = 1
+# 2: per-mission `type` now prefers the authoritative ContractTemplate class (+ `icon`),
+#    replacing the keyword heuristic where a template matches.
+ARCHIVE_SCHEMA = 2
 
 
 def _session_key(state: State) -> str:
@@ -58,7 +60,11 @@ def build_summary(state: State) -> dict:
         missions.append({
             "title": m.title or m.contract,
             "status": status,
-            "type": classify_contract(m.contract, m.org, m.title, m.is_trade),
+            # Authoritative mission class from the matched ContractTemplate (p4k); the
+            # keyword heuristic is the offline/unmatched fallback. `icon` is its icon slug.
+            "type": m.decoded.get("type") or classify_contract(m.contract, m.org, m.title,
+                                                                m.is_trade),
+            "icon": m.decoded.get("icon"),
             "reward": m.reward,
             "cargo": m.cargo_types,
             "is_trade": m.is_trade,

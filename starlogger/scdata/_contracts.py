@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 import shutil
 import tempfile
 
 from ..patterns import camel_split
 from ._p4k import (
-    _load_json, ensure_binary, extract_records, load_localization,
+    _load_json, _run, ensure_binary, extract_records, load_localization,
 )
 
 
@@ -33,11 +34,80 @@ _ROUTE_TOKENS = {
     "MultiToSingleToken": "many → 1",
 }
 
+# --------------------------------------------------------------------------- #
+# Mission TYPE / class (authoritative, replaces the keyword heuristic)
+# --------------------------------------------------------------------------- #
+# Each ContractTemplate's `contractDisplayInfo.type` is a file ref to a MissionType record
+# under missiontype/ (e.g. .../missiontype/pu/hauling.json). That record holds the
+# `LocalisedTypeName` (mobiGlas type label) and `svgIconPath` (the in-p4k icon asset). This
+# is the real mission class the game shows -- far better than scanning org/title strings.
+#
+# missiontype basename (lower, sans .json) -> (collapsed display label, icon slug). Per the
+# agreed taxonomy the four hauling* variants fold into "Hauling" and salvage + local into
+# "Salvage"; every other type stays distinct. The slug names BOTH the exported icon file
+# (mission_icons/<slug>.svg) and the frontend colour/CSS class -- keep it in sync with the
+# JS mirror in web/app.js (TYPE_SLUG / contractType / ctSlug).
+_TYPE_MAP = {
+    "hauling": ("Hauling", "haul"),
+    "hauling_solar": ("Hauling", "haul"),
+    "hauling_planetary": ("Hauling", "haul"),
+    "hauling_interstellar": ("Hauling", "haul"),
+    "priority": ("Priority", "priority"),
+    "mercenary": ("Mercenary", "mercenary"),
+    "collection": ("Collection", "collection"),
+    "missiontype.delivery": ("Delivery", "deliver"),
+    "investigation": ("Investigation", "investigation"),
+    "salvage": ("Salvage", "salvage"),
+    "local": ("Salvage", "salvage"),
+    "bountyhunter": ("Bounty Hunter", "bounty"),
+    "refueling": ("Refueling", "refuel"),
+    "maintenance": ("Maintenance", "maintenance"),
+    "race": ("Racing", "race"),
+    "appointment": ("Appointment", "appointment"),
+    "ecn": ("ECN Alert", "ecn"),
+    "missiontype.search": ("Search", "search"),
+}
 
-def build_contract_taxonomy(records_root: str, loc: dict) -> list:
-    """Every contract template -> ``{template, route, graded, scu_sized, rep_gated,
-    illegal}``, read from an extracted DataCore records root. Only the statically-known
+
+def _type_basename(ref) -> str:
+    """missiontype basename (lower, sans .json) from a ``contractDisplayInfo.type`` file
+    ref (``file://.../missiontype.delivery.json``) or a record name."""
+    if not isinstance(ref, str) or not ref:
+        return ""
+    b = os.path.basename(ref.split("?")[0])
+    return (b[:-5] if b.endswith(".json") else b).lower()
+
+
+def _mission_type_index(records_root: str, loc: dict) -> dict:
+    """Every MissionType record -> ``{label, slug, svg}``: the collapsed display label +
+    icon slug (from ``_TYPE_MAP``; an unmapped/future type localises its own
+    ``LocalisedTypeName`` and slugs its basename) and the in-p4k icon asset path. Drives
+    both the per-template ``type`` and the icon export."""
+    idx: dict = {}
+    for p in glob.glob(os.path.join(records_root, "**", "missiontype", "**", "*.json"),
+                       recursive=True):
+        try:
+            cv = _load_json(p)["_RecordValue_"]
+        except (OSError, ValueError, KeyError):
+            continue
+        base = os.path.basename(p)[:-5].lower()
+        label, slug = _TYPE_MAP.get(base, (None, None))
+        if label is None:  # unmapped (e.g. a newly-added type): localise its own name
+            tok = (cv.get("LocalisedTypeName") or "").lstrip("@")
+            label = loc.get(tok.lower()) or loc.get(tok) or base.replace("_", " ").title()
+            slug = re.sub(r"[^a-z0-9]", "", base) or "other"
+        idx[base] = {"label": label, "slug": slug, "svg": cv.get("svgIconPath") or ""}
+    return idx
+
+
+def build_contract_taxonomy(records_root: str, loc: dict, mtidx: dict | None = None) -> list:
+    """Every contract template -> ``{template, type, icon, route, graded, scu_sized,
+    rep_gated, illegal}``, read from an extracted DataCore records root. ``type`` is the
+    authoritative mission class (via ``contractDisplayInfo.type`` -> MissionType) and
+    ``icon`` its slug; both None when a template names no type. Only the statically-known
     shape is captured (token *values* are runtime); ``route`` is None for non-cargo types."""
+    if mtidx is None:
+        mtidx = _mission_type_index(records_root, loc)
     rows: list[dict] = []
     for p in glob.glob(os.path.join(records_root, "**", "contracttemplates", "*.json"),
                        recursive=True):
@@ -49,8 +119,11 @@ def build_contract_taxonomy(records_root: str, loc: dict) -> list:
             continue
         tokens = {mp.get("extendedTextToken") for mp in (cv.get("contractProperties") or [])
                   if isinstance(mp.get("extendedTextToken"), str)}
+        info = mtidx.get(_type_basename((cv.get("contractDisplayInfo") or {}).get("type")))
         rows.append({
             "template": name,
+            "type": info["label"] if info else None,
+            "icon": info["slug"] if info else None,
             "route": next((lbl for tok, lbl in _ROUTE_TOKENS.items() if tok in tokens), None),
             "graded": bool(tokens & {"CargoGradeToken", "CourierGradeToken"}),
             "scu_sized": "MissionMaxSCUSize" in tokens,
@@ -95,17 +168,53 @@ def build_cargo_manifests(records_root: str, loc: dict) -> list:
     return out
 
 
+def extract_mission_icons(p4k: str, sb: str, workdir: str, mtidx: dict) -> dict:
+    """``{slug: svg_text}`` for every distinct mission-type icon referenced by ``mtidx`` --
+    the game's own mobiGlas type icons, pulled straight from the p4k (small vector files).
+    Returned as text so the caller writes them wherever it keeps p4k-derived data; the
+    workdir is transient. Best-effort: a missing/odd asset is simply skipped."""
+    want = {info["slug"]: info["svg"] for info in mtidx.values()
+            if info.get("slug") and info.get("svg")}
+    if not want:
+        return {}
+    out = os.path.join(workdir, "icons")
+    os.makedirs(out, exist_ok=True)
+    # The icons live under a couple of MobiGlas subdirs (App_ContractsManager, Starmap);
+    # one glob over MobiGlas/*.svg grabs them all in a single fast pass.
+    try:
+        _run(sb, p4k, ["p4k", "extract", "--p4k", p4k,
+                       "--filter", "**/MobiGlas/**/*.svg", "-o", out], timeout=120)
+    except RuntimeError:
+        return {}
+    found = {os.path.basename(f).lower(): f
+             for f in glob.glob(os.path.join(out, "**", "*.svg"), recursive=True)}
+    icons: dict = {}
+    for slug, svg in want.items():
+        f = found.get(os.path.basename(svg).lower())
+        if not f:
+            continue
+        try:
+            with open(f, encoding="utf-8") as fh:
+                icons[slug] = fh.read()
+        except OSError:
+            continue
+    return icons
+
+
 def build_contracts_from_p4k(p4k: str, sb: str | None = None,
                              progress=lambda m: None) -> dict:
-    """Full-extract orchestrator for the contract taxonomy + cargo manifests (gated like
-    mineables/blueprints). Returns ``{templates, cargo_manifests}``."""
+    """Full-extract orchestrator for the contract taxonomy + cargo manifests + mission-type
+    icons (gated like mineables/blueprints). Returns ``{templates, cargo_manifests,
+    icons}`` -- ``icons`` is ``{slug: svg_text}`` for the caller to persist (gitignored)."""
     sb = sb or ensure_binary()
     workdir = tempfile.mkdtemp(prefix="starlogger-contracts-")
     try:
         progress("extracting DataCore for contracts")
         recs = extract_records(workdir, p4k, sb)
         loc = load_localization(recs)
-        return {"templates": build_contract_taxonomy(recs, loc),
-                "cargo_manifests": build_cargo_manifests(recs, loc)}
+        mtidx = _mission_type_index(recs, loc)
+        return {"templates": build_contract_taxonomy(recs, loc, mtidx),
+                "cargo_manifests": build_cargo_manifests(recs, loc),
+                "icons": extract_mission_icons(p4k, sb, workdir, mtidx)}
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

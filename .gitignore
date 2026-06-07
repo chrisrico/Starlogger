@@ -32,8 +32,10 @@ dist/
 # ANY new p4k-derived file must be added here too. As a backstop, the .githooks/pre-commit
 # hook blocks committing any *.json carrying the "...Star Citizen Data.p4k via StarBreaker..."
 # source marker. Enable it once per clone with: git config core.hooksPath .githooks
+# (note: that hook only inspects *.json — the mission_icons/ SVGs below rely on THIS entry.)
 ships.json
 reference.json
 mineables.json
 blueprints.json
 contracts.json
+mission_icons/

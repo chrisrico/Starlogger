@@ -920,9 +920,11 @@ function missionsTable(ms) {
     ((b.accepted_at || "").localeCompare(a.accepted_at || "")));
   const rows = ms.map(m => {
     const dec = m.decoded || {};
-    // structure/category/grade come from the contract-id heuristic; `legal` is authoritative
-    // ContractTemplate data (p4k) layered in by model.Mission.decoded (grade/SCU are runtime).
-    const tags = [dec.structure, dec.category, dec.grade].filter(Boolean)
+    // dec.type/icon and dec.legal are authoritative ContractTemplate data (p4k) layered in
+    // by model.Mission.decoded; structure/category/grade come from the contract-id heuristic
+    // (grade/SCU are runtime). The type mark leads the chip row.
+    const typeChip = dec.type ? typeMark(dec.type, dec.icon) : "";
+    const tags = typeChip + [dec.structure, dec.category, dec.grade].filter(Boolean)
       .map(t => `<span class="chip">${esc(t)}</span>`).join("")
       + (dec.legal === false ? `<span class="chip chip-illegal" title="Illegal contract">⚠ Illegal</span>` : "");
     const note = m.hidden ? '<div class="sub">hidden</div>'
@@ -1382,9 +1384,22 @@ function contractType(m) {
   if (_CT_DELIVERY.some(w => hay.includes(w))) return "Delivery";
   return "Other";
 }
-const CT_ORDER = ["Hauling", "Bounty / Combat", "Delivery", "Other"];
-const ctSlug = t => ({ "Hauling": "haul", "Bounty / Combat": "bounty",
-  "Delivery": "deliver", "Other": "other" }[t] || "other");
+// The authoritative label→slug table lives ONLY in the backend (scdata._TYPE_MAP): every
+// p4k mission type ships its slug per mission (decoded.icon live, m.icon archived), so the
+// frontend never restates it. The one thing that has no per-mission icon is contractType()'s
+// own heuristic fallback labels (they're not p4k types) — give just those four a fixed slug.
+const HEUR_SLUG = { "Hauling": "haul", "Delivery": "deliver",
+  "Bounty / Combat": "bounty", "Other": "other" };
+const ctSlug = (label, icon) => icon || HEUR_SLUG[label] || "other";
+// The game's own mobiGlas type icon, with the label as a tooltip. Icon-forward; if the SVG
+// isn't on disk (contracts not yet extracted / offline) the row reveals the text label.
+function typeMark(label, icon) {
+  const l = label || "Other";
+  const s = ctSlug(l, icon);
+  return `<span class="ct-mark ct-${s}" title="${esc(l)}"><img class="ct-ico" alt="${esc(l)}"`
+    + ` src="/mission-icons/${s}.svg" onerror="this.closest('.ct-mark').classList.add('noico')">`
+    + `<span class="ct-lbl">${esc(l)}</span></span>`;
+}
 
 // Contract Log type filter — a set of EXCLUDED types (empty = show all), persisted.
 // The open/closed dropdown state lives in globals so the 3s poll's re-render preserves
@@ -1411,13 +1426,19 @@ function setAllTypeFilters(showAll) {
 // multiselect dropdown that filters rows by high-level contract kind.
 function contractLogView(sessions) {
   const all = [];
+  const slugOf = {};   // label -> icon slug, learned from the data (p4k types carry m.icon)
+  const count = {};
   for (const s of sessions || [])
     for (const m of s.missions || [])
-      if (m.status !== "unfinished")
-        all.push({ when: m.ended_at || m.accepted_at || s.started_at, m, type: contractType(m) });
-  // distinct types present, canonical order first then any extras
-  CT_PRESENT = [...new Set(all.map(r => r.type))]
-    .sort((a, b) => ((CT_ORDER.indexOf(a) + 1) || 99) - ((CT_ORDER.indexOf(b) + 1) || 99));
+      if (m.status !== "unfinished") {
+        const type = contractType(m);
+        if (!slugOf[type] || slugOf[type] === "other") slugOf[type] = ctSlug(type, m.icon);
+        count[type] = (count[type] || 0) + 1;
+        all.push({ when: m.ended_at || m.accepted_at || s.started_at, m, type });
+      }
+  // types present, ordered by frequency (then name); the catch-all "Other" sinks last
+  CT_PRESENT = Object.keys(count).sort((a, b) =>
+    (a === "Other") - (b === "Other") || count[b] - count[a] || a.localeCompare(b));
   const rows = all.filter(r => !CONTRACT_TYPE_HIDDEN.has(r.type))
     .sort((a, b) => (b.when || "").localeCompare(a.when || ""));
   const total = rows.reduce((a, r) => a + (r.m.reward || 0), 0);
@@ -1426,14 +1447,15 @@ function contractLogView(sessions) {
     return `<tr>
       <td class="lt-when">${fmtWhen(r.when)}</td>
       <td><span class="badge b-${r.m.status}">${esc(r.m.status)}</span></td>
-      <td>${tag(r.type, "ct-" + ctSlug(r.type))}</td>
+      <td>${typeMark(r.type, r.m.icon)}</td>
       <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
       <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
   }).join("") || `<tr><td colspan="5" class="lt-empty">No contracts match the selected types.</td></tr>`;
   const hidden = CT_PRESENT.filter(t => CONTRACT_TYPE_HIDDEN.has(t)).length;
   const opts = CT_PRESENT.map(t =>
     `<label class="th-opt"><input type="checkbox" ${CONTRACT_TYPE_HIDDEN.has(t) ? "" : "checked"}
-       onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')">${tag(t, "ct-" + ctSlug(t))}</label>`).join("");
+       onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')"><img class="ct-ico opt-ico" alt=""
+       src="/mission-icons/${slugOf[t]}.svg" onerror="this.style.display='none'">${tag(t, "ct-" + slugOf[t])}</label>`).join("");
   const menu = `<span class="th-menu-wrap">
     <button class="th-menu-btn${hidden ? " on" : ""}" aria-haspopup="true" aria-expanded="${TYPE_MENU_OPEN}" onclick="toggleTypeMenu()">Type ▾</button>${
       TYPE_MENU_OPEN ? `<span class="th-menu">

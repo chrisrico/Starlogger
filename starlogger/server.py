@@ -7,7 +7,7 @@ import logging
 from flask import Flask, jsonify, request, send_from_directory
 
 from .archive import filter_sessions, load_sessions
-from .config import OVERRIDES_PATH, WEB_DIR
+from .config import MISSION_ICONS_DIR, OVERRIDES_PATH, WEB_DIR
 from .jsonstore import atomic_write, read_json
 from .overrides import set_leg_field, set_leg_states
 from .replay import build_timeline, snapshot_with_overlay, state_at
@@ -34,6 +34,13 @@ def create_app(state: State, log_path: str | None = None) -> Flask:
     @app.get("/")
     def index():
         return send_from_directory(WEB_DIR, "index.html")
+
+    @app.get("/mission-icons/<path:name>")
+    def mission_icon(name):
+        # The game's own mobiGlas mission-type icons, extracted from the p4k into the
+        # gitignored data dir (absent until contracts are built -> 404, frontend falls
+        # back to a glyph). send_from_directory confines `name` to the icons dir.
+        return send_from_directory(MISSION_ICONS_DIR, name)
 
     @app.get("/api/state")
     def api_state():

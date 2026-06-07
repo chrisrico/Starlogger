@@ -46,6 +46,10 @@ BLUEPRINTS_PATH = os.path.join(DATA_DIR, "blueprints.json")
 # (the authoritative grade/route/SCU-cap/rep/legal table behind contract classification).
 # See contracts.py.
 CONTRACTS_PATH = os.path.join(DATA_DIR, "contracts.json")
+# The game's own mobiGlas mission-type icons (one SVG per type slug), extracted from the
+# p4k alongside contracts.json and served at /mission-icons/<slug>.svg. p4k-derived =>
+# gitignored, never committed (same rule as the .json caches).
+MISSION_ICONS_DIR = os.path.join(DATA_DIR, "mission_icons")
 TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")

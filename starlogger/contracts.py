@@ -18,10 +18,11 @@ payout are filled at runtime, so treat the SCU number as an upper bound, not the
 
 from __future__ import annotations
 
+import os
 import re
 import time
 
-from .config import CONTRACTS_PATH
+from .config import CONTRACTS_PATH, MISSION_ICONS_DIR
 from . import scdata
 from .jsonstore import atomic_write, load_cached
 
@@ -32,7 +33,8 @@ _cache = {"mtime": None,
 
 
 def save_contracts(templates: list, cargo_manifests: list,
-                   game_version: str | None = None, path: str = CONTRACTS_PATH) -> None:
+                   game_version: str | None = None, icons: dict | None = None,
+                   path: str = CONTRACTS_PATH, icons_dir: str = MISSION_ICONS_DIR) -> None:
     atomic_write(path, {
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -41,6 +43,27 @@ def save_contracts(templates: list, cargo_manifests: list,
         "templates": templates,
         "cargo_manifests": cargo_manifests,
     })
+    save_icons(icons or {}, icons_dir)
+
+
+def save_icons(icons: dict, icons_dir: str = MISSION_ICONS_DIR) -> None:
+    """Write each ``{slug: svg_text}`` to ``icons_dir/<slug>.svg`` (the game's own mission-
+    type icons, p4k-derived => gitignored). Skips silently if there's nothing to write."""
+    if not icons:
+        return
+    os.makedirs(icons_dir, exist_ok=True)
+    for slug, svg in icons.items():
+        if not slug or not isinstance(svg, str):
+            continue
+        # slug is our own controlled token (see scdata._TYPE_MAP); guard anyway.
+        safe = re.sub(r"[^a-z0-9]", "", slug.lower())
+        if not safe:
+            continue
+        dst = os.path.join(icons_dir, f"{safe}.svg")
+        tmp = dst + ".tmp"  # atomic: a reader sees the whole file or none (atomic_write is JSON-only)
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(svg)
+        os.replace(tmp, dst)
 
 
 def _norm(s: str) -> str:
@@ -84,11 +107,12 @@ def cargo_manifests(path: str = CONTRACTS_PATH) -> list:
 def decode(contract_id: str, path: str = CONTRACTS_PATH) -> dict:
     """Authoritative taxonomy for a live contract id, matched to its ContractTemplate (the
     id carries the template name plus a runtime suffix). Returns the statically-known bits
-    -- the legal/illegal flag (authoritative; the heuristic can't tell) and the route shape
-    -- so it layers cleanly over the heuristic in ``model.Mission.decoded``. ``{}`` when
-    nothing matches (offline / unknown id, where the heuristic still classifies). Note: the
-    grade word, SCU cap and rep rank are runtime-bound in the records, so they are NOT here
-    -- the contract-id heuristic and the live log remain their source."""
+    -- the mission ``type``/class + its ``icon`` slug (from the MissionType record), the
+    legal/illegal flag (the heuristic can't tell) and the route shape -- so it layers
+    cleanly over the heuristic in ``model.Mission.decoded``. ``{}`` when nothing matches
+    (offline / unknown id, where the heuristic still classifies). Note: the grade word, SCU
+    cap and rep rank are runtime-bound in the records, so they are NOT here -- the
+    contract-id heuristic and the live log remain their source."""
     key = _norm(contract_id)
     if not key:
         return {}
@@ -99,4 +123,8 @@ def decode(contract_id: str, path: str = CONTRACTS_PATH) -> dict:
     out = {"legal": not tmpl.get("illegal")}
     if tmpl.get("route"):
         out["route"] = tmpl["route"]
+    if tmpl.get("type"):           # authoritative mission class (vs the keyword heuristic)
+        out["type"] = tmpl["type"]
+    if tmpl.get("icon"):           # icon slug -> /mission-icons/<icon>.svg
+        out["icon"] = tmpl["icon"]
     return out

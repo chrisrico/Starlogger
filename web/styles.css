@@ -370,9 +370,29 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3}
 .lt-tag.lost{color:var(--red);border-color:rgba(var(--red-rgb),.45);background:rgba(var(--red-rgb),.08)}
 /* contract-type tags (Contract Log Type column + filter dropdown) */
 .lt-tag.ct-haul{color:var(--cyan);border-color:rgba(var(--cyan-rgb),.4)}
-.lt-tag.ct-bounty{color:var(--red);border-color:rgba(var(--red-rgb),.4)}
+.lt-tag.ct-priority{color:var(--red);border-color:rgba(var(--red-rgb),.4)}
 .lt-tag.ct-deliver{color:var(--amber);border-color:rgba(var(--amber-rgb),.4)}
+.lt-tag.ct-collection{color:var(--green);border-color:rgba(var(--green-rgb),.4)}
+.lt-tag.ct-mercenary{color:var(--red);border-color:rgba(var(--red-rgb),.4)}
+.lt-tag.ct-bounty{color:var(--red);border-color:rgba(var(--red-rgb),.4)}
+.lt-tag.ct-investigation{color:var(--cyan);border-color:rgba(var(--cyan-rgb),.4)}
+.lt-tag.ct-salvage{color:var(--amber);border-color:rgba(var(--amber-rgb),.4)}
+.lt-tag.ct-refuel{color:var(--green);border-color:rgba(var(--green-rgb),.4)}
+.lt-tag.ct-maintenance{color:var(--ink-2);border-color:var(--line-2)}
+.lt-tag.ct-search{color:var(--cyan);border-color:rgba(var(--cyan-rgb),.4)}
+.lt-tag.ct-appointment{color:var(--ink-2);border-color:var(--line-2)}
+.lt-tag.ct-race{color:var(--green);border-color:rgba(var(--green-rgb),.4)}
+.lt-tag.ct-ecn{color:var(--red);border-color:rgba(var(--red-rgb),.4)}
 .lt-tag.ct-other{color:var(--ink-3);border-color:var(--line-2)}
+/* mission-type icon (the game's own mobiGlas SVGs). Icon-forward: the label is the tooltip,
+   and is revealed as text only when the SVG is missing (contracts not yet extracted). */
+.ct-mark{display:inline-flex;align-items:center;gap:5px;vertical-align:middle}
+.ct-ico{width:16px;height:16px;object-fit:contain;flex:none;opacity:.9}
+.ct-mark .ct-lbl{display:none;font-family:var(--mono);font-size:9.5px;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--ink-1)}
+.ct-mark.noico .ct-ico{display:none}
+.ct-mark.noico .ct-lbl{display:inline}
+.opt-ico{width:14px;height:14px;object-fit:contain;flex:none;vertical-align:middle;margin-right:2px}
 /* Type-column multiselect dropdown (header) */
 .th-type{overflow:visible}
 .th-menu-wrap{position:relative;display:inline-block}

@@ -80,9 +80,10 @@ def _build_catalogs(path: str) -> list:
         data = scdata.build_contracts_from_p4k(p4k)
         if data["templates"]:
             contracts.save_contracts(data["templates"], data["cargo_manifests"],
-                                     game_version=ver)
+                                     game_version=ver, icons=data.get("icons"))
             print(f"[contracts] built {len(data['templates'])} templates + "
-                  f"{len(data['cargo_manifests'])} cargo manifests ({reason})")
+                  f"{len(data['cargo_manifests'])} cargo manifests + "
+                  f"{len(data.get('icons') or {})} type icons ({reason})")
 
     return [
         _Catalog("ship cargo",
