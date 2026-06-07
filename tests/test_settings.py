@@ -23,9 +23,11 @@ def store(tmp_path, monkeypatch):
     path = tmp_path / "settings.json"
     monkeypatch.setattr(settings, "SETTINGS_PATH", str(path))
     monkeypatch.setattr(settings, "_cache", {"mtime": None, "data": {}})
-    # Strip any STARLOGGER_* knobs the outer environment might set.
+    # Strip any STARLOGGER_* knobs the outer environment might set (primary + legacy).
     for f in settings.CONFIG_SCHEMA:
         monkeypatch.delenv(f["env"], raising=False)
+        for e in f.get("legacy_env", {}):
+            monkeypatch.delenv(e, raising=False)
     return str(path)
 
 
@@ -55,9 +57,38 @@ def test_env_toggle_forces_off(store, monkeypatch):
     monkeypatch.setenv("STARLOGGER_NO_BROWSER", "1")
     assert settings.resolve_bool("open_browser") is False
     assert settings.env_override("open_browser") is True
-    # auto_update toggles the same way.
-    monkeypatch.setenv("STARLOGGER_NO_UPDATE", "1")
-    assert settings.resolve_bool("auto_update") is False
+
+
+def test_update_mode_default_and_file(store):
+    assert settings.resolve_str("update_mode") == "prompt"
+    settings.update({"update_mode": "auto"})
+    assert settings.resolve_str("update_mode") == "auto"
+
+
+def test_update_mode_rejects_bad_enum(store):
+    with pytest.raises(ValueError):
+        settings.update({"update_mode": "sometimes"})
+
+
+def test_update_mode_legacy_env(store, monkeypatch):
+    settings.update({"update_mode": "auto"})
+    monkeypatch.setenv("STARLOGGER_NO_UPDATE", "1")     # legacy kill switch -> off (wins)
+    assert settings.resolve_str("update_mode") == "off"
+    assert settings.env_override("update_mode") is True
+    monkeypatch.delenv("STARLOGGER_NO_UPDATE")
+    monkeypatch.setenv("STARLOGGER_AUTO_UPDATE", "1")   # legacy silent-apply -> auto
+    assert settings.resolve_str("update_mode") == "auto"
+
+
+def test_update_mode_env_primary(store, monkeypatch):
+    monkeypatch.setenv("STARLOGGER_UPDATE_MODE", "off")
+    assert settings.resolve_str("update_mode") == "off"
+
+
+def test_describe_enum_options(store):
+    row = {d["key"]: d for d in settings.describe()}["update_mode"]
+    assert row["type"] == "enum"
+    assert row["options"] == ["prompt", "auto", "off"]
 
 
 def test_numeric_clamp(store):

@@ -30,10 +30,11 @@ _cache: dict = {"mtime": None, "data": {}}
 
 
 # The user-configurable knobs, in display order. Each descriptor carries everything
-# both the resolver (env/coerce/clamp) and the UI (label/help/group) need, so there's
-# a single source of truth. `env` is the escape-hatch variable; `env_toggle` marks the
-# presence-style vars (NO_BROWSER / NO_UPDATE) whose *mere presence* forces False --
-# their value isn't parsed, set-means-off. `min` clamps numeric inputs.
+# both the resolver (env/coerce/clamp) and the UI (label/help/group/options) need, so
+# there's a single source of truth. `env` is the escape-hatch variable; `env_toggle`
+# marks a presence-style var (NO_BROWSER) whose *mere presence* forces False; `legacy_env`
+# maps an old presence var to a fixed value (NO_UPDATE -> off, AUTO_UPDATE -> auto).
+# `min` clamps numerics; `options` lists an enum's allowed values.
 CONFIG_SCHEMA = [
     {
         "key": "open_browser", "type": "bool", "default": True,
@@ -57,11 +58,13 @@ CONFIG_SCHEMA = [
                 "next launch.",
     },
     {
-        "key": "auto_update", "type": "bool", "default": True,
-        "env": "STARLOGGER_NO_UPDATE", "env_toggle": True,
-        "group": "Updates", "label": "Automatic updates",
-        "help": "Pull and apply new builds -- both at launch and mid-session. Takes "
-                "effect immediately.",
+        "key": "update_mode", "type": "enum", "default": "prompt",
+        "options": ["prompt", "auto", "off"],
+        "env": "STARLOGGER_UPDATE_MODE",
+        "legacy_env": {"STARLOGGER_NO_UPDATE": "off", "STARLOGGER_AUTO_UPDATE": "auto"},
+        "group": "Updates", "label": "Updates",
+        "help": "Prompt = ask in the dashboard before applying a new build · "
+                "Automatic = apply silently · Off = don't check.",
     },
     {
         "key": "live_update_secs", "type": "int", "default": 900, "min": 0,
@@ -125,6 +128,11 @@ def _coerce(field: dict, value):
         if "min" in field:
             num = max(field["min"], num)
         return int(num) if t == "int" else num
+    if t == "enum":
+        v = str(value).strip().lower()
+        if v not in field["options"]:
+            raise ValueError(f"{value!r} not one of {field['options']}")
+        return v
     # string
     return str(value).strip()
 
@@ -132,19 +140,25 @@ def _coerce(field: dict, value):
 def env_override(key: str) -> bool:
     """True when an environment variable is currently forcing this key (so the UI shows
     it read-only). For a toggle var, any non-empty value counts; for a value var, being
-    set at all counts."""
+    set at all counts; a `legacy_env` presence var counts too."""
     field = _BY_KEY[key]
-    return bool(os.environ.get(field["env"]))
+    if os.environ.get(field["env"]):
+        return True
+    return any(os.environ.get(e) for e in field.get("legacy_env", {}))
 
 
 def resolve(key: str):
     """Effective value: env var > settings.json > built-in default.
 
-    For a toggle var (env_toggle), presence forces the inverted default semantics --
-    `STARLOGGER_NO_BROWSER` set means open_browser=False, etc. For a value var, the
-    env string is coerced to the field's type. Otherwise the stored setting (if any)
-    is coerced, falling back to the default."""
+    A `legacy_env` presence var (e.g. STARLOGGER_NO_UPDATE) wins first, mapping to a fixed
+    value -- back-compat for the old toggle env vars. For a toggle var (env_toggle),
+    presence forces the inverted default (`STARLOGGER_NO_BROWSER` set => open_browser=False).
+    For a value var, the env string is coerced to the field's type. Otherwise the stored
+    setting (if any) is coerced, falling back to the default."""
     field = _BY_KEY[key]
+    for env_name, mapped in field.get("legacy_env", {}).items():
+        if os.environ.get(env_name):       # first match wins (NO_UPDATE=off before AUTO=auto)
+            return mapped
     raw = os.environ.get(field["env"])
     if raw is not None and raw != "":
         if field.get("env_toggle"):
@@ -181,15 +195,18 @@ def resolve_str(key: str) -> str:
 def describe() -> list[dict]:
     """The schema with each knob's current effective value + whether an env var is
     shadowing it -- everything the Settings panel needs to render and annotate."""
-    return [
-        {
+    out = []
+    for f in CONFIG_SCHEMA:
+        row = {
             "key": f["key"], "type": f["type"], "group": f["group"],
             "label": f["label"], "help": f["help"], "default": f["default"],
             "value": resolve(f["key"]), "env_override": env_override(f["key"]),
             "env": f["env"],
         }
-        for f in CONFIG_SCHEMA
-    ]
+        if "options" in f:
+            row["options"] = f["options"]   # enum: the UI renders a <select>
+        out.append(row)
+    return out
 
 
 def update(payload: dict, path: str | None = None) -> None:
