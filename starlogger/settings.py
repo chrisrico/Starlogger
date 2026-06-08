@@ -44,12 +44,20 @@ CONFIG_SCHEMA = [
                 "Applies on the next launch.",
     },
     {
+        # Stays type "string" (not "enum") so the --host flag / STARLOGGER_HOST env escape
+        # hatch can bind ANY address (a specific interface IP, a Tailscale/VPN IP, IPv6)
+        # without enum coercion rejecting it. The `options` just drive a friendly two-choice
+        # <select> in the UI for the common loopback-vs-LAN decision.
         "key": "bind_host", "type": "string", "default": "127.0.0.1",
         "env": "STARLOGGER_HOST",
+        "options": ["127.0.0.1", "0.0.0.0"],
+        "option_labels": {"127.0.0.1": "This machine only",
+                          "0.0.0.0": "All network devices"},
         "group": "General", "label": "Bind address",
-        "help": "IP address the dashboard server listens on. 127.0.0.1 = this machine "
-                "only; 0.0.0.0 = all interfaces (reachable from other devices on your "
-                "network). An explicit --host overrides this. Applies on the next launch.",
+        "help": "Which devices can reach the dashboard. \"This machine only\" (127.0.0.1) "
+                "keeps it local; \"All network devices\" (0.0.0.0) lets other devices on "
+                "your network open it. An explicit --host / STARLOGGER_HOST overrides this "
+                "(and can bind a specific IP). Applies on the next launch.",
     },
     {
         "key": "idle_timeout", "type": "number", "default": 30.0, "min": 1.0,
@@ -212,7 +220,9 @@ def describe() -> list[dict]:
             "env": f["env"],
         }
         if "options" in f:
-            row["options"] = f["options"]   # enum: the UI renders a <select>
+            row["options"] = f["options"]   # the UI renders a <select>
+        if "option_labels" in f:
+            row["option_labels"] = f["option_labels"]  # value -> friendly <option> text
         out.append(row)
     return out
 
