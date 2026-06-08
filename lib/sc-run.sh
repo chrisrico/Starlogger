@@ -12,7 +12,6 @@
 #
 # Usage:
 #   sc-run.sh                          launch the game (via the tracker)
-#   sc-run.sh shell|config|controllers   passthrough to stock sc-launch.sh (no tracker)
 #   WINEPREFIX=/path sc-run.sh          point at a non-default Star Citizen prefix
 set -uo pipefail
 
@@ -20,12 +19,7 @@ set -uo pipefail
 export WINEPREFIX
 SC_LAUNCH="$WINEPREFIX/sc-launch.sh"
 
-# Maintenance subcommands -> straight through to the stock launcher (no tracker).
-case "${1:-}" in
-    shell|config|controllers) exec "$SC_LAUNCH" "$@" ;;
-esac
-
-# Otherwise hand off to the tracker (--launch => it spawns sc-launch.sh as its child). sc-run.sh
+# Hand off to the tracker (--launch => it spawns sc-launch.sh as its child). sc-run.sh
 # lives in <repo>/lib, so the repo root -- and its venv + run-tracker.sh -- is one level up.
 repo="$(dirname "$(dirname "$(readlink -f "$0")")")"
 if [ -x "$repo/.venv/bin/python" ]; then
