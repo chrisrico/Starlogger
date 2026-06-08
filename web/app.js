@@ -161,22 +161,52 @@ function _settingsCtl(f) {
   const env = f.env_override ? `<span class="sp-env">set via ${esc(f.env)}</span>` : "";
   return `<div class="sp-ctl">${ctl}${env}</div>`;
 }
+// Keys tucked into a collapsed "Advanced" section — rarely-touched plumbing that would
+// otherwise clutter the main form. Presentation-only, so it lives in the frontend.
+const SET_ADVANCED = new Set(["idle_timeout", "close_timeout", "update_remote", "update_branch"]);
+
+function _settingsRow(f) {
+  return `<div class="sp-row"><div class="sp-label"><span class="t">${esc(f.label)}</span>` +
+    `<span class="h">${esc(f.help)}</span></div>${_settingsCtl(f)}</div>`;
+}
+
 function renderSettings(schema) {
   const groups = [];
+  const advanced = [];
   for (const f of schema) {
+    if (SET_ADVANCED.has(f.key)) { advanced.push(f); continue; }
     let g = groups.find(x => x.name === f.group);
     if (!g) { g = { name: f.group, fields: [] }; groups.push(g); }
     g.fields.push(f);
   }
-  $("settingsBody").innerHTML = groups.map(g =>
+  let html = groups.map(g =>
     `<div class="sp-group"><h3 class="sp-group-h">${esc(g.name)}</h3>` +
-    g.fields.map(f =>
-      `<div class="sp-row"><div class="sp-label"><span class="t">${esc(f.label)}</span>` +
-      `<span class="h">${esc(f.help)}</span></div>${_settingsCtl(f)}</div>`).join("") +
+    g.fields.map(_settingsRow).join("") +
     (g.name === "Updates" ? _updateCheckRow() : "") +
     `</div>`).join("");
+  if (advanced.length) {
+    let open = false;
+    try { open = localStorage.getItem("setAdvOpen") === "1"; } catch (_) {}
+    html += `<div class="sp-group sp-adv${open ? " open" : ""}">` +
+      `<button type="button" class="sp-adv-h" id="setAdvToggle" aria-expanded="${open}">` +
+      `<svg class="sp-adv-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>Advanced</button>` +
+      `<div class="sp-adv-body"${open ? "" : " hidden"}>` + advanced.map(_settingsRow).join("") + `</div></div>`;
+  }
+  $("settingsBody").innerHTML = html;
   const cb = $("checkUpdateBtn");
   if (cb) cb.onclick = checkForUpdate;
+  const adv = $("setAdvToggle");
+  if (adv) adv.onclick = toggleSetAdvanced;
+}
+
+function toggleSetAdvanced() {
+  const grp = $("setAdvToggle")?.closest(".sp-adv");
+  if (!grp) return;
+  const open = !grp.classList.contains("open");
+  grp.classList.toggle("open", open);
+  grp.querySelector(".sp-adv-body")?.toggleAttribute("hidden", !open);
+  $("setAdvToggle").setAttribute("aria-expanded", open ? "true" : "false");
+  try { localStorage.setItem("setAdvOpen", open ? "1" : "0"); } catch (_) {}
 }
 // A "Check for updates" action row appended to the Updates group: fetch + apply on the spot,
 // no prompt (the click is the approval). Distinct from the banner, which is the passive prompt.
@@ -237,7 +267,14 @@ async function saveSettings() {
   }
   if (!Object.keys(payload).length) return closeSettings();
   const btn = $("settingsSave"); btn.disabled = true;
-  try { await postJSON("/api/settings", payload); closeSettings(); }
+  try {
+    await postJSON("/api/settings", payload);
+    // keep the jukebox boot cache in sync so the next load honors the new auto-play choice
+    if ("music_autoplay" in payload) {
+      try { localStorage.setItem("jukeAutoplay", payload.music_autoplay ? "1" : "0"); } catch (_) {}
+    }
+    closeSettings();
+  }
   catch (e) { _settingsErr(String(e)); }
   finally { btn.disabled = false; }
 }
@@ -2022,6 +2059,7 @@ let JUKE_SHOW_HIDDEN = false; // reveal hidden tracks (to un-hide them)
 let JUKE_SHUFFLE = false;     // shuffle playback order (persisted in localStorage)
 let JUKE_HISTORY = [];        // ids in play order, capped — lets "previous" work under shuffle
 let JUKE_RESTORED = false;    // playback state already restored from localStorage this load?
+let JUKE_AUTOPLAY = false;    // "Auto-play music" setting (from /api/music) — auto-start on load
 let _jukeDragId = null;       // id of the row being dragged
 let _jukeRestoreTime = null;  // pending seek (sec) to apply once the track's metadata loads
 let _jukeSavedAt = 0;         // last currentTime (sec) we persisted, to throttle timeupdate saves
@@ -2196,6 +2234,8 @@ async function jukeLoad() {
     JUKE_TRACKS = (d && d.tracks) || [];
     const c = (d && d.curation) || {};
     JUKE_CURATION = { order: c.order || [], hidden: c.hidden || [], names: c.names || {} };
+    JUKE_AUTOPLAY = !!(d && d.autoplay);
+    try { localStorage.setItem("jukeAutoplay", JUKE_AUTOPLAY ? "1" : "0"); } catch (_) {}   // cache for boot
   } catch (_) {
     JUKE_TRACKS = [];
   }
@@ -2203,13 +2243,19 @@ async function jukeLoad() {
   if (!JUKE_RESTORED) { JUKE_RESTORED = true; jukeRestore(); }   // resume saved playback, once
 }
 
-// Restore the track/position/play-state saved before the last reload. Autoplay may be blocked
-// until a user gesture — then play() rejects and we simply stay paused at the restored spot.
+// On first load: restore the saved track at its position, and decide whether to play. With
+// "Auto-play music" on, start playing (the saved track, or the first track if none); with it
+// off, the saved track is restored paused. Autoplay may be blocked until a gesture — then
+// play() rejects and we just stay paused at the restored spot.
 function jukeRestore() {
   let st;
   try { st = JSON.parse(localStorage.getItem("jukeState") || "null"); } catch (_) { st = null; }
-  if (!st || !st.id || !JUKE_TRACKS.some(t => t.id === st.id)) return;
-  jukeLoadTrack(st.id, { time: +st.time || 0, autoplay: !!st.playing });
+  if (st && st.id && JUKE_TRACKS.some(t => t.id === st.id)) {
+    jukeLoadTrack(st.id, { time: +st.time || 0, autoplay: JUKE_AUTOPLAY });
+  } else if (JUKE_AUTOPLAY) {
+    const first = jukeOrderedIds().find(id => !jukeHidden(id));   // nothing saved → start the playlist
+    if (first) jukeLoadTrack(first, { time: 0, autoplay: true });
+  }
 }
 
 function renderJukeList() {
@@ -2552,7 +2598,7 @@ loadShipList();
 // playback on first load even if it wasn't (build skeleton, pull tracks, restore track/pos/state).
 try {
   if (localStorage.getItem("jukeOpen") === "1") openJukebox();
-  else if (localStorage.getItem("jukeState")) initJukebox();
+  else if (localStorage.getItem("jukeState") || localStorage.getItem("jukeAutoplay") === "1") initJukebox();
 } catch (_) {}
 
 // On a deliberate close, tell the tracker it may stop sooner (it still waits a short grace,

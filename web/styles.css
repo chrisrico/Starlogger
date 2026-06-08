@@ -902,6 +902,15 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sp-group-h{font-family:var(--display);font-size:10.5px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--cyan);margin:0 0 4px;
   border-bottom:1px solid var(--line);padding-bottom:5px}
+/* collapsible "Advanced" section: a group header that doubles as a toggle button */
+.sp-adv-h{display:flex;align-items:center;gap:7px;width:100%;background:transparent;border:0;
+  cursor:pointer;color:var(--cyan);font-family:var(--display);font-size:10.5px;letter-spacing:.16em;
+  text-transform:uppercase;margin:0 0 4px;border-bottom:1px solid var(--line);padding:0 0 5px}
+.sp-adv-h:hover{color:var(--ink)}
+.sp-adv-caret{flex:none;width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;transition:transform .15s}
+.sp-adv.open .sp-adv-caret{transform:rotate(90deg)}
+.sp-adv-body[hidden]{display:none}
 .sp-row{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;
   padding:10px 0;border-bottom:1px solid rgba(var(--line-rgb),.5)}
 .sp-row:last-child{border-bottom:0}

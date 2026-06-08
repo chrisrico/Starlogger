@@ -18,6 +18,7 @@ from .overrides import set_leg_field, set_leg_states
 from .replay import build_timeline, snapshot_with_overlay, state_at
 from .replay_edit import apply_override_with_siblings, apply_replay_op, seed_overlay
 from .settings import describe as describe_settings, set_setting
+from .settings import resolve_bool as settings_bool
 from .settings import resolve_str as settings_str
 from .settings import update as update_settings
 from .blueprints import blueprint_catalog, lookup_blueprint
@@ -343,6 +344,7 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         # Empty until the background extract has run once.
         d = dict(load_music())
         d["curation"] = load_curation()
+        d["autoplay"] = settings_bool("music_autoplay")   # jukebox auto-starts on load when set
         return jsonify(d)
 
     @app.post("/api/music/curate")
