@@ -935,6 +935,8 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sp-btn:hover{border-color:var(--cyan);color:var(--cyan)}
 .sp-btn.primary{background:var(--cyan);color:#04121d;border-color:var(--cyan)}
 .sp-btn.primary:hover{color:#04121d;filter:brightness(1.07)}
+.sp-btn.danger{color:var(--red);border-color:rgba(var(--red-rgb),.45)}
+.sp-btn.danger:hover{color:var(--red);border-color:var(--red);background:rgba(var(--red-rgb),.08)}
 .sp-btn:disabled{opacity:.5;cursor:not-allowed;border-color:var(--line-2);color:var(--ink)}
 /* "Check for updates" action row: separated from the knobs above it; right-aligned status. */
 .sp-action{border-top:1px dashed var(--line);margin-top:4px;padding-top:14px}

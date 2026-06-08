@@ -182,7 +182,7 @@ function renderSettings(schema) {
   let html = groups.map(g =>
     `<div class="sp-group"><h3 class="sp-group-h">${esc(g.name)}</h3>` +
     g.fields.map(_settingsRow).join("") +
-    (g.name === "Updates" ? _updateCheckRow() : "") +
+    (g.name === "Updates" ? _updateCheckRow() + _shutdownRow() : "") +
     `</div>`).join("");
   if (advanced.length) {
     let open = false;
@@ -195,6 +195,8 @@ function renderSettings(schema) {
   $("settingsBody").innerHTML = html;
   const cb = $("checkUpdateBtn");
   if (cb) cb.onclick = checkForUpdate;
+  const sd = $("shutdownBtn");
+  if (sd) sd.onclick = shutdownTracker;
   const adv = $("setAdvToggle");
   if (adv) adv.onclick = toggleSetAdvanced;
 }
@@ -236,6 +238,24 @@ async function checkForUpdate() {
     case "error":    return done(`Update check failed: ${esc(r.error || "unknown error")}`, true);
     default:         return done(`Update check failed${r && r.status ? " (" + esc(r.status) + ")" : ""}.`, true);
   }
+}
+// Stop the tracker process entirely (POST /api/quit -> the WSGI server's .shutdown()). Deliberate,
+// so it's confirmed; the dashboard goes dead afterwards (no auto-relaunch until the next SC launch).
+function _shutdownRow() {
+  return `<div class="sp-row sp-action"><div class="sp-label">` +
+    `<span class="t">Shut down tracker</span>` +
+    `<span class="h">Stop the tracker process. The dashboard will go offline until it's launched again.</span></div>` +
+    `<div class="sp-ctl"><button class="sp-btn danger" id="shutdownBtn">Shut down</button>` +
+    `<span class="sp-note" id="shutdownMsg"></span></div></div>`;
+}
+async function shutdownTracker() {
+  const btn = $("shutdownBtn"), msg = $("shutdownMsg");
+  if (!btn) return;
+  if (!confirm("Shut down the tracker? The dashboard will go offline until it's launched again.")) return;
+  btn.disabled = true; msg.textContent = "Shutting down…"; msg.classList.remove("err");
+  // The server stops right after acking, so the connection drops — a fetch error here is success.
+  try { await postRaw("/api/quit"); } catch (_) {}
+  msg.textContent = "Tracker stopped.";
 }
 async function openSettings() {
   const ov = $("settingsOverlay");
