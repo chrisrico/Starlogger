@@ -99,13 +99,12 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
                   f"{len(data.get('icons') or {})} type icons ({reason})")
 
     def _music(p4k, ver, reason):
-        # Jukebox full-song set. Builds once on first run, then refreshes on a major version move.
-        # Scan first (no decode, ~seconds): if the song set is unchanged, just re-stamp the
+        # Jukebox best-track set. Builds once on first run, then refreshes on a major version move.
+        # Scan first (no decode, ~seconds): if the keep-set is unchanged, just re-stamp the
         # manifest's version; only a changed set pays the full re-decode (StarBreaker decodes the
-        # whole bank, niced; we prune to the ~33 full songs as it goes). Decode progress is pushed
-        # to the dashboard via music_state when wired.
-        floor = scdata.FULL_SONG_MIN_DUR
-        scanned = scdata.scan_songs(p4k, min_dur=floor)
+        # whole bank, niced; we prune to the pinned allowlist + heuristic keepers as it goes).
+        # Decode progress is pushed to the dashboard via music_state when wired.
+        scanned = scdata.scan_songs(p4k)
         if scanned and scanned == music.track_ids():
             music.restamp_version(ver)
             print(f"[music] scan: no new songs ({reason}); marked current for {ver}")
@@ -123,10 +122,10 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
             music_state.set(phase="extracting", done=0, total=len(scanned))
             if state is not None:
                 state.bump_version()
-        tracks = scdata.build_music_from_p4k(p4k, MUSIC_DIR, min_dur=floor, progress=progress)
+        tracks = scdata.build_music_from_p4k(p4k, MUSIC_DIR, progress=progress)
         if tracks:
-            music.save_music(tracks, game_version=ver, min_duration=floor)
-            print(f"[music] extracted {len(tracks)} full songs ({reason})")
+            music.save_music(tracks, game_version=ver, min_duration=0.0)
+            print(f"[music] extracted {len(tracks)} best tracks ({reason})")
         if music_state is not None:
             music_state.set(phase="done", done=len(tracks), total=len(tracks))
             if state is not None:

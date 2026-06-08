@@ -28,6 +28,7 @@ already-dumped ``hirc`` so a build that already called ``dump_music_hirc`` pays 
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import struct
@@ -327,3 +328,79 @@ def context_for_media(p4k: str, sb: str | None = None,
     """``{media_id: primary_context}`` -- the one-string-per-track view the jukebox shows."""
     return {m: primary_context(lbls)
             for m, lbls in build_context_labels(p4k, sb, hirc).items()}
+
+
+# --------------------------------------------------------------------------- #
+# "Best track" selection: a pinned allowlist + a p4k-only heuristic for new music
+#
+# We hand-curated 74 "best" tracks (full, distinct, composed pieces) by fingerprint-matching the
+# decoded songs against community OST compilations -- a one-off that needed the internet. To keep
+# the jukebox good *without* that crutch as the game ships new music, two parts:
+#   1. ALLOWLIST -- every WEM id named in the shipped default_music_curation.json is ALWAYS
+#      extracted. (That file is also the source of the jukebox's default track names, so the
+#      curated set and its titles live in one place; edit it to add/remove pinned tracks.)
+#   2. is_quality_song -- a rule over features we can read straight from the p4k (duration + the
+#      context labels) that predicts "best". Fitted to the 74: a track qualifies if it is NOT a
+#      menu/loading/commercial/UI cue AND is either a cinematic location cue >=2:00 or any
+#      standalone piece >=4:00. On the labelled set: ~72% recall at ~85% precision -- and recall
+#      is moot for known-best (the allowlist pins them), so the rule is tuned to add *new* music
+#      without dragging in stingers/ambient beds.
+# --------------------------------------------------------------------------- #
+
+# A cinematic cue this long counts; any standalone piece this long counts on length alone.
+QUALITY_CINEMATIC_MIN_DUR = 120.0
+QUALITY_MIN_DUR = 240.0
+# Label markers for UI / non-song music (menu, loading screen, ship commercials, race, etc.).
+_UI_MARKERS = ("menu", "loading", "frontend", "front_end", "front/", "commercial",
+               "race", "logic_theme", "charactercustomizer")
+
+
+def load_allowlist(path: str | None = None) -> set[str]:
+    """The pinned 'best track' WEM ids (always extracted): every id named (or ordered) in the
+    shipped default curation. Empty set if the file is absent."""
+    if path is None:
+        from ..config import DEFAULT_MUSIC_CURATION_PATH
+        path = DEFAULT_MUSIC_CURATION_PATH
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return set()
+    return set(d.get("names") or {}) | set(d.get("order") or [])
+
+
+def has_cinematic_cue(labels: list[str]) -> bool:
+    """Does this media play under a cinematic location cue (a composed-piece signal)?"""
+    return any(l.split("/")[0] == "SC_Music_Cinematic" for l in labels)
+
+
+def has_ui_context(labels: list[str]) -> bool:
+    """Is this media menu / loading / commercial / UI music (a not-a-song signal)?"""
+    return any(any(u in l.lower() for u in _UI_MARKERS) for l in labels)
+
+
+def is_quality_song(dur: float, labels: list[str]) -> bool:
+    """p4k-only 'best track' predicate (duration + context labels). See the section header for
+    the rationale/accuracy. Pure / unit-testable."""
+    if has_ui_context(labels):
+        return False
+    if has_cinematic_cue(labels) and dur >= QUALITY_CINEMATIC_MIN_DUR:
+        return True
+    return dur >= QUALITY_MIN_DUR
+
+
+def best_song_ids(hirc: list, durs: dict, labels: dict | None = None,
+                  p4k: str | None = None, sb: str | None = None,
+                  allowlist: set | None = None) -> set[str]:
+    """The WEM ids the jukebox should extract: every pinned allowlist track that still exists, plus
+    every *standalone* song the heuristic accepts. ``labels`` may be passed to reuse a dump the
+    caller already paid for (else built from ``p4k``/``sb``)."""
+    from ._music import select_full_songs
+    if labels is None:
+        labels = build_context_labels(p4k, sb, hirc)
+    if allowlist is None:
+        allowlist = load_allowlist()
+    standalone = select_full_songs(hirc, durs, 0.0)
+    quality = {m for m in standalone if is_quality_song(durs.get(m, 0), labels.get(m, []))}
+    pinned = {m for m in allowlist if m in durs}   # always extract identified best (if still present)
+    return quality | pinned

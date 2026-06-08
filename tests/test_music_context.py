@@ -20,6 +20,8 @@ from starlogger.scdata._music_context import (
     fnv1_32, parse_atl_names, build_hash_index, parse_decision_tree,
     switch_container_labels, _descendant_media, _index_objects, _build_children,
     primary_context, _humanize_cue,
+    is_quality_song, has_cinematic_cue, has_ui_context, best_song_ids,
+    QUALITY_CINEMATIC_MIN_DUR, QUALITY_MIN_DUR,
 )
 
 # Hashes the game actually uses (FNV-1 32-bit, lowercased) -- the anchor the whole chain rests on.
@@ -116,6 +118,56 @@ def test_humanize_cue_strips_wwise_plumbing_tokens():
     assert _humanize_cue("MXGS_PU_Cine_Location_Lorville") == "Lorville"
     assert _humanize_cue("MX_PU_Cine_Rest_Stops") == "Rest Stops"
     assert _humanize_cue("MX_SC_DL_Biome_Savana") == "Biome Savana"
+
+
+# --- "best track" selection: pinned allowlist + p4k-only quality heuristic ---
+CINE = ["SC_Music_Cinematic/MX_SC_DL_Biome_Savana", "SC_Music_PU_StarSystem/MUS_PU_StantonSystem"]
+AMBIENT = ["SC_Music_Mood/Normal", "SC_Music_PU_StarSystem/MUS_PU_StantonSystem"]
+UI = ["SC_Music_Menu/Loading_Default", "SC_Music_Master/Front_End"]
+
+
+def test_is_quality_song_cinematic_needs_two_minutes():
+    assert is_quality_song(QUALITY_CINEMATIC_MIN_DUR, CINE) is True
+    assert is_quality_song(QUALITY_CINEMATIC_MIN_DUR - 1, CINE) is False   # cue but too short
+
+
+def test_is_quality_song_noncinematic_needs_four_minutes():
+    assert is_quality_song(QUALITY_MIN_DUR, AMBIENT) is True               # long enough on length
+    assert is_quality_song(QUALITY_MIN_DUR - 1, AMBIENT) is False          # mid-length, no cue -> out
+
+
+def test_is_quality_song_ui_always_rejected():
+    # menu/loading/commercial music is never a "song", even when long and cinematic-flagged.
+    assert has_ui_context(UI) and not is_quality_song(600, CINE + UI)
+
+
+def test_has_cinematic_cue_detects_cinematic_group():
+    assert has_cinematic_cue(CINE) is True
+    assert has_cinematic_cue(AMBIENT) is False
+
+
+# Tiny HIRC: three standalone segments -> a long ambient cue, a short non-cue, a short UI cue.
+def _seg(sid): return {"MusicSegment": {"id": sid, "music_params": {"node_base": {"direct_parent_id": 0}}}}
+def _trk(tid, parent, media):
+    return {"MusicTrack": {"id": tid, "node_base": {"direct_parent_id": parent},
+                           "sources": [{"media_id": media}]}}
+HIRC_SEL = [_seg(1), _trk(11, 1, 100), _seg(2), _trk(22, 2, 200), _seg(3), _trk(33, 3, 300)]
+DURS_SEL = {"100": 300.0, "200": 30.0, "300": 600.0}
+LABELS_SEL = {"100": AMBIENT, "200": AMBIENT, "300": UI}   # 100 long ambient, 200 short, 300 long UI
+
+
+def test_best_song_ids_applies_heuristic():
+    keep = best_song_ids(HIRC_SEL, DURS_SEL, labels=LABELS_SEL, allowlist=set())
+    assert "100" in keep        # 300s ambient standalone -> quality
+    assert "200" not in keep    # 30s -> too short
+    assert "300" not in keep    # long but UI music -> rejected
+
+
+def test_best_song_ids_pins_allowlist_even_when_rule_rejects():
+    # "200" fails the heuristic (too short) but is pinned -> always kept; "300" UI stays out.
+    keep = best_song_ids(HIRC_SEL, DURS_SEL, labels=LABELS_SEL, allowlist={"200", "999"})
+    assert "200" in keep        # pinned wins over the rule
+    assert "999" not in keep     # pinned but not present in the bank -> not invented
 
 
 if __name__ == "__main__":

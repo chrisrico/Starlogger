@@ -136,12 +136,14 @@ def select_full_songs(hirc: list, durations: dict, min_dur: float = FULL_SONG_MI
 
 
 def scan_songs(p4k: str, sb: str | None = None, min_dur: float = FULL_SONG_MIN_DUR) -> set[str]:
-    """The cheap (no-decode) half: list + dump the music bank and return the *full-song* WEM ids
-    (same rule build_music_from_p4k keeps). Lets a game-update refresh detect new/changed songs
-    before paying the full re-decode."""
+    """The cheap (no-decode) half: list + dump the music bank and return the WEM ids
+    build_music_from_p4k would keep (allowlist + quality heuristic). Lets a game-update refresh
+    detect new/changed best tracks before paying the full re-decode. ``min_dur`` is unused (kept
+    for signature stability)."""
     sb = sb or ensure_binary()
     durations = _durations(p4k, sb)
-    return select_full_songs(dump_music_hirc(p4k, sb), durations, min_dur)
+    from ._music_context import best_song_ids
+    return best_song_ids(dump_music_hirc(p4k, sb), durations, p4k=p4k, sb=sb)
 
 
 def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
@@ -154,11 +156,17 @@ def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
     StarBreaker decodes the whole bank in one blocking pass, so we compute the keep-set up front
     and, in the progress poller, **delete every non-song ogg as it lands** -- peak disk stays near
     the ~0.4 GB final size instead of the ~2.8 GB whole-bank spike. ``progress(done, total)`` ticks
-    off the kept-so-far count against the song total."""
+    off the kept-so-far count against the song total.
+
+    Keep-set = the pinned 'best track' allowlist + every standalone song the p4k-only quality
+    heuristic accepts (see ``_music_context.best_song_ids``). ``min_dur`` is unused now -- kept for
+    signature stability -- since selection is quality-based, not a flat duration floor."""
     sb = sb or ensure_binary()
     durations = _durations(p4k, sb)
-    hirc = dump_music_hirc(p4k, sb)   # dumped once; reused for the context-label pass below
-    keep = select_full_songs(hirc, durations, min_dur)
+    hirc = dump_music_hirc(p4k, sb)   # dumped once; reused for selection AND the context labels
+    from ._music_context import best_song_ids, primary_context, build_context_labels
+    labels = build_context_labels(p4k, sb, hirc)
+    keep = best_song_ids(hirc, durations, labels)
     total = len(keep)
 
     os.makedirs(out_dir, exist_ok=True)
@@ -199,10 +207,7 @@ def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
         poller.join(timeout=2)
 
     _reap()  # final sweep: drop any non-song ogg the poller didn't catch before the decode ended
-    # The gameplay context each song plays under (region/mood/cue), mined from the switch
-    # hierarchy in the same HIRC dump -- a readable hint where the FNV-hashed ids give none.
-    from ._music_context import context_for_media
-    context = context_for_media(p4k, sb, hirc)
+    # The gameplay context each song plays under (region/mood/cue), from the labels already built.
     rows: list[dict] = []
     for f in glob.glob(os.path.join(out_dir, "*.ogg")):
         wid = os.path.basename(f)[:-4]
@@ -211,7 +216,7 @@ def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
             continue
         rows.append({"id": wid, "file": os.path.basename(f),
                      "duration": durations.get(wid), "size": os.path.getsize(f),
-                     "context": context.get(wid) or ""})
+                     "context": primary_context(labels.get(wid, []))})
     rows.sort(key=lambda r: -(r["duration"] or 0))
     progress(len(rows), total)
     return rows
