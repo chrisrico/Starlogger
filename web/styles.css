@@ -533,10 +533,13 @@ tr:hover .lt-replay .lt-act{opacity:1}
   padding:9px 16px;cursor:pointer;white-space:nowrap;transition:color .14s}
 .arch-tab:hover{color:var(--ink-2)}
 .arch-tab.active{color:var(--cyan);border-bottom-color:var(--cyan)}
-.arch-sum{margin-left:auto;display:flex;align-items:center;padding:0 6px 0 12px}
-.arch-sum .scu{font-family:var(--mono);font-weight:600;font-size:12px;white-space:nowrap;color:var(--cyan)}
-.arch-sum .scu.pos{color:var(--green)}
-.arch-sum .scu.neg{color:var(--red)}
+/* Per-tab summary stat (totals / QT time) as a muted footer below the active panel, not in
+   the tab bar. Deliberately subtle (--ink-2, not the bright cyan it used to be); the count
+   itself lives in the tab label, so pure-count tabs render no footer at all. */
+.arch-foot{flex:0 0 auto;text-align:right;font-family:var(--mono);font-size:11px;
+  color:var(--ink-2);padding:2px 6px 0 12px}
+.arch-foot .pos{color:var(--green)}
+.arch-foot .neg{color:var(--red)}
 /* mobile: scroll the Archive sub-tab bar sideways instead of wrapping (placed after the
    base .arch-tabs rule above so this override wins on source order). */
 @media (max-width:680px){
@@ -544,7 +547,6 @@ tr:hover .lt-replay .lt-act{opacity:1}
     scrollbar-width:none}
   .arch-tabs::-webkit-scrollbar{display:none}
   .arch-tab{flex:0 0 auto}
-  .arch-sum{flex:0 0 auto}   /* summary follows the last tab (auto-margin collapses when overflowing) */
 }
 .arch-panel{flex:1 1 auto;min-height:0}
 .logcard{margin:0;display:flex;flex-direction:column;min-height:0}

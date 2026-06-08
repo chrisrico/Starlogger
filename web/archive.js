@@ -47,8 +47,11 @@ function setRouteSort(key) {
 }
 // One Archive section as a tab descriptor; sessionsView() renders the tab bar and the
 // selected section's body (only the active body is built into the DOM).
-function logSection(key, title, headSpan, body) {
-  return { key, title, headSpan: headSpan || "", body };
+function logSection(key, title, foot, body) {
+  // `foot` is the subtle summary line shown BELOW the active panel (totals / QT time),
+  // not in the tab bar. "" => no footer (e.g. a tab whose only stat is its count, which
+  // already shows in the tab label).
+  return { key, title, foot: foot || "", body };
 }
 
 // Close the Contract Log's Type-filter dropdown on any click outside it (the toggle
@@ -94,11 +97,14 @@ function sessionsView(sessions) {
   const secs = [contractLogView(sessions), tradeLogView(sessions), travelLogView(sessions), sessionListView(sessions)];
   if (!secs.some(s => s.key === ARCH_OPEN)) ARCH_OPEN = secs[0].key;
   const active = secs.find(s => s.key === ARCH_OPEN) || secs[0];
-  const tabs = tabBar(secs.map(s => [s.key, s.title]), ARCH_OPEN, "toggleArch",
-    { tail: `<span class="arch-sum">${active.headSpan}</span>` });
+  const tabs = tabBar(secs.map(s => [s.key, s.title]), ARCH_OPEN, "toggleArch");
+  // The per-tab summary stat rides BELOW the panel as a muted footer, not in the tab bar.
+  // Tabs whose only stat is a count (Sessions) render no footer -- the count is in the label.
+  const foot = active.foot ? `<div class="arch-foot">${active.foot}</div>` : "";
   return `<div class="arch-acc">
     ${tabs}
     <div class="card logcard arch-panel">${active.body}</div>
+    ${foot}
   </div>`;
 }
 
@@ -153,12 +159,12 @@ function travelLogView(sessions) {
       <td class="lt-num" title="QT fuel estimate">${fuelShort(t.fuel)}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
-  const tot = totalSecs ? ` · ${fmtElapsed(totalSecs)} in QT` : "";
+  // Only the QT-time total goes to the footer; the jump count already shows in the tab label.
+  const tot = totalSecs ? `${fmtElapsed(totalSecs)} in QT` : "";
   const inner = logTable(
     `<th>Departed</th><th>Status</th><th>Route</th><th class="lt-num">Time</th><th>System</th><th class="lt-num">QT fuel</th><th>Ship</th>`,
     body, "No quantum travel in range.");
-  return logSection("travel", `Travel Log · ${rows.length}`,
-                    `<span class="scu">${rows.length} jumps${tot}</span>`, inner);
+  return logSection("travel", `Travel Log · ${rows.length}`, tot, inner);
 }
 
 // High-level contract kind, mirroring backend patterns.classify_contract for archived
@@ -260,7 +266,7 @@ function contractLogView(sessions) {
     : `<div class="empty">No contracts in range.</div>`;
   const typeNote = hidden ? ` · ${CT_PRESENT.length - hidden}/${CT_PRESENT.length} types` : "";
   return logSection("contracts", `Contract Log · ${rows.length}`,
-                    `<span class="scu">${num(total)} aUEC${typeNote}</span>`, inner);
+                    `${num(total)} aUEC${typeNote}`, inner);
 }
 
 // Group manual trades into "loads": a buy paired (FIFO, per commodity) with the
@@ -349,7 +355,7 @@ function tradeLogView(sessions) {
   const inner = `<div class="logwrap">${routesBlock}`
     + `<div class="arch-sub">Loads · ${loads.length}</div>${loadsTable}</div>`;
   return logSection("trades", `Trade Loads · ${loads.length}`,
-                    `<span class="scu ${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span>`, inner);
+                    `<span class="${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span>`, inner);
 }
 
 // Aggregate completed/partly-sold loads into trade ROUTES keyed by
@@ -476,8 +482,7 @@ function sessionListView(sessions) {
   const inner = logTable(
     `<th>Session</th><th>Player</th><th>Ship(s)</th>${th("Earned", 1)}${th("Done", 1)}${th("Trades", 1)}<th>Replay</th>`,
     body, "No archived sessions yet.");
-  return logSection("sessions", `Sessions · ${list.length}`,
-                    `<span class="scu">${list.length} archived</span>`, inner);
+  return logSection("sessions", `Sessions · ${list.length}`, "", inner);
 }
 
 // ---- replay controls ---- //
