@@ -65,6 +65,30 @@ def test_is_extracted_roundtrip(tmp_path, monkeypatch):
     assert music.is_extracted("4.9.0", path=path, music_dir=str(mdir)) is False
 
 
+def test_music_cache_helpers_roundtrip(tmp_path, monkeypatch):
+    path = str(tmp_path / "music.json")
+    monkeypatch.setattr(music, "_cache", {"mtime": None, "data": {"tracks": [], "count": 0}})
+    tracks = [{"id": "a", "file": "a.ogg", "duration": 200.0, "size": 1},
+              {"id": "b", "file": "b.ogg", "duration": 100.0, "size": 1}]
+    music.save_music(tracks, game_version="4.8.0", path=path)
+    assert music.music_version(path) == "4.8.0"
+    assert music.music_extract_version(path) == music.EXTRACT_VERSION
+    assert music.track_ids(path) == {"a", "b"}
+    # restamp bumps the version for a new build WITHOUT touching the track set
+    music.restamp_version("4.9.0", path=path)
+    assert music.music_version(path) == "4.9.0"
+    assert music.track_ids(path) == {"a", "b"}
+
+
+def test_music_catalog_is_opt_in(monkeypatch):
+    """The auto-refresh includes 'music' ONLY once it's been extracted (never extracts blind)."""
+    from starlogger import catalogs
+    monkeypatch.setattr("starlogger.music.is_extracted", lambda *a, **k: False)
+    assert "music" not in [c.label for c in catalogs._build_catalogs(catalogs.SHIP_CARGO_PATH)]
+    monkeypatch.setattr("starlogger.music.is_extracted", lambda *a, **k: True)
+    assert "music" in [c.label for c in catalogs._build_catalogs(catalogs.SHIP_CARGO_PATH)]
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

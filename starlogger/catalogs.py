@@ -49,7 +49,8 @@ def _reason(cat: _Catalog, ver: str | None) -> str | None:
 def _build_catalogs(path: str) -> list:
     """The catalogs the background loop keeps fresh, each gated/rebuilt the same way. The
     reference/mineables/blueprints modules are imported lazily (only the loop needs them)."""
-    from . import blueprints, contracts, mineables, reference
+    from . import blueprints, contracts, mineables, music, reference
+    from .config import MUSIC_DIR
 
     def _ship(p4k, ver, reason):
         print(f"[ship cargo] rebuilding from local install ({reason}) -- niced, ~minutes")
@@ -95,7 +96,25 @@ def _build_catalogs(path: str) -> list:
                   f"{len(data['cargo_manifests'])} cargo manifests + "
                   f"{len(data.get('icons') or {})} type icons ({reason})")
 
-    return [
+    def _music(p4k, ver, reason):
+        # Jukebox soundtrack. Only reached when music is already extracted (see the gate below),
+        # so this never extracts from scratch -- it keeps an existing library current. Scan first
+        # (~1s): if the track set is unchanged, just re-stamp the manifest's version (no decode);
+        # only a changed set pays the full ~minutes re-decode (StarBreaker decodes the whole bank).
+        floor = music.load_music().get("min_duration", 30.0)
+        scanned = {t["id"] for t in scdata.scan_music(p4k, min_dur=floor)}
+        new = scanned - music.track_ids()
+        if not new and scanned == music.track_ids():
+            music.restamp_version(ver)
+            print(f"[music] scan: no new tracks ({reason}); marked current for {ver}")
+            return
+        print(f"[music] scan: {len(new)} new track(s) ({reason}) -- re-extracting, niced, ~minutes")
+        tracks = scdata.build_music_from_p4k(p4k, MUSIC_DIR, min_dur=floor)
+        if tracks:
+            music.save_music(tracks, game_version=ver, min_duration=floor)
+            print(f"[music] re-extracted {len(tracks)} tracks ({reason})")
+
+    cats = [
         _Catalog("ship cargo",
                  lambda: bool(load_ship_cargo(path).get("ships")),
                  lambda: load_ship_cargo(path).get("game_version"), _ship,
@@ -121,6 +140,13 @@ def _build_catalogs(path: str) -> list:
                  contracts.contracts_version, _contracts,
                  contracts.EXTRACT_VERSION, contracts.contracts_extract_version),
     ]
+    # Music is OPT-IN: auto-refresh it alongside the rest ONLY once the user has extracted it
+    # (the heavy ~2.6 GB decode is never triggered unprompted). Added only when present, so
+    # `has_cache` is trivially True and the "no cache" rebuild path can't fire here.
+    if music.is_extracted():
+        cats.append(_Catalog("music", lambda: True, music.music_version, _music,
+                             music.EXTRACT_VERSION, music.music_extract_version))
+    return cats
 
 
 def _refresh_once(catalogs: list, ver: str | None, log_path: str | None) -> None:

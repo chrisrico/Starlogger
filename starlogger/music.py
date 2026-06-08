@@ -43,6 +43,29 @@ def load_music(path: str = MUSIC_PATH) -> dict:
     return load_cached(path, _cache) or _cache["data"]
 
 
+def music_version(path: str = MUSIC_PATH) -> str | None:
+    """Game version the music was extracted for -- gates the auto-refresh on a major bump."""
+    return (load_music(path) or {}).get("game_version")
+
+
+def music_extract_version(path: str = MUSIC_PATH) -> int:
+    """Manifest-schema version on disk (0 == absent / pre-stamp)."""
+    return int((load_music(path) or {}).get("extract_version") or 0)
+
+
+def track_ids(path: str = MUSIC_PATH) -> set:
+    """The set of extracted WEM ids -- compared against a fresh scan to spot new/changed music."""
+    return {t.get("id") for t in (load_music(path) or {}).get("tracks", [])}
+
+
+def restamp_version(game_version: str | None, path: str = MUSIC_PATH) -> None:
+    """Re-save the existing manifest under a new ``game_version`` (no decode). Used when a game
+    update brought no new music, so the extraction is marked current for the new build."""
+    d = load_music(path)
+    save_music(d.get("tracks", []), game_version=game_version,
+               min_duration=d.get("min_duration", 30.0), path=path)
+
+
 def is_extracted(game_version: str | None = None, path: str = MUSIC_PATH,
                  music_dir: str = MUSIC_DIR) -> bool:
     """True when the music is already decoded for this build: manifest present at the current

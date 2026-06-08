@@ -49,6 +49,17 @@ def _parse_wwise_list(stdout: str) -> list[dict]:
     return rows
 
 
+def scan_music(p4k: str, sb: str | None = None, min_dur: float = 30.0) -> list[dict]:
+    """The cheap (~1s) half: list the music bank's tracks WITHOUT decoding, returning the
+    ``{id, duration}`` rows that pass the ``min_dur`` floor (matching what ``build_music_from_p4k``
+    would keep). Lets a game-update refresh detect new/changed tracks before paying the full
+    re-decode. Keeps unknown-duration rows (same as the build's prune rule)."""
+    sb = sb or ensure_binary()
+    rows = _parse_wwise_list(_run(sb, p4k, ["wwise", "list", MUSIC_BANK], timeout=600))
+    return [{"id": r["id"], "duration": r["duration"]} for r in rows
+            if r["duration"] is None or r["duration"] >= min_dur]
+
+
 def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
                          min_dur: float = 30.0, progress=lambda done, total: None,
                          timeout: int = 3600) -> list[dict]:
