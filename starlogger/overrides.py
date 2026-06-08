@@ -59,12 +59,29 @@ def prune_overrides(keep_mission_ids: set, path: str = OVERRIDES_PATH,
     return {"removed": removed, "kept": len(data) - len(removed)}
 
 
+def _coerce_qty(v):
+    """Normalize a JSON/user-supplied qty to the ``Leg.qty`` contract (int | None).
+    The inline cell editor posts qty as a raw string (e.g. "32"); coerce it here so
+    every Leg built from an override satisfies int|None and downstream SCU math
+    (planner/snapshot, ``int += qty``) never blows up on a string. Unparseable -> None."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v)
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _legs(items: list[dict], kind: str, loc_key: str) -> dict[str, Leg]:
     out: dict[str, Leg] = {}
     for i, it in enumerate(items):
         oid = f"ovr_{kind}_{i}"
         out[oid] = Leg(
-            objective_id=oid, kind=kind, cargo=it.get("cargo"), qty=it.get("qty"),
+            objective_id=oid, kind=kind, cargo=it.get("cargo"), qty=_coerce_qty(it.get("qty")),
             location=it.get(loc_key), state="completed" if it.get("done") else "pending",
         )
     return out
@@ -98,7 +115,7 @@ def apply_override(mis: Mission, ov: dict) -> Mission:
         if f.get("cargo"):
             leg.cargo = f["cargo"]
         if "qty" in f:
-            leg.qty = f["qty"]
+            leg.qty = _coerce_qty(f["qty"])
     # per-leg "mark delivered" overlay, applied last so it references the final
     # (possibly overridden) leg ids. Only forces "completed"; never un-completes
     # a leg the game itself marked done.
