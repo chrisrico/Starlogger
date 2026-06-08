@@ -433,14 +433,26 @@ def _git(repo: str, *args: str, check: bool = True) -> str | None:
 
 
 def _repo_ready() -> str | None:
-    """BASE_DIR if updates may run there: a git clone with a CLEAN tree. The dirty-tree guard
-    keeps reset --hard from ever clobbering a dev checkout mid-edit; a managed install stays
-    clean (runtime/p4k data is gitignored), so this only ever returns a path there."""
+    """BASE_DIR if updates may run there: a git clone with a CLEAN tree that is NOT its own
+    update source.
+
+    The dirty-tree guard keeps reset --hard from clobbering a dev checkout mid-edit; a managed
+    install stays clean (runtime/p4k data is gitignored), so this returns a path there.
+
+    The self-source guard keeps a tracker run straight from the dev tree -- with update_remote
+    pointing back at that same tree (e.g. a managed install and a dev-folder run sharing one
+    data dir, where update_remote is the dev path) -- from fetching itself and reset --hard'ing
+    the dev checkout onto its own FETCH_HEAD, which would wipe in-progress branches/commits.
+    The managed install (a different dir that pulls FROM the dev tree) compares unequal here, so
+    it still updates normally."""
     repo = BASE_DIR
     if not os.path.isdir(os.path.join(repo, ".git")):
         return None
     if (_git(repo, "status", "--porcelain", check=False) or "").strip():
         return None
+    src = os.path.expanduser(settings.resolve_str("update_remote"))
+    if os.path.isdir(src) and os.path.realpath(src) == os.path.realpath(repo):
+        return None                       # update source IS this checkout -> never git-op it
     return repo
 
 

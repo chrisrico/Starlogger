@@ -134,3 +134,25 @@ def test_fetch_target_keeps_an_install_shallow(monkeypatch):
     tracker._fetch_target("/repo", "origin", "main")
     fetch = next(c for c in calls if c and c[0] == "fetch")
     assert fetch[:3] == ["fetch", "--depth", "1"]
+
+
+def test_repo_ready_refuses_when_source_is_self(monkeypatch, tmp_path):
+    """A tracker run from the dev tree whose update_remote points back at that same tree must
+    NOT be update-ready: fetching itself + reset --hard would clobber the dev checkout. The
+    managed install (a different dir pulling FROM the dev tree) stays ready."""
+    repo = tmp_path / "dev"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.setattr(tracker, "BASE_DIR", str(repo))
+    monkeypatch.setattr(tracker, "_git", lambda *a, **k: "")          # clean tree
+
+    # update_remote IS this checkout (the footgun) -> refuse
+    monkeypatch.setattr(tracker.settings, "resolve_str",
+                        lambda k: str(repo) if k == "update_remote" else "main")
+    assert tracker._repo_ready() is None
+
+    # a different source dir (the normal managed-install case) -> ready
+    other = tmp_path / "install"
+    other.mkdir()
+    monkeypatch.setattr(tracker.settings, "resolve_str",
+                        lambda k: str(other) if k == "update_remote" else "main")
+    assert tracker._repo_ready() == str(repo)
