@@ -676,7 +676,9 @@ class MusicState:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Starlogger -- Star Citizen cargo/flight logger + dashboard")
     ap.add_argument("--log", help="path to Game.log (auto-detected if omitted)")
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--host", default=None,
+                    help="address to bind the dashboard server on "
+                         "(default: the 'Bind address' setting, else 127.0.0.1)")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--once", action="store_true", help="parse current log, print JSON, exit")
     ap.add_argument("--rebuild", action="store_true",
@@ -693,6 +695,12 @@ def main() -> None:
                     help="spawn the LUG sc-launch.sh as a child and tie its lifetime to ours "
                          "(the dashboard drives the game; Linux only)")
     args = ap.parse_args()
+
+    # Bind address: an explicit --host wins; otherwise fall to the configurable setting
+    # (env STARLOGGER_HOST > settings.json > 127.0.0.1). 0.0.0.0 exposes the dashboard to
+    # the local network.
+    if args.host is None:
+        args.host = settings.resolve_str("bind_host")
 
     log_path = args.log or find_log()
     if not log_path or not os.path.isfile(log_path):

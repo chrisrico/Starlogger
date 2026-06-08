@@ -44,6 +44,14 @@ CONFIG_SCHEMA = [
                 "Applies on the next launch.",
     },
     {
+        "key": "bind_host", "type": "string", "default": "127.0.0.1",
+        "env": "STARLOGGER_HOST",
+        "group": "General", "label": "Bind address",
+        "help": "IP address the dashboard server listens on. 127.0.0.1 = this machine "
+                "only; 0.0.0.0 = all interfaces (reachable from other devices on your "
+                "network). An explicit --host overrides this. Applies on the next launch.",
+    },
+    {
         "key": "idle_timeout", "type": "number", "default": 30.0, "min": 1.0,
         "env": "STARLOGGER_IDLE_TIMEOUT",
         "group": "Lifecycle", "label": "Idle shutdown (seconds)",

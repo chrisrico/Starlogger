@@ -27,7 +27,7 @@ function _settingsCtl(f) {
 }
 // Keys tucked into a collapsed "Advanced" section — rarely-touched plumbing that would
 // otherwise clutter the main form. Presentation-only, so it lives in the frontend.
-const SET_ADVANCED = new Set(["idle_timeout", "close_timeout", "update_remote", "update_branch"]);
+const SET_ADVANCED = new Set(["bind_host", "idle_timeout", "close_timeout", "update_remote", "update_branch"]);
 
 function _settingsRow(f) {
   return `<div class="sp-row"><div class="sp-label"><span class="t">${esc(f.label)}</span>` +
