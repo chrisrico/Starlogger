@@ -3094,6 +3094,32 @@ function planResultHtml(r) {
     <div class="card"><h3><span>Per-ingredient sources</span></h3><div class="mplan-srcs">${srcs}</div></div>`;
 }
 
+// ---- window bridge ---- //
+// Inline HTML handlers (onclick="editMission(…)", the interpolated onclick="${fn}(…)" in
+// tabBar, etc.) resolve names against `window`. Under <script type="module"> top-level
+// declarations are module-scoped, NOT global — so every function reachable from an inline
+// handler must be re-exposed here explicitly. tests/test_window_bridge.py statically enforces
+// that this block covers every handler-referenced name (fails the build on drift).
+Object.assign(window, {
+  // contracts / mission editor
+  editMission, saveMission, cancelEdit, deleteMission, resetMission, restoreMission, addLeg,
+  toggleTypeFilter, toggleTypeMenu, setAllTypeFilters, edFormKey,
+  // unified inline cell editor
+  edOpen, edKey, edCommit,
+  // header / ship selector
+  setMode, pickShip, openShipMenu, filterShipMenu, shipKeydown, onShipBlur,
+  // cargo / plan tabs + route reorder
+  cargoSub, setRouteSort, resetRouteOrder, rowHover, boxHover,
+  routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,
+  // archive / replay
+  toggleArch, scrubTo, scrubStep, exitReplay,
+  // update banner
+  applyUpdate, dismissUpdate,
+  // mining (Identify / Find / Plan)
+  miningSub, miningIdentify, miningFind, miningIndex, identifyAgain, identifyPredict, identifyKey,
+  bpOpen, bpFilter, bpPick, bpKey,
+});
+
 // ---- deep-link resolution (runs last, once all tab state + functions exist) ---- //
 // Honour the URL hash, including legacy ones from before the Cargo/Plan merge: #loading /
 // #unloading → Cargo (pre-selecting the phase); #routes / #grid → Plan. Must run after the
