@@ -2007,6 +2007,7 @@ let JUKE_BUILT = false;       // panel skeleton injected?
 let JUKE_TRACKS = [];         // manifest rows {id, file, duration, size}, longest-first
 let JUKE_CUR = null;          // id of the track loaded in the player
 let JUKE_PHASE = null;        // last-seen extraction phase (to catch the extracting->done edge)
+let JUKE_SEEKING = false;     // user is dragging the seek bar (don't fight it with timeupdate)
 
 function jukeFmt(sec) {
   if (sec == null) return "—";
@@ -2031,10 +2032,14 @@ function initJukebox() {
         <ul class="juke-list" id="jukeList"></ul>
         <div class="juke-player">
           <div class="juke-now" id="jukeNow">Nothing playing</div>
-          <div class="juke-trans">
-            <button class="juke-nav" id="jukePrev" title="Previous">⏮</button>
-            <button class="juke-nav" id="jukeNext" title="Next">⏭</button>
-            <audio id="jukeAudio" controls preload="none"></audio>
+          <div class="juke-transport">
+            <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">⏮</button>
+            <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>▶</button>
+            <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">⏭</button>
+            <span class="juke-time" id="jukeCur">0:00</span>
+            <input class="juke-seek" id="jukeSeek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" disabled>
+            <span class="juke-time" id="jukeDur">0:00</span>
+            <audio id="jukeAudio" preload="none"></audio>
           </div>
         </div>
       </div>`);
@@ -2042,7 +2047,25 @@ function initJukebox() {
     $("jukeMin").oninput = jukeApplyFilter;
     $("jukePrev").onclick = () => jukeStep(-1);
     $("jukeNext").onclick = () => jukeStep(1);
-    $("jukeAudio").onended = () => jukeStep(1);
+    $("jukePlay").onclick = jukeToggle;
+    const a = $("jukeAudio");
+    a.onended = () => jukeStep(1);
+    a.onplay = () => jukeSetPlaying(true);
+    a.onpause = () => jukeSetPlaying(false);
+    a.onloadedmetadata = () => {
+      const s = $("jukeSeek");
+      s.max = a.duration || 0; s.value = 0; s.disabled = false;
+      $("jukeDur").textContent = jukeFmt(a.duration);
+    };
+    a.ontimeupdate = () => {
+      if (JUKE_SEEKING) return;                 // don't yank the thumb out from under a drag
+      $("jukeSeek").value = a.currentTime || 0;
+      $("jukeCur").textContent = jukeFmt(a.currentTime);
+    };
+    const seek = $("jukeSeek");
+    seek.oninput = () => { JUKE_SEEKING = true; $("jukeCur").textContent = jukeFmt(+seek.value); };
+    seek.onchange = () => { a.currentTime = +seek.value; JUKE_SEEKING = false; };
+    jukeInitMediaSession();
     JUKE_BUILT = true;
     if (LAST && LAST.music) jukeApplyMusicState(LAST.music);  // reflect an in-flight extraction
   }
@@ -2074,6 +2097,8 @@ function renderJukeList() {
   list.querySelectorAll(".juke-row").forEach(r => {
     r.onclick = () => jukePlay(r.dataset.id);
   });
+  const pb = $("jukePlay");
+  if (pb) pb.disabled = !JUKE_TRACKS.length;   // can start playback once there are tracks
   jukeApplyFilter();
   if (JUKE_CUR) _jukeHighlight(JUKE_CUR);
 }
@@ -2098,8 +2123,44 @@ function jukePlay(id) {
   audio.play().catch(() => {});   // autoplay may be blocked until a gesture; the click counts
   JUKE_CUR = id;
   _jukeHighlight(id);
+  const label = `Track #${id} · ${jukeFmt(+row.dataset.dur)}`;
   const now = $("jukeNow");
-  if (now) now.textContent = `Track #${id} · ${jukeFmt(+row.dataset.dur)}`;
+  if (now) now.textContent = label;
+  if ("mediaSession" in navigator) {       // OS/lock-screen "now playing" card
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: `Track #${id}`, artist: "Star Citizen", album: "Soundtrack",
+    });
+  }
+}
+
+// Toggle play/pause; with nothing loaded yet, start the first visible track.
+function jukeToggle() {
+  const a = $("jukeAudio");
+  if (!JUKE_CUR) { jukeStep(1); return; }
+  if (a.paused) a.play().catch(() => {}); else a.pause();
+}
+
+// Reflect playing state onto the play/pause button + the OS media session.
+function jukeSetPlaying(on) {
+  const btn = $("jukePlay");
+  if (btn) {
+    btn.textContent = on ? "⏸" : "▶";
+    btn.title = on ? "Pause" : "Play";
+    btn.setAttribute("aria-label", on ? "Pause" : "Play");
+  }
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = on ? "playing" : "paused";
+}
+
+// Wire hardware/lock-screen media keys (play/pause/prev/next/seek) to the jukebox, once.
+function jukeInitMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+  const ms = navigator.mediaSession, a = () => $("jukeAudio");
+  const set = (act, fn) => { try { ms.setActionHandler(act, fn); } catch (_) {} };
+  set("play", () => a().play().catch(() => {}));
+  set("pause", () => a().pause());
+  set("previoustrack", () => jukeStep(-1));
+  set("nexttrack", () => jukeStep(1));
+  set("seekto", (d) => { if (d.seekTime != null) a().currentTime = d.seekTime; });
 }
 
 function _jukeHighlight(id) {
