@@ -27,7 +27,7 @@ import time
 import urllib.request
 import webbrowser
 
-from starlogger import catalogs, contracts, music, scdata, settings
+from starlogger import catalogs, contracts, scdata, settings
 from starlogger.archive import (
     ARCHIVE_SCHEMA,
     archive_session,
@@ -35,7 +35,7 @@ from starlogger.archive import (
     load_sessions,
     save_backfill_index,
 )
-from starlogger.config import BASE_DIR, IS_WINDOWS, MUSIC_DIR, find_log, find_log_backups
+from starlogger.config import BASE_DIR, IS_WINDOWS, find_log, find_log_backups
 from starlogger.maintenance import run_cleanup
 from starlogger.server import create_app
 from starlogger.snapshot import build_snapshot
@@ -582,22 +582,22 @@ def _reexec() -> None:
         os.execv(sys.executable, argv)        # never returns
 
 
-# ---- jukebox: decode the game soundtrack out of the p4k on explicit request ---- #
-# Unlike updating + the DataCore catalogs, music extraction is NOT periodic/version-gated: it's
-# ~2.6 GB and runs once, when the user clicks "Extract music". MusicState carries its progress
-# to the dashboard the same way UpdateState carries the update banner -- merged into the SSE
-# snapshot, pushed by state.bump_version().
+# ---- jukebox: the background music build's progress holder ---- #
+# The soundtrack is extracted automatically by catalogs.refresh_loop (once on first run, then on a
+# major game-version move), like the DataCore catalogs -- no button. MusicState carries that
+# build's decode progress to the dashboard the same way UpdateState carries the update banner:
+# merged into the SSE snapshot, pushed by state.bump_version() from the refresh loop.
 
 
 class MusicState:
-    """Shared progress for the on-demand music extraction (the jukebox 'Extract' button),
-    surfaced to the dashboard via the SSE snapshot. Thread-safe."""
+    """Shared progress for the background music build, surfaced to the dashboard via the SSE
+    snapshot. Thread-safe."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.phase = "idle"          # idle | extracting | done | error
-        self.done = 0                # tracks decoded so far
-        self.total = 0              # tracks the bank references
+        self.done = 0                # full songs decoded so far
+        self.total = 0              # full songs the bank yields
         self.error = ""
 
     def set(self, *, phase: str | None = None, done: int | None = None,
@@ -616,39 +616,6 @@ class MusicState:
         with self.lock:
             return {"phase": self.phase, "done": self.done,
                     "total": self.total, "error": self.error}
-
-
-def _extract_music(mstate: "MusicState", state, log_path: str | None) -> None:
-    """Decode the soundtrack into MUSIC_DIR, pushing progress to the dashboard. Runs off the
-    request thread (it blocks for minutes); a second click while one is running is a no-op."""
-    with mstate.lock:
-        if mstate.phase == "extracting":
-            return
-        mstate.phase, mstate.done, mstate.total, mstate.error = "extracting", 0, 0, ""
-    state.bump_version()
-    try:
-        p4k = scdata.find_p4k(log_path)
-        if not p4k:
-            mstate.set(phase="error", error="Data.p4k not found next to Game.log")
-            state.bump_version()
-            return
-        ver = state.game_version
-        if music.is_extracted(ver):                 # already done for this build -> skip the re-decode
-            d = music.load_music()
-            mstate.set(phase="done", done=d.get("count", 0), total=d.get("count", 0))
-            state.bump_version()
-            return
-
-        def progress(done: int, total: int) -> None:
-            mstate.set(done=done, total=total)
-            state.bump_version()                    # push the tick to every open dashboard
-
-        tracks = scdata.build_music_from_p4k(p4k, MUSIC_DIR, progress=progress)
-        music.save_music(tracks, game_version=ver)
-        mstate.set(phase="done", done=len(tracks), total=len(tracks))
-    except Exception as e:                           # decode/IO failure -> surface it inline
-        mstate.set(phase="error", error=str(e)[:300])
-    state.bump_version()
 
 
 def main() -> None:
@@ -736,7 +703,8 @@ def main() -> None:
     # backfill the session archive from logbackups in the background (skips ones
     # already archived) so a fresh data dir self-populates without a manual --rebuild.
     threading.Thread(target=backfill_archive, args=(log_path, stop), daemon=True).start()
-    threading.Thread(target=catalogs.refresh_loop, args=(state, stop, log_path), daemon=True).start()
+    threading.Thread(target=catalogs.refresh_loop, args=(state, stop, log_path),
+                     kwargs={"music_state": mstate}, daemon=True).start()
     threading.Thread(target=cleanup_loop, args=(log_path, epoch_trigger, stop), daemon=True).start()
 
     url = f"http://{args.host}:{args.port}"
@@ -773,9 +741,6 @@ def main() -> None:
     app.config["ON_APPLY"] = on_apply
     # The 'Check for updates' button: check synchronously + apply immediately if there's a build.
     app.config["ON_CHECK_NOW"] = lambda: _manual_check(ustate, state, trigger_restart)
-    # The jukebox 'Extract music' button: decode the soundtrack off the request thread.
-    app.config["ON_EXTRACT_MUSIC"] = lambda: threading.Thread(
-        target=lambda: _extract_music(mstate, state, log_path), daemon=True).start()
     threading.Thread(target=shutdown_watchdog,
                      args=(presence, stop, has_launcher_detection, _idle_timeout(),
                            time.monotonic(), httpd.shutdown, 2.0, _close_timeout()),

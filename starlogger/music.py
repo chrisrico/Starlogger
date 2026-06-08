@@ -13,7 +13,7 @@ import glob
 import os
 import time
 
-from .config import MUSIC_DIR, MUSIC_PATH
+from .config import (DEFAULT_MUSIC_CURATION_PATH, MUSIC_CURATION_PATH, MUSIC_DIR, MUSIC_PATH)
 from . import scdata
 from .jsonstore import atomic_write, load_cached
 
@@ -23,9 +23,12 @@ EXTRACT_VERSION = 1
 
 _cache = {"mtime": None,
           "data": {"tracks": [], "count": 0, "game_version": None}}
+# Separate mtime caches for the two curation files (shipped default + local overlay).
+_curation_cache = {"mtime": None, "data": {}}
+_default_cache = {"mtime": None, "data": {}}
 
 
-def save_music(tracks: list, game_version: str | None = None, min_duration: float = 30.0,
+def save_music(tracks: list, game_version: str | None = None, min_duration: float = 300.0,
                path: str = MUSIC_PATH) -> None:
     atomic_write(path, {
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
@@ -63,7 +66,62 @@ def restamp_version(game_version: str | None, path: str = MUSIC_PATH) -> None:
     update brought no new music, so the extraction is marked current for the new build."""
     d = load_music(path)
     save_music(d.get("tracks", []), game_version=game_version,
-               min_duration=d.get("min_duration", 30.0), path=path)
+               min_duration=d.get("min_duration", scdata.FULL_SONG_MIN_DUR), path=path)
+
+
+# --------------------------------------------------------------------------- #
+# Jukebox curation: playlist order + hidden tracks + custom names.
+#
+# The data has NO real track names (FNV-hashed ids) and the songs can't be told apart by ear
+# without playing them, so the user curates: reorder, hide duds, rename keepers. Their edits
+# live in the LOCAL sidecar (MUSIC_CURATION_PATH); a shipped DEFAULT (committed in the package)
+# seeds a fresh install. load_curation() overlays local on top of default. Everything is keyed
+# by stable WEM id, so curation survives a re-extract (orphaned ids are simply kept).
+# --------------------------------------------------------------------------- #
+_EMPTY_CURATION = {"order": [], "hidden": [], "names": {}}
+
+
+def _read_curation(path: str, cache: dict) -> dict:
+    d = load_cached(path, cache) or cache["data"] or {}
+    return {"order": list(d.get("order") or []),
+            "hidden": list(d.get("hidden") or []),
+            "names": dict(d.get("names") or {})}
+
+
+def load_curation(path: str = MUSIC_CURATION_PATH,
+                  default_path: str = DEFAULT_MUSIC_CURATION_PATH) -> dict:
+    """The effective curation: the local sidecar overlaid on the shipped default. ``names`` merge
+    (local wins per id); ``order`` is the local order if set else the default; ``hidden`` is the
+    union. Ids are strings (WEM ids)."""
+    base = _read_curation(default_path, _default_cache)
+    over = _read_curation(path, _curation_cache)
+    names = {**base["names"], **over["names"]}
+    order = over["order"] or base["order"]
+    hidden = list(dict.fromkeys([*base["hidden"], *over["hidden"]]))
+    return {"order": order, "hidden": hidden, "names": names}
+
+
+def set_curation(*, order: list | None = None, hidden: list | None = None,
+                 names: dict | None = None, path: str = MUSIC_CURATION_PATH) -> dict:
+    """Merge a partial curation update into the LOCAL sidecar and persist it (atomic). Only the
+    provided fields change; ``names`` merges key-by-key (a value of "" or None drops that name).
+    Returns the new effective curation."""
+    cur = _read_curation(path, _curation_cache)
+    if order is not None:
+        cur["order"] = [str(x) for x in order]
+    if hidden is not None:
+        cur["hidden"] = [str(x) for x in hidden]
+    if names is not None:
+        merged = dict(cur["names"])
+        for k, v in names.items():
+            if v:
+                merged[str(k)] = str(v)
+            else:
+                merged.pop(str(k), None)
+        cur["names"] = merged
+    atomic_write(path, cur)
+    _curation_cache["mtime"] = None   # force re-read on next load
+    return load_curation(path)
 
 
 def is_extracted(game_version: str | None = None, path: str = MUSIC_PATH,

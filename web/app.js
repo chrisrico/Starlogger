@@ -2005,18 +2005,21 @@ function notifyIfUpdated(v) {
   localStorage.setItem(k, v);
 }
 
-// ---- jukebox: extract + play the game soundtrack decoded from the p4k ---- //
+// ---- jukebox: play + curate the game soundtrack decoded from the p4k ---- //
 // A modal overlay (like Settings), opened from the sidebar's Jukebox button. Lazy-built once
-// (initJukebox); thereafter open/close just toggles the overlay so the <audio> element — and
-// any playing track — persists across opens. Extraction is a one-time, ~2.6 GB server-side
-// decode kicked by the Extract button (POST /api/music/extract); its progress rides the SSE
-// snapshot's `music` field (jukeApplyMusicState), so there's no polling. Tracks have no names
-// in the shipped soundbanks — only hashed ids — so a row is length + #id.
+// (initJukebox); thereafter open/close just toggles the overlay so the <audio> element — and any
+// playing track — persists across opens. The soundtrack is decoded automatically in the
+// background (no button); only the long-form *full songs* (~33) are kept. There are no real names
+// in the data — hashed ids only — so the user curates: drag to reorder, rename, and hide duds.
+// Curation persists server-side (POST /api/music/curate) and rides the SSE snapshot.
 let JUKE_BUILT = false;       // panel skeleton injected?
 let JUKE_TRACKS = [];         // manifest rows {id, file, duration, size}, longest-first
+let JUKE_CURATION = { order: [], hidden: [], names: {} };   // effective curation (default+local)
 let JUKE_CUR = null;          // id of the track loaded in the player
-let JUKE_PHASE = null;        // last-seen extraction phase (to catch the extracting->done edge)
+let JUKE_PHASE = null;        // last-seen build phase (to catch the extracting->done edge)
 let JUKE_SEEKING = false;     // user is dragging the seek bar (don't fight it with timeupdate)
+let JUKE_SHOW_HIDDEN = false; // reveal hidden tracks (to un-hide them)
+let _jukeDragId = null;       // id of the row being dragged
 
 function jukeFmt(sec) {
   if (sec == null) return "—";
@@ -2024,18 +2027,33 @@ function jukeFmt(sec) {
   return m + ":" + String(s % 60).padStart(2, "0");
 }
 
+// A stable per-track handle from the longest-first manifest rank (M-01…), used as the default
+// label until the user renames a track. Independent of the curated playlist order.
+function jukeRank(id) {
+  const i = JUKE_TRACKS.findIndex(t => t.id === id);
+  return i < 0 ? "M-??" : "M-" + String(i + 1).padStart(2, "0");
+}
+function jukeName(id) { return JUKE_CURATION.names[id] || jukeRank(id); }
+function jukeHidden(id) { return JUKE_CURATION.hidden.includes(id); }
+
+// Track ids in effective playlist order: curated order first (existing ids only), then any
+// manifest songs not yet in the order (new after a patch), appended longest-first.
+function jukeOrderedIds() {
+  const have = new Set(JUKE_TRACKS.map(t => t.id));
+  const seen = new Set();
+  const out = [];
+  for (const id of JUKE_CURATION.order) if (have.has(id) && !seen.has(id)) { out.push(id); seen.add(id); }
+  for (const t of JUKE_TRACKS) if (!seen.has(t.id)) out.push(t.id);
+  return out;
+}
+
 function initJukebox() {
   if (!JUKE_BUILT) {
     setHTML("jukeboxBody",
       `<div class="juke-bar">
-        <div class="juke-extract" id="jukeExtractRow">
-          <button class="sp-btn" id="jukeExtractBtn">Extract music</button>
-          <span class="sp-note" id="jukeExtractMsg"></span>
-        </div>
-        <label class="juke-filter hide" id="jukeFilterRow" title="Hide tracks shorter than this">Min length
-          <input type="range" id="jukeMin" min="0" max="600" step="15" value="0">
-          <span id="jukeMinLbl" class="juke-minlbl">0:00</span>
-        </label>
+        <span class="juke-status" id="jukeStatus"></span>
+        <label class="juke-showhidden hide" id="jukeShowHiddenRow">
+          <input type="checkbox" id="jukeShowHidden"> show hidden</label>
       </div>
       <ul class="juke-list" id="jukeList"></ul>`);
     setHTML("jukeboxFoot",
@@ -2051,11 +2069,10 @@ function initJukebox() {
           <audio id="jukeAudio" preload="none"></audio>
         </div>
       </div>`);
-    $("jukeExtractBtn").onclick = jukeExtract;
-    $("jukeMin").oninput = jukeApplyFilter;
     $("jukePrev").onclick = () => jukeStep(-1);
     $("jukeNext").onclick = () => jukeStep(1);
     $("jukePlay").onclick = jukeToggle;
+    $("jukeShowHidden").onchange = (e) => { JUKE_SHOW_HIDDEN = e.target.checked; renderJukeList(); };
     const a = $("jukeAudio");
     a.onended = () => jukeStep(1);
     a.onplay = () => jukeSetPlaying(true);
@@ -2075,7 +2092,7 @@ function initJukebox() {
     seek.onchange = () => { a.currentTime = +seek.value; JUKE_SEEKING = false; };
     jukeInitMediaSession();
     JUKE_BUILT = true;
-    if (LAST && LAST.music) jukeApplyMusicState(LAST.music);  // reflect an in-flight extraction
+    if (LAST && LAST.music) jukeApplyMusicState(LAST.music);  // reflect an in-flight build
   }
   jukeLoad();
 }
@@ -2097,6 +2114,8 @@ async function jukeLoad() {
   try {
     const d = await getJSON("/api/music");
     JUKE_TRACKS = (d && d.tracks) || [];
+    const c = (d && d.curation) || {};
+    JUKE_CURATION = { order: c.order || [], hidden: c.hidden || [], names: c.names || {} };
   } catch (_) {
     JUKE_TRACKS = [];
   }
@@ -2106,44 +2125,105 @@ async function jukeLoad() {
 function renderJukeList() {
   const list = $("jukeList");
   if (!list) return;
-  jukeSyncBar();   // before the empty-state early return, so the fresh-install case shows Extract
+  const nHidden = JUKE_TRACKS.filter(t => jukeHidden(t.id)).length;
+  $("jukeShowHiddenRow")?.classList.toggle("hide", nHidden === 0);
+  const sh = $("jukeShowHidden");
+  if (sh) { sh.checked = JUKE_SHOW_HIDDEN; sh.nextSibling.textContent = ` show hidden (${nHidden})`; }
   if (!JUKE_TRACKS.length) {
-    list.innerHTML = `<li class="juke-empty">No music extracted yet — click <b>Extract music</b> to decode the soundtrack from your game files.</li>`;
+    list.innerHTML = `<li class="juke-empty">Music is being prepared in the background — the full songs are decoded from your game files once. This list fills in automatically when it's ready.</li>`;
     return;
   }
-  list.innerHTML = JUKE_TRACKS.map((t, i) =>
-    `<li class="juke-row" data-id="${esc(t.id)}" data-dur="${t.duration || 0}" data-file="${esc(t.file)}">` +
-    `<span class="juke-num">${i + 1}</span>` +
-    `<span class="juke-dur">${jukeFmt(t.duration)}</span>` +
-    `<span class="juke-id">#${esc(t.id)}</span></li>`).join("");
+  const byId = Object.fromEntries(JUKE_TRACKS.map(t => [t.id, t]));
+  const rows = jukeOrderedIds()
+    .filter(id => JUKE_SHOW_HIDDEN || !jukeHidden(id))
+    .map(id => {
+      const t = byId[id]; if (!t) return "";
+      const hid = jukeHidden(id);
+      return `<li class="juke-row${hid ? " hidden-row" : ""}" draggable="true" data-id="${esc(id)}" data-dur="${t.duration || 0}" data-file="${esc(t.file)}">` +
+        `<span class="juke-grip" title="Drag to reorder" aria-hidden="true">⠿</span>` +
+        `<span class="juke-name" title="${esc("#" + id)}">${esc(jukeName(id))}</span>` +
+        `<span class="juke-dur">${jukeFmt(t.duration)}</span>` +
+        `<button class="juke-act juke-rename" title="Rename" aria-label="Rename track">✎</button>` +
+        `<button class="juke-act juke-hide" title="${hid ? "Un-hide" : "Hide from playlist"}" aria-label="${hid ? "Un-hide" : "Hide"} track">${hid ? "↺" : "✕"}</button>` +
+        `</li>`;
+    }).join("");
+  list.innerHTML = rows;
   list.querySelectorAll(".juke-row").forEach(r => {
-    r.onclick = () => jukePlay(r.dataset.id);
+    const id = r.dataset.id;
+    r.querySelector(".juke-name").onclick = () => jukePlay(id);
+    r.querySelector(".juke-dur").onclick = () => jukePlay(id);
+    r.querySelector(".juke-rename").onclick = (e) => { e.stopPropagation(); jukeRename(id); };
+    r.querySelector(".juke-hide").onclick = (e) => { e.stopPropagation(); jukeToggleHidden(id); };
+    r.ondragstart = (e) => { _jukeDragId = id; r.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; };
+    r.ondragend = () => { r.classList.remove("dragging"); _jukeDragId = null; jukeCommitOrder(); };
+    r.ondragover = (e) => { e.preventDefault(); jukeDragOver(r, e.clientY); };
   });
   const pb = $("jukePlay");
-  if (pb) pb.disabled = !JUKE_TRACKS.length;   // can start playback once there are tracks
-  jukeApplyFilter();
+  if (pb) pb.disabled = !JUKE_TRACKS.length;   // can start playback once there are songs
   if (JUKE_CUR) _jukeHighlight(JUKE_CUR);
 }
 
-// The Extract control and the Min-length filter are mutually exclusive: show Extract until the
-// music exists (or while it's decoding), then swap it out for the filter once there's a list.
-function jukeSyncBar() {
-  const extracting = JUKE_PHASE === "extracting";
-  const have = JUKE_TRACKS.length > 0;
-  $("jukeExtractRow")?.classList.toggle("hide", have && !extracting);
-  $("jukeFilterRow")?.classList.toggle("hide", !have);
+// Live-reorder the DOM as a row is dragged over another, so the drop lands where you see it.
+function jukeDragOver(target, y) {
+  const list = $("jukeList");
+  const dragging = list?.querySelector(".juke-row.dragging");
+  if (!dragging || dragging === target) return;
+  const rect = target.getBoundingClientRect();
+  const before = y < rect.top + rect.height / 2;
+  list.insertBefore(dragging, before ? target : target.nextSibling);
 }
 
-function jukeApplyFilter() {
-  const min = +($("jukeMin")?.value || 0);
-  const lbl = $("jukeMinLbl");
-  if (lbl) lbl.textContent = jukeFmt(min);
-  let shown = 0;
-  $("jukeList")?.querySelectorAll(".juke-row").forEach(r => {
-    const hide = (+r.dataset.dur) < min;
-    r.classList.toggle("hide", hide);
-    if (!hide) shown++;
-  });
+// Persist the current on-screen order. When "show hidden" is off the DOM omits hidden ids, so
+// splice the visible order back into the full order (hidden ids keep their relative slots).
+function jukeCommitOrder() {
+  const visible = [...($("jukeList")?.querySelectorAll(".juke-row") || [])].map(r => r.dataset.id);
+  let order;
+  if (JUKE_SHOW_HIDDEN) {
+    order = visible;
+  } else {
+    const vis = new Set(visible);
+    let k = 0;
+    order = jukeOrderedIds().map(id => vis.has(id) ? visible[k++] : id);
+  }
+  JUKE_CURATION.order = order;          // optimistic
+  jukeSave({ order });
+}
+
+async function jukeRename(id) {
+  const cur = JUKE_CURATION.names[id] || "";
+  const name = window.prompt(`Name for ${jukeRank(id)} (#${id}):`, cur);
+  if (name === null) return;            // cancelled
+  const trimmed = name.trim();
+  if (trimmed) JUKE_CURATION.names[id] = trimmed; else delete JUKE_CURATION.names[id];
+  renderJukeList();
+  if (JUKE_CUR === id) jukeNowPlayingLabel(id);
+  await jukeSave({ names: { [id]: trimmed } });
+}
+
+function jukeToggleHidden(id) {
+  const hid = jukeHidden(id);
+  JUKE_CURATION.hidden = hid
+    ? JUKE_CURATION.hidden.filter(x => x !== id)
+    : [...JUKE_CURATION.hidden, id];
+  renderJukeList();
+  jukeSave({ hidden: JUKE_CURATION.hidden });
+}
+
+async function jukeSave(patch) {
+  try { await postJSON("/api/music/curate", patch); }
+  catch (_) { toast("Couldn't save jukebox change", "err"); }
+}
+
+function jukeNowPlayingLabel(id) {
+  const row = $("jukeList")?.querySelector(`.juke-row[data-id="${CSS.escape(id)}"]`);
+  const dur = row ? jukeFmt(+row.dataset.dur) : "";
+  const now = $("jukeNow");
+  if (now) now.textContent = `${jukeName(id)} · ${dur}`;
+  if ("mediaSession" in navigator) {       // OS/lock-screen "now playing" card
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: jukeName(id), artist: "Star Citizen", album: "Soundtrack",
+    });
+  }
 }
 
 function jukePlay(id) {
@@ -2154,14 +2234,7 @@ function jukePlay(id) {
   audio.play().catch(() => {});   // autoplay may be blocked until a gesture; the click counts
   JUKE_CUR = id;
   _jukeHighlight(id);
-  const label = `Track #${id} · ${jukeFmt(+row.dataset.dur)}`;
-  const now = $("jukeNow");
-  if (now) now.textContent = label;
-  if ("mediaSession" in navigator) {       // OS/lock-screen "now playing" card
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: `Track #${id}`, artist: "Star Citizen", album: "Soundtrack",
-    });
-  }
+  jukeNowPlayingLabel(id);
 }
 
 // Toggle play/pause; with nothing loaded yet, start the first visible track.
@@ -2199,10 +2272,10 @@ function _jukeHighlight(id) {
     r.classList.toggle("playing", r.dataset.id === id));
 }
 
-// Step to the previous/next VISIBLE track (filter-aware); auto-advance (audio 'ended') reuses
-// this with dir=+1 and simply stops at the end of the list.
+// Step to the previous/next track in the visible playlist order; auto-advance (audio 'ended')
+// reuses this with dir=+1 and simply stops at the end of the list.
 function jukeStep(dir) {
-  const rows = [...($("jukeList")?.querySelectorAll(".juke-row:not(.hide)") || [])];
+  const rows = [...($("jukeList")?.querySelectorAll(".juke-row") || [])];
   if (!rows.length) return;
   let i = rows.findIndex(r => r.dataset.id === JUKE_CUR);
   i = i < 0 ? (dir > 0 ? 0 : rows.length - 1) : i + dir;
@@ -2210,44 +2283,18 @@ function jukeStep(dir) {
   jukePlay(rows[i].dataset.id);
 }
 
-async function jukeExtract() {
-  const btn = $("jukeExtractBtn"), msg = $("jukeExtractMsg");
-  if (!btn) return;
-  btn.disabled = true; msg.textContent = "Starting…"; msg.classList.remove("err");
-  try {
-    const r = await postJSON("/api/music/extract");
-    if (r && r.ok === false) {
-      msg.textContent = r.error || "Music extraction isn't available on this install.";
-      msg.classList.add("err"); btn.disabled = false;
-    }
-    // success path: progress + completion arrive via the SSE snapshot (jukeApplyMusicState)
-  } catch (e) {
-    msg.textContent = "Couldn't start extraction."; msg.classList.add("err"); btn.disabled = false;
-  }
-}
-
-// Reflect the server's extraction state (pushed in every snapshot) onto the jukebox controls.
+// Reflect the server's background-build state (pushed in every snapshot) onto the jukebox.
 function jukeApplyMusicState(m) {
   const wasExtracting = JUKE_PHASE === "extracting";
   JUKE_PHASE = m.phase;
-  jukeSyncBar();              // a fresh "extracting" must re-show the Extract row over the filter
-  const btn = $("jukeExtractBtn"), msg = $("jukeExtractMsg");
-  if (!btn || !msg) return;   // panel not built yet — phase captured for when it is
-  msg.classList.remove("err");
-  if (m.phase === "extracting") {
-    btn.disabled = true;
-    msg.textContent = m.total ? `Extracting ${m.done}/${m.total}…` : "Decoding soundbank…";
-  } else if (m.phase === "error") {
-    btn.disabled = false;
-    msg.textContent = m.error || "Extraction failed."; msg.classList.add("err");
-  } else if (m.phase === "done") {
-    btn.disabled = false;
-    msg.textContent = m.total ? `${m.total} tracks ✓` : "Done ✓";
-    if (wasExtracting) jukeLoad();   // finished just now → pull the fresh track list in
-  } else {
-    btn.disabled = false;
-    msg.textContent = "";
+  const st = $("jukeStatus");
+  if (st) {
+    st.classList.remove("err");
+    if (m.phase === "extracting") st.textContent = m.total ? `Preparing music… ${m.done}/${m.total}` : "Preparing music…";
+    else if (m.phase === "error") { st.textContent = m.error || "Music build failed."; st.classList.add("err"); }
+    else st.textContent = "";
   }
+  if (m.phase === "done" && wasExtracting) jukeLoad();   // finished just now → pull the fresh list in
 }
 
 // Apply a freshly-received live snapshot — from the SSE push or a manual refresh().

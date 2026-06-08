@@ -12,7 +12,9 @@ from ._contracts import (
     build_contract_taxonomy, build_contract_generators, build_cargo_manifests,
     build_contracts_from_p4k,
 )
-from ._music import build_music_from_p4k, scan_music
+from ._music import (
+    build_music_from_p4k, scan_songs, select_full_songs, dump_music_hirc, FULL_SONG_MIN_DUR,
+)
 
 __all__ = [
     "SB_VERSION", "find_p4k", "build_ships",
@@ -21,5 +23,6 @@ __all__ = [
     "build_blueprints", "build_blueprints_from_p4k",
     "build_contract_taxonomy", "build_contract_generators", "build_cargo_manifests",
     "build_contracts_from_p4k",
-    "build_music_from_p4k", "scan_music",
+    "build_music_from_p4k", "scan_songs", "select_full_songs", "dump_music_hirc",
+    "FULL_SONG_MIN_DUR",
 ]

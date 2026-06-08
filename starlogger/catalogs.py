@@ -46,9 +46,11 @@ def _reason(cat: _Catalog, ver: str | None) -> str | None:
     return None
 
 
-def _build_catalogs(path: str) -> list:
+def _build_catalogs(path: str, state=None, music_state=None) -> list:
     """The catalogs the background loop keeps fresh, each gated/rebuilt the same way. The
-    reference/mineables/blueprints modules are imported lazily (only the loop needs them)."""
+    reference/mineables/blueprints modules are imported lazily (only the loop needs them).
+    ``state``/``music_state`` (when given) let the music build push decode progress to the
+    dashboard via the SSE snapshot -- everything else builds silently."""
     from . import blueprints, contracts, mineables, music, reference
     from .config import MUSIC_DIR
 
@@ -97,22 +99,38 @@ def _build_catalogs(path: str) -> list:
                   f"{len(data.get('icons') or {})} type icons ({reason})")
 
     def _music(p4k, ver, reason):
-        # Jukebox soundtrack. Only reached when music is already extracted (see the gate below),
-        # so this never extracts from scratch -- it keeps an existing library current. Scan first
-        # (~1s): if the track set is unchanged, just re-stamp the manifest's version (no decode);
-        # only a changed set pays the full ~minutes re-decode (StarBreaker decodes the whole bank).
-        floor = music.load_music().get("min_duration", 30.0)
-        scanned = {t["id"] for t in scdata.scan_music(p4k, min_dur=floor)}
-        new = scanned - music.track_ids()
-        if not new and scanned == music.track_ids():
+        # Jukebox full-song set. Builds once on first run, then refreshes on a major version move.
+        # Scan first (no decode, ~seconds): if the song set is unchanged, just re-stamp the
+        # manifest's version; only a changed set pays the full re-decode (StarBreaker decodes the
+        # whole bank, niced; we prune to the ~33 full songs as it goes). Decode progress is pushed
+        # to the dashboard via music_state when wired.
+        floor = scdata.FULL_SONG_MIN_DUR
+        scanned = scdata.scan_songs(p4k, min_dur=floor)
+        if scanned and scanned == music.track_ids():
             music.restamp_version(ver)
-            print(f"[music] scan: no new tracks ({reason}); marked current for {ver}")
+            print(f"[music] scan: no new songs ({reason}); marked current for {ver}")
             return
-        print(f"[music] scan: {len(new)} new track(s) ({reason}) -- re-extracting, niced, ~minutes")
-        tracks = scdata.build_music_from_p4k(p4k, MUSIC_DIR, min_dur=floor)
+        new = len(scanned - music.track_ids())
+        print(f"[music] scan: {new} new song(s) ({reason}) -- extracting, niced, ~minutes")
+
+        def progress(done, total):
+            if music_state is not None:
+                music_state.set(phase="extracting", done=done, total=total)
+                if state is not None:
+                    state.bump_version()
+
+        if music_state is not None:
+            music_state.set(phase="extracting", done=0, total=len(scanned))
+            if state is not None:
+                state.bump_version()
+        tracks = scdata.build_music_from_p4k(p4k, MUSIC_DIR, min_dur=floor, progress=progress)
         if tracks:
             music.save_music(tracks, game_version=ver, min_duration=floor)
-            print(f"[music] re-extracted {len(tracks)} tracks ({reason})")
+            print(f"[music] extracted {len(tracks)} full songs ({reason})")
+        if music_state is not None:
+            music_state.set(phase="done", done=len(tracks), total=len(tracks))
+            if state is not None:
+                state.bump_version()
 
     cats = [
         _Catalog("ship cargo",
@@ -139,13 +157,13 @@ def _build_catalogs(path: str) -> list:
                  lambda: bool(contracts.load_contracts().get("templates")),
                  contracts.contracts_version, _contracts,
                  contracts.EXTRACT_VERSION, contracts.contracts_extract_version),
+        # Jukebox soundtrack -- the full-song set, distilled to ~0.4 GB. Builds automatically on
+        # first run (has_cache False -> "no cache" -> build) and refreshes on a major version move,
+        # niced like the rest. The decode is one-shot, pruned to the long standalone pieces.
+        _Catalog("music",
+                 music.is_extracted, music.music_version, _music,
+                 music.EXTRACT_VERSION, music.music_extract_version),
     ]
-    # Music is OPT-IN: auto-refresh it alongside the rest ONLY once the user has extracted it
-    # (the heavy ~2.6 GB decode is never triggered unprompted). Added only when present, so
-    # `has_cache` is trivially True and the "no cache" rebuild path can't fire here.
-    if music.is_extracted():
-        cats.append(_Catalog("music", lambda: True, music.music_version, _music,
-                             music.EXTRACT_VERSION, music.music_extract_version))
     return cats
 
 
@@ -167,16 +185,17 @@ def _refresh_once(catalogs: list, ver: str | None, log_path: str | None) -> None
 
 
 def refresh_loop(state, stop: threading.Event, log_path: str | None = None,
-                 path: str = SHIP_CARGO_PATH) -> None:
+                 path: str = SHIP_CARGO_PATH, music_state=None) -> None:
     """Rebuild the local caches only on a MAJOR game-version change (or if missing), reading
     the local install. Runs the heavy StarBreaker extraction niced in the background (see
-    scdata); the tracker keeps serving the old files until each atomic replace."""
+    scdata); the tracker keeps serving the old files until each atomic replace. ``music_state``
+    (when given) surfaces the music build's decode progress on the dashboard SSE snapshot."""
     for _ in range(20):  # ~10s for the tailer to parse the version header
         if state.game_version or stop.is_set():
             break
         stop.wait(0.5)
 
-    catalogs = _build_catalogs(path)
+    catalogs = _build_catalogs(path, state=state, music_state=music_state)
     while not stop.is_set():
         _refresh_once(catalogs, state.game_version, log_path)
         stop.wait(300)  # re-check for a version bump (e.g. after a patch + relaunch)

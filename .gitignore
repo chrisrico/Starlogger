@@ -23,6 +23,8 @@ trade_flags.json
 # docs vault (Obsidian): p4k data-model notes + the runtime Game.log catalog —
 # kept out of git for now
 docs/
+# internal dev notes
+NOTES.md
 
 # build artifacts
 *.tgz
@@ -48,3 +50,7 @@ mission_icons/
 # hook also catches it), but the music/ oggs are non-JSON so THIS entry is their only guard.
 music.json
 music/
+# per-user jukebox curation (playlist order/hidden/names) is local state, not shipped. The
+# shipped default lives at starlogger/default_music_curation.json and IS tracked (pure metadata,
+# no p4k audio, no source marker -> the pre-commit hook won't flag it).
+music_curation.json

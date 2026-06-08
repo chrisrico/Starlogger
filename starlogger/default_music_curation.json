@@ -1,0 +1,13 @@
+{
+  "_note": "Shipped jukebox defaults: playlist order + custom names for the full-song set. Hand-authored metadata (WEM ids + names), NOT p4k audio -- safe to commit; must never carry the StarBreaker source marker. Promote your own curation here by copying music_curation.json from the data dir. Overlaid by the per-user local sidecar at runtime.",
+  "order": [
+    "8803966", "441146440", "637814297", "953584662", "126287389", "909913818",
+    "842032604", "879907218", "883067466", "1010611929", "942980875", "112950379",
+    "1024709676", "706751787", "604050738", "253247329", "294220290", "807712214",
+    "690321005", "553459205", "595626911", "915317344", "991379908", "887594857",
+    "351077986", "532384094", "882047294", "656694778", "879287392", "1061261017",
+    "316371879", "595811191", "25517006"
+  ],
+  "hidden": [],
+  "names": {}
+}

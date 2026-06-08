@@ -14,8 +14,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import json
+
 from starlogger import music
-from starlogger.scdata._music import _parse_wwise_list
+from starlogger.scdata._music import _parse_wwise_list, select_full_songs
 
 # A verbatim slice of `starbreaker wwise list MUS_Music_Stanton.bnk` (header + rule + rows).
 SAMPLE = """WEM ID       Source          Offset     Size       Codec        Duration
@@ -80,13 +82,67 @@ def test_music_cache_helpers_roundtrip(tmp_path, monkeypatch):
     assert music.track_ids(path) == {"a", "b"}
 
 
-def test_music_catalog_is_opt_in(monkeypatch):
-    """The auto-refresh includes 'music' ONLY once it's been extracted (never extracts blind)."""
+def test_music_catalog_is_always_present():
+    """Music is a first-class background catalog now (auto-extracts on first run), so it's always
+    in the refresh set -- its has_cache (is_extracted) drives the build, not an opt-in gate."""
     from starlogger import catalogs
-    monkeypatch.setattr("starlogger.music.is_extracted", lambda *a, **k: False)
-    assert "music" not in [c.label for c in catalogs._build_catalogs(catalogs.SHIP_CARGO_PATH)]
-    monkeypatch.setattr("starlogger.music.is_extracted", lambda *a, **k: True)
-    assert "music" in [c.label for c in catalogs._build_catalogs(catalogs.SHIP_CARGO_PATH)]
+    cats = {c.label: c for c in catalogs._build_catalogs(catalogs.SHIP_CARGO_PATH)}
+    assert "music" in cats
+    assert cats["music"].has_cache is music.is_extracted   # first run False -> "no cache" -> build
+
+
+# A tiny HIRC slice (parsed `wwise dump`): one standalone long cue, one layered 2-stem cue, one
+# short standalone. Tracks carry node_base.direct_parent_id -> their MusicSegment; a media is a
+# "full song" only if it's the sole member of its segment AND long enough.
+def _track(tid, parent, media):
+    return {"MusicTrack": {"id": tid, "node_base": {"direct_parent_id": parent},
+                           "sources": [{"media_id": media}]}}
+
+
+def _segment(sid):
+    return {"MusicSegment": {"id": sid, "music_params": {"node_base": {"direct_parent_id": 0}}}}
+
+
+HIRC = [
+    _segment(100), _track(10, 100, 1000),                 # standalone, 360s -> SONG
+    _segment(200), _track(20, 200, 2000), _track(21, 200, 2001),   # 2 media share seg -> layered
+    _segment(300), _track(30, 300, 3000),                 # standalone but only 60s -> too short
+]
+DURS = {"1000": 360.0, "2000": 360.0, "2001": 360.0, "3000": 60.0}
+
+
+def test_select_full_songs_keeps_only_standalone_long():
+    songs = select_full_songs(HIRC, DURS, min_dur=300.0)
+    assert songs == {"1000"}                               # layered + short are excluded
+
+
+def test_select_full_songs_floor_is_inclusive():
+    assert "1000" in select_full_songs(HIRC, {"1000": 300.0}, min_dur=300.0)
+    assert "1000" not in select_full_songs(HIRC, {"1000": 299.9}, min_dur=300.0)
+
+
+def test_curation_merge_local_over_default(tmp_path, monkeypatch):
+    default = tmp_path / "default.json"
+    local = tmp_path / "local.json"
+    default.write_text(json.dumps({"order": ["a", "b", "c"], "hidden": ["c"], "names": {"a": "Default A"}}))
+    monkeypatch.setattr(music, "_curation_cache", {"mtime": None, "data": {}})
+    monkeypatch.setattr(music, "_default_cache", {"mtime": None, "data": {}})
+
+    # no local yet -> shipped default shows through
+    eff = music.load_curation(path=str(local), default_path=str(default))
+    assert eff["order"] == ["a", "b", "c"] and eff["hidden"] == ["c"] and eff["names"]["a"] == "Default A"
+
+    # local rename + reorder + extra hide overlays the default (names merge, hidden unions)
+    music.set_curation(order=["b", "a", "c"], hidden=["b"], names={"a": "My A"}, path=str(local))
+    eff = music.load_curation(path=str(local), default_path=str(default))
+    assert eff["order"] == ["b", "a", "c"]
+    assert eff["names"]["a"] == "My A"                     # local wins
+    assert set(eff["hidden"]) == {"b", "c"}                # union of default + local
+
+    # blank name drops it back to the default-or-handle
+    music.set_curation(names={"a": ""}, path=str(local))
+    eff = music.load_curation(path=str(local), default_path=str(default))
+    assert eff["names"].get("a") == "Default A"            # local override gone -> default resurfaces
 
 
 if __name__ == "__main__":

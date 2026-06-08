@@ -55,6 +55,14 @@ MISSION_ICONS_DIR = os.path.join(DATA_DIR, "mission_icons")
 # (~2.6 GB) and p4k-derived => gitignored, never committed (same rule as the .json caches).
 MUSIC_DIR = os.path.join(DATA_DIR, "music")
 MUSIC_PATH = os.path.join(DATA_DIR, "music.json")
+# Per-user jukebox curation: playlist order, hidden tracks, and custom names (no real names
+# exist in the data -- see music.py). Keyed by stable WEM id; this LOCAL sidecar overlays the
+# shipped default below, so user edits survive a re-extract. Local => gitignored.
+MUSIC_CURATION_PATH = os.path.join(DATA_DIR, "music_curation.json")
+# Shipped default curation (same shape), hand-authored and committed so a fresh install starts
+# named/ordered. Pure metadata (ids + names + order), NOT p4k-derived audio -> safe to track;
+# must never carry the StarBreaker source marker the pre-commit hook scans for.
+DEFAULT_MUSIC_CURATION_PATH = os.path.join(PKG_DIR, "default_music_curation.json")
 TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")

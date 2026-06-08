@@ -22,7 +22,7 @@ from .settings import resolve_str as settings_str
 from .settings import update as update_settings
 from .blueprints import blueprint_catalog, lookup_blueprint
 from .contracts import load_contracts
-from .music import load_music
+from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .ships import load_ship_cargo
@@ -103,7 +103,7 @@ def create_app(state: State, log_path: str | None = None, presence=None,
     @app.get("/music/<path:name>")
     def music_file(name):
         # A decoded music track (Ogg Vorbis), extracted from the p4k into the gitignored
-        # data dir on demand (absent until the jukebox's Extract is run -> 404).
+        # data dir by the background music build (absent until that has run once -> 404).
         # send_from_directory confines `name` to the music dir. conditional=True so the
         # <audio> element gets Range support (seek/scrub) for free.
         return send_from_directory(MUSIC_DIR, name, conditional=True)
@@ -338,18 +338,31 @@ def create_app(state: State, log_path: str | None = None, presence=None,
 
     @app.get("/api/music")
     def api_music():
-        # The jukebox track manifest ({tracks, count, ...}); empty until extracted.
-        return jsonify(load_music())
+        # The jukebox full-song manifest ({tracks, count, ...}) plus the effective curation
+        # (playlist order, hidden ids, custom names = shipped default overlaid by local edits).
+        # Empty until the background extract has run once.
+        d = dict(load_music())
+        d["curation"] = load_curation()
+        return jsonify(d)
 
-    @app.post("/api/music/extract")
-    def api_music_extract():
-        # User clicked "Extract music" in the jukebox: decode the soundtrack off the request
-        # thread (it's ~2.6 GB / minutes), reporting progress via the SSE snapshot's "music"
-        # field. 503 if extraction wasn't wired (e.g. --once host / no p4k path known).
-        fn = app.config.get("ON_EXTRACT_MUSIC")
-        if fn is None:
-            return jsonify({"ok": False, "error": "music extraction unavailable"}), 503
-        fn()
+    @app.post("/api/music/curate")
+    def api_music_curate():
+        # Persist a jukebox curation edit (reorder / hide / rename) to the local sidecar. Accepts
+        # any of {order:[id...], hidden:[id...], names:{id:name}}; merges partials. _ok() bumps the
+        # version so the change rides the SSE push to every open dashboard.
+        body = request.get_json(silent=True) or {}
+        order = body.get("order")
+        hidden = body.get("hidden")
+        names = body.get("names")
+        if order is not None and not isinstance(order, list):
+            return jsonify({"ok": False, "error": "order must be a list"}), 400
+        if hidden is not None and not isinstance(hidden, list):
+            return jsonify({"ok": False, "error": "hidden must be a list"}), 400
+        if names is not None and not isinstance(names, dict):
+            return jsonify({"ok": False, "error": "names must be an object"}), 400
+        if order is None and hidden is None and names is None:
+            return jsonify({"ok": False, "error": "nothing to update"}), 400
+        set_curation(order=order, hidden=hidden, names=names)
         return _ok()
 
     @app.post("/api/update/dismiss")
