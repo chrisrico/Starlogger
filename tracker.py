@@ -457,6 +457,21 @@ def _is_shallow(repo: str) -> bool:
     return (_git(repo, "rev-parse", "--is-shallow-repository", check=False) or "").strip() == "true"
 
 
+def _is_ancestor(repo: str, ancestor: str, descendant: str) -> bool:
+    """True if ``ancestor`` is an ancestor of (or equal to) ``descendant`` -- i.e. ``descendant``
+    already contains it. ``git merge-base --is-ancestor`` exits 0 when so (1 = not, !=0/1 = error,
+    both -> False via _git's check=False)."""
+    return _git(repo, "merge-base", "--is-ancestor", ancestor, descendant, check=False) is not None
+
+
+def _upstream_current(repo: str, have: str, want: str) -> bool:
+    """Whether ``want`` (upstream) is NOT something to update to: identical, or already contained
+    in ``have`` (we're ahead -- e.g. the tracker is run from a dev checkout that's ahead of origin,
+    where blindly resetting to upstream would DELETE local commits). Only a genuinely-ahead
+    upstream counts as an update."""
+    return have == want or _is_ancestor(repo, want, have)
+
+
 def _fetch_target(repo: str, remote: str, branch: str) -> tuple[str, str] | None:
     """git fetch the remote/branch and return (have, want) = HEAD vs FETCH_HEAD full hashes,
     or None when offline / the fetch failed. Detection only -- never resets.
@@ -491,8 +506,8 @@ def _apply(ustate: "UpdateState", trigger_restart) -> bool:
         remote = settings.resolve_str("update_remote")
         branch = settings.resolve_str("update_branch")
         target = _fetch_target(repo, remote, branch)
-        if not target or target[0] == target[1]:
-            return False                      # offline or already current
+        if not target or _upstream_current(repo, *target):
+            return False                      # offline, already current, or we're ahead of upstream
         have, want = target
         changed = (_git(repo, "diff", "--name-only", "HEAD", "FETCH_HEAD", check=False) or "")
         _git(repo, "reset", "--hard", "FETCH_HEAD")
@@ -527,8 +542,8 @@ def _check_update(ustate: "UpdateState", state, trigger_restart) -> None:
     if not target:
         return                                # offline / fetch failed
     have, want = target
-    if have == want:
-        ustate.clear()                        # in sync (e.g. right after applying)
+    if _upstream_current(repo, have, want):
+        ustate.clear()                        # in sync, or we're ahead of upstream (no downgrade)
         return
     if mode == "auto":
         _apply(ustate, trigger_restart)
@@ -550,7 +565,7 @@ def _manual_check(ustate: "UpdateState", state, trigger_restart) -> dict:
     if not target:
         return {"ok": False, "status": "offline"}     # fetch failed / no network
     have, want = target
-    if have == want:
+    if _upstream_current(repo, have, want):           # in sync, or we're ahead of upstream
         if ustate.available:                          # drop a now-stale banner, push the clear
             ustate.clear()
             state.bump_version()

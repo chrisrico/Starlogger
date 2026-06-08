@@ -76,6 +76,31 @@ def test_manual_check_applies_immediately_on_new_build(monkeypatch):
     assert applied.wait(2)                                     # _apply ran off-thread
 
 
+def test_no_update_when_upstream_is_behind(monkeypatch):
+    """Running from a checkout that's AHEAD of upstream: have != want, but want is an ancestor of
+    have (upstream is behind). Must read as 'current' -- never apply, or reset --hard would delete
+    the local commits. This is the dev-source footgun."""
+    _stub_source(monkeypatch)
+    monkeypatch.setattr(tracker, "_fetch_target", lambda *a: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(tracker, "_is_ancestor", lambda repo, anc, desc: True)   # want ⊂ have
+    applied = threading.Event()
+    monkeypatch.setattr(tracker, "_apply", lambda us, tr: applied.set())
+    r = tracker._manual_check(tracker.UpdateState(), _State(), lambda: None)
+    assert r["status"] == "current"
+    assert not applied.wait(0.3)                                # _apply must NOT have run
+
+
+def test_update_when_upstream_is_ahead(monkeypatch):
+    """Upstream genuinely ahead: want is NOT an ancestor of have -> apply."""
+    _stub_source(monkeypatch)
+    monkeypatch.setattr(tracker, "_fetch_target", lambda *a: ("a" * 40, "c" * 40))
+    monkeypatch.setattr(tracker, "_is_ancestor", lambda repo, anc, desc: False)  # want ⊄ have
+    applied = threading.Event()
+    monkeypatch.setattr(tracker, "_apply", lambda us, tr: applied.set())
+    r = tracker._manual_check(tracker.UpdateState(), _State(), lambda: None)
+    assert r["status"] == "updating" and applied.wait(2)
+
+
 def _record_git(monkeypatch, shallow: bool):
     """Stub tracker._git so _fetch_target runs without a real repo; capture the fetch argv.
     rev-parse --is-shallow-repository answers `shallow`; HEAD/FETCH_HEAD return distinct hashes."""
