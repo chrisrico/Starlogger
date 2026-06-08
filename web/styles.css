@@ -939,6 +939,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
   padding:7px 14px;cursor:pointer;border-bottom:1px solid var(--line);
   font-family:var(--mono);font-size:12.5px;color:var(--ink-1)}
 .juke-row:last-child{border-bottom:0}
+/* beat .juke-row{display:grid} — equal-specificity .hide{display:none} (defined earlier) loses
+   the cascade to it, so the min-length filter needs this two-class rule to actually hide rows */
+.juke-row.hide{display:none}
 .juke-row:hover{background:var(--panel-2);color:var(--ink)}
 .juke-row.playing{background:rgba(var(--cyan-rgb),.10);color:var(--cyan);box-shadow:inset 2px 0 0 var(--cyan)}
 .juke-num{color:var(--ink-3);text-align:right}
