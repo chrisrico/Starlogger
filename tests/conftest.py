@@ -52,6 +52,26 @@ def pytest_configure(config):  # noqa: A002 - pluggy matches this hook arg by na
                    "(skip with -m 'not browser')")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _enforce_data_isolation():
+    """HARD invariant, enforced for EVERY test (not just the browser ones): the suite must
+    run against the throwaway temp data dir, NEVER the live install (~/.local/share/starlogger).
+
+    config.DATA_DIR is a module constant bound at import from STARLOGGER_DATA_DIR (set above
+    before any starlogger import). If it ever drifts off the temp dir -- e.g. a test file run
+    directly as `python tests/test_x.py` imported starlogger.config before this conftest set
+    the env -- fail the whole session loudly here, BEFORE any test body can read or write the
+    real install."""
+    expected = os.path.realpath(_TMP_DATA)
+    actual = os.path.realpath(config.DATA_DIR)
+    assert actual == expected, (
+        f"DATA isolation broken: config.DATA_DIR={config.DATA_DIR!r} is not the temp dir "
+        f"{_TMP_DATA!r}. Refusing to run so no test can touch the live install. "
+        "(Run via `pytest`, which loads this conftest before importing any starlogger module.)")
+    real_install = os.path.realpath(os.path.expanduser("~/.local/share/starlogger"))
+    assert actual != real_install, "config.DATA_DIR points at the live install"
+
+
 def _assert_isolated():
     """Refuse to run if anything would touch the real install or escape the temp dir."""
     real = os.path.realpath(os.path.expanduser("~/.local/share/starlogger"))
