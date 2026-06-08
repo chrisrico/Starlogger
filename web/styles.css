@@ -934,8 +934,11 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
   gap:16px;flex-wrap:wrap;background:var(--panel-2);padding:6px 0 10px}
 .juke-extract{display:flex;align-items:center;gap:10px}
 .juke-extract .sp-note{text-align:left;max-width:none}
-.juke-filter{display:flex;align-items:center;gap:8px;font-family:var(--display);font-size:11px;
-  text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2)}
+.juke-filter{display:flex;align-items:center;gap:8px;margin-left:auto;font-family:var(--display);
+  font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2)}
+/* two-class so these beat the equal-specificity .juke-extract/.juke-filter{display:flex} (the
+   bar swaps Extract <-> filter; one-class .hide would lose the cascade — same trap as .juke-row) */
+.juke-extract.hide,.juke-filter.hide{display:none}
 .juke-filter input[type=range]{width:150px;accent-color:var(--cyan)}
 .juke-minlbl{font-family:var(--mono);color:var(--ink);min-width:34px}
 .juke-list{list-style:none;margin:0;padding:0;border:1px solid var(--line);background:var(--panel)}

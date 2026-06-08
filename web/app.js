@@ -2028,11 +2028,11 @@ function initJukebox() {
   if (!JUKE_BUILT) {
     setHTML("jukeboxBody",
       `<div class="juke-bar">
-        <div class="juke-extract">
+        <div class="juke-extract" id="jukeExtractRow">
           <button class="sp-btn" id="jukeExtractBtn">Extract music</button>
           <span class="sp-note" id="jukeExtractMsg"></span>
         </div>
-        <label class="juke-filter" title="Hide tracks shorter than this">Min length
+        <label class="juke-filter hide" id="jukeFilterRow" title="Hide tracks shorter than this">Min length
           <input type="range" id="jukeMin" min="0" max="600" step="15" value="0">
           <span id="jukeMinLbl" class="juke-minlbl">0:00</span>
         </label>
@@ -2106,6 +2106,7 @@ async function jukeLoad() {
 function renderJukeList() {
   const list = $("jukeList");
   if (!list) return;
+  jukeSyncBar();   // before the empty-state early return, so the fresh-install case shows Extract
   if (!JUKE_TRACKS.length) {
     list.innerHTML = `<li class="juke-empty">No music extracted yet — click <b>Extract music</b> to decode the soundtrack from your game files.</li>`;
     return;
@@ -2122,6 +2123,15 @@ function renderJukeList() {
   if (pb) pb.disabled = !JUKE_TRACKS.length;   // can start playback once there are tracks
   jukeApplyFilter();
   if (JUKE_CUR) _jukeHighlight(JUKE_CUR);
+}
+
+// The Extract control and the Min-length filter are mutually exclusive: show Extract until the
+// music exists (or while it's decoding), then swap it out for the filter once there's a list.
+function jukeSyncBar() {
+  const extracting = JUKE_PHASE === "extracting";
+  const have = JUKE_TRACKS.length > 0;
+  $("jukeExtractRow")?.classList.toggle("hide", have && !extracting);
+  $("jukeFilterRow")?.classList.toggle("hide", !have);
 }
 
 function jukeApplyFilter() {
@@ -2220,6 +2230,7 @@ async function jukeExtract() {
 function jukeApplyMusicState(m) {
   const wasExtracting = JUKE_PHASE === "extracting";
   JUKE_PHASE = m.phase;
+  jukeSyncBar();              // a fresh "extracting" must re-show the Extract row over the filter
   const btn = $("jukeExtractBtn"), msg = $("jukeExtractMsg");
   if (!btn || !msg) return;   // panel not built yet — phase captured for when it is
   msg.classList.remove("err");
