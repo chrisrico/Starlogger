@@ -129,6 +129,30 @@ nav button.active::before{content:"";position:absolute;left:0;top:7px;bottom:7px
    the first one only, so a following .sb-settings drops its own top border. */
 .sb-settings + .sb-settings{border-top:0}
 
+/* ---- mini player: compact transport pinned above the Jukebox button while a track plays ---- */
+.sb-mini{display:flex;flex-direction:column;gap:8px;padding:10px 14px 11px;
+  border-top:1px solid var(--line);background:rgba(var(--cyan-rgb),.05)}
+.sb-mini.hide{display:none}
+.sb-mini + .sb-settings{border-top:0}        /* the mini's top border is the group divider */
+.sb-mini-now{display:flex;align-items:center;gap:8px;width:100%;min-width:0;text-align:left;
+  background:transparent;border:0;padding:0;cursor:pointer;color:var(--ink)}
+.sb-mini-title{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-family:var(--mono);font-size:11px;color:var(--ink)}
+.sb-mini-now:hover .sb-mini-title{color:var(--cyan)}
+.sb-mini-eq{flex:none;display:inline-flex;align-items:flex-end;gap:2px;height:12px}
+.sb-mini-eq i{width:2px;height:3px;background:var(--ink-3);border-radius:1px}
+.sb-mini.playing .sb-mini-eq i{background:var(--cyan);animation:sbeq .9s ease-in-out infinite}
+.sb-mini.playing .sb-mini-eq i:nth-child(2){animation-delay:.3s}
+.sb-mini.playing .sb-mini-eq i:nth-child(3){animation-delay:.6s}
+@keyframes sbeq{0%,100%{height:3px}50%{height:11px}}
+.sb-mini-ctrls{display:flex;align-items:center;justify-content:center;gap:6px}
+.sb-mini-btn{flex:none;display:flex;align-items:center;justify-content:center;width:30px;height:24px;
+  background:transparent;border:1px solid var(--line);border-radius:2px;color:var(--ink-2);cursor:pointer}
+.sb-mini-btn:hover{color:var(--cyan);border-color:var(--cyan)}
+.sb-mini-btn .juke-ic{width:13px;height:13px}
+.sb-mini-bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+.sb-mini-fill{height:100%;width:0;background:var(--cyan)}
+
 /* ---- skinny mode: an icons-only rail (default on mobile; toggle on desktop) ---- */
 .sidebar.collapsed{flex-basis:62px;width:62px}
 .sidebar.collapsed .sb-brand{justify-content:center;padding-left:0;padding-right:0}
@@ -140,6 +164,13 @@ nav button.active::before{content:"";position:absolute;left:0;top:7px;bottom:7px
 .sidebar.collapsed .sb-settings,
 .sidebar.collapsed .sb-collapse{justify-content:center;padding-left:0;padding-right:0}
 .sidebar.collapsed .sb-chevron{transform:rotate(180deg)}
+/* collapsed rail: the mini shrinks to just a play/pause button (click the button to expand) */
+.sidebar.collapsed .sb-mini{padding-left:0;padding-right:0;gap:6px}
+.sidebar.collapsed .sb-mini-title,
+.sidebar.collapsed .sb-mini-bar,
+.sidebar.collapsed #jukeMiniPrev,
+.sidebar.collapsed #jukeMiniNext{display:none}
+.sidebar.collapsed .sb-mini-now{justify-content:center}
 
 /* ---- header / command bar (now inside the content column) ---- */
 header{
@@ -971,7 +1002,10 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .juke-nav{font-size:13px;width:34px}
 .juke-play{font-size:14px;width:40px;color:var(--cyan);border-color:var(--line-2)}
 .juke-nav:hover,.juke-play:hover{color:var(--cyan);border-color:var(--cyan)}
+.juke-shuf{color:var(--ink-2)}
 .juke-shuf.on{color:var(--cyan);border-color:var(--cyan)}
+.juke-ic{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.juke-ic-solid{fill:currentColor;stroke:none}
 .juke-nav:disabled,.juke-play:disabled{opacity:.4;cursor:not-allowed;color:var(--ink-3);border-color:var(--line)}
 .juke-time{font-family:var(--mono);font-size:11px;color:var(--ink-2);min-width:40px;text-align:center}
 .juke-seek{flex:1;min-width:60px;accent-color:var(--cyan)}

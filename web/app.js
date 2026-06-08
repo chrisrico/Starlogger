@@ -2026,6 +2026,15 @@ let _jukeDragId = null;       // id of the row being dragged
 let _jukeRestoreTime = null;  // pending seek (sec) to apply once the track's metadata loads
 let _jukeSavedAt = 0;         // last currentTime (sec) we persisted, to throttle timeupdate saves
 
+// Transport icons as inline SVG (currentColor) so they sit at one size and inherit the theme,
+// instead of platform media glyphs that render at odd sizes / colors. 15px via .juke-ic.
+const JUKE_IC = {
+  prev: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14L8 12z"/><rect x="5" y="5" width="2.6" height="14" rx="1"/></svg>`,
+  next: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14l10-7z"/><rect x="16.4" y="5" width="2.6" height="14" rx="1"/></svg>`,
+  play: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg>`,
+  pause: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.2v14H7zM13.8 5H17v14h-3.2z"/></svg>`,
+};
+
 function jukeFmt(sec) {
   if (sec == null) return "—";
   const s = Math.round(sec), m = Math.floor(s / 60);
@@ -2073,10 +2082,10 @@ function initJukebox() {
       `<div class="juke-player">
         <div class="juke-now" id="jukeNow">Nothing playing</div>
         <div class="juke-transport">
-          <button class="juke-nav juke-shuf" id="jukeShuffle" title="Shuffle" aria-label="Shuffle" aria-pressed="false">🔀</button>
-          <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">⏮</button>
-          <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>▶</button>
-          <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">⏭</button>
+          <button class="juke-nav juke-shuf" id="jukeShuffle" title="Shuffle" aria-label="Shuffle" aria-pressed="false"><svg class="juke-ic" viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg></button>
+          <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">${JUKE_IC.prev}</button>
+          <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>${JUKE_IC.play}</button>
+          <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">${JUKE_IC.next}</button>
           <span class="juke-time" id="jukeCur">0:00</span>
           <input class="juke-seek" id="jukeSeek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" disabled>
           <span class="juke-time" id="jukeDur">0:00</span>
@@ -2109,12 +2118,15 @@ function initJukebox() {
       if (JUKE_SEEKING) return;                 // don't yank the thumb out from under a drag
       $("jukeSeek").value = a.currentTime || 0;
       $("jukeCur").textContent = jukeFmt(a.currentTime);
+      const f = $("jukeMiniFill");           // mirror progress onto the mini player's bar
+      if (f && a.duration) f.style.width = (100 * a.currentTime / a.duration) + "%";
       if (Math.abs((a.currentTime || 0) - _jukeSavedAt) >= 5) jukePersist();  // throttle ~5s
     };
     const seek = $("jukeSeek");
     seek.oninput = () => { JUKE_SEEKING = true; $("jukeCur").textContent = jukeFmt(+seek.value); };
     seek.onchange = () => { a.currentTime = +seek.value; JUKE_SEEKING = false; jukePersist(); };
     window.addEventListener("pagehide", jukePersist);   // last-chance save on navigate/close
+    jukeBuildMini();
     jukeInitMediaSession();
     JUKE_BUILT = true;
     if (LAST && LAST.music) jukeApplyMusicState(LAST.music);  // reflect an in-flight build
@@ -2127,12 +2139,55 @@ function openJukebox() {
   const ov = $("jukeboxOverlay");
   ov.classList.remove("hide");
   ov.setAttribute("aria-hidden", "false");
+  try { localStorage.setItem("jukeOpen", "1"); } catch (_) {}   // reopen on next load
+  jukeUpdateMini();                    // modal now owns the transport → hide the mini
 }
 
 function closeJukebox() {
   const ov = $("jukeboxOverlay");      // just hides it — the <audio> keeps playing
   ov.classList.add("hide");
   ov.setAttribute("aria-hidden", "true");
+  try { localStorage.setItem("jukeOpen", "0"); } catch (_) {}
+  jukeUpdateMini();                    // a track may still be playing → reveal the mini player
+}
+
+// A compact transport pinned just above the sidebar Jukebox button, shown while a track is
+// loaded and the full modal is closed — so playback stays controllable without reopening it.
+function jukeBuildMini() {
+  const nav = $("navjukebox");
+  if (!nav || $("jukeMini")) return;
+  nav.insertAdjacentHTML("beforebegin",
+    `<div id="jukeMini" class="sb-mini hide">
+      <button class="sb-mini-now" id="jukeMiniNow" title="Open Jukebox" aria-label="Open Jukebox">
+        <span class="sb-mini-eq" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="sb-mini-title" id="jukeMiniTitle"></span>
+      </button>
+      <div class="sb-mini-ctrls">
+        <button class="sb-mini-btn" id="jukeMiniPrev" title="Previous" aria-label="Previous track">${JUKE_IC.prev}</button>
+        <button class="sb-mini-btn" id="jukeMiniPlay" title="Play/pause" aria-label="Play or pause">${JUKE_IC.play}</button>
+        <button class="sb-mini-btn" id="jukeMiniNext" title="Next" aria-label="Next track">${JUKE_IC.next}</button>
+      </div>
+      <div class="sb-mini-bar" aria-hidden="true"><div class="sb-mini-fill" id="jukeMiniFill"></div></div>
+    </div>`);
+  $("jukeMiniNow").onclick = openJukebox;
+  $("jukeMiniPrev").onclick = () => jukeStep(-1);
+  $("jukeMiniPlay").onclick = jukeToggle;
+  $("jukeMiniNext").onclick = () => jukeStep(1);
+}
+
+// Reflect now-playing state onto the mini player and toggle its visibility (track loaded AND
+// modal closed). Cheap; called on track change, play/pause, and open/close.
+function jukeUpdateMini() {
+  const mini = $("jukeMini");
+  if (!mini) return;
+  const modalOpen = !$("jukeboxOverlay")?.classList.contains("hide");
+  const show = !!JUKE_CUR && !modalOpen;
+  mini.classList.toggle("hide", !show);
+  if (!show) return;
+  $("jukeMiniTitle").textContent = jukeName(JUKE_CUR);
+  const a = $("jukeAudio"), playing = a && !a.paused;
+  $("jukeMiniPlay").innerHTML = playing ? JUKE_IC.pause : JUKE_IC.play;
+  mini.classList.toggle("playing", !!playing);
 }
 
 async function jukeLoad() {
@@ -2269,6 +2324,7 @@ function jukeNowPlayingLabel(id) {
   const dur = t ? jukeFmt(t.duration) : "";
   const now = $("jukeNow");
   if (now) now.textContent = `${jukeName(id)} · ${dur}`;
+  jukeUpdateMini();
   if ("mediaSession" in navigator) {       // OS/lock-screen "now playing" card
     navigator.mediaSession.metadata = new MediaMetadata({
       title: jukeName(id), artist: "Star Citizen", album: "Soundtrack",
@@ -2332,10 +2388,11 @@ function jukeToggle() {
 function jukeSetPlaying(on) {
   const btn = $("jukePlay");
   if (btn) {
-    btn.textContent = on ? "⏸" : "▶";
+    btn.innerHTML = on ? JUKE_IC.pause : JUKE_IC.play;
     btn.title = on ? "Pause" : "Play";
     btn.setAttribute("aria-label", on ? "Pause" : "Play");
   }
+  jukeUpdateMini();
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = on ? "playing" : "paused";
 }
 
@@ -2485,9 +2542,12 @@ window.addEventListener("pageshow", ensureStream);
 
 connectStream();
 loadShipList();
-// Resume jukebox playback from a prior session on first load (not just when the modal opens):
-// build the player skeleton, pull the track list, and restore the saved track/position/state.
-try { if (localStorage.getItem("jukeState")) initJukebox(); } catch (_) {}
+// Restore the jukebox across reloads: reopen the modal if it was open, and resume saved
+// playback on first load even if it wasn't (build skeleton, pull tracks, restore track/pos/state).
+try {
+  if (localStorage.getItem("jukeOpen") === "1") openJukebox();
+  else if (localStorage.getItem("jukeState")) initJukebox();
+} catch (_) {}
 
 // On a deliberate close, tell the tracker it may stop sooner (it still waits a short grace,
 // so a reload -- which also fires pagehide -- reconnects and cancels it). pagehide is the
