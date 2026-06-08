@@ -223,3 +223,23 @@ def test_presence_disconnect_floors_at_zero():
     p = tracker.Presence()
     p.stream_disconnect()  # spurious; must not go negative
     assert p.snapshot()[0] == 0
+
+
+# --- launcher-death flag (parent-model watcher / legacy SIGUSR1 both route here) -------- #
+
+def test_mark_launcher_dead_sets_flag_and_timestamp():
+    p = tracker.Presence()
+    _, _, dead, dead_at, _ = p.snapshot()
+    assert dead is False and dead_at is None
+    p.mark_launcher_dead()
+    _, _, dead, dead_at, _ = p.snapshot()
+    assert dead is True and dead_at is not None
+
+
+def test_mark_launcher_dead_is_first_writer_wins():
+    # the game-exit watcher and a stray SIGUSR1 could both fire; keep the first death time.
+    p = tracker.Presence()
+    p.mark_launcher_dead()
+    first = p.snapshot()[3]
+    p.mark_launcher_dead()
+    assert p.snapshot()[3] == first

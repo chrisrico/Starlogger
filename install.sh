@@ -4,10 +4,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/chrisrico/starlogger/main/install.sh | bash
 #
 # Idempotent: clones (or updates) the repo into the data dir, builds its venv, and
-# repoints your Star Citizen .desktop launcher at the clone's lib/sc-run.sh so the
-# tracker rides along with the game. Re-run it any time to update or to re-assert the
-# .desktop if the LUG Helper has reverted it. After the first run, sc-run.sh
-# self-updates on every launch -- this script is just the bootstrap.
+# repoints your Star Citizen .desktop launcher at the clone's lib/sc-run.sh -- which hands off
+# to the tracker, which then drives the game launch. Re-run it any time to update or to
+# re-assert the .desktop if the LUG Helper has reverted it. After the first run the tracker
+# self-updates on every launch (sc-run.sh is just the launch shim) -- this script is the bootstrap.
 #
 # Honored env: STARLOGGER_DATA_DIR (install location), WINEPREFIX (stale-copy cleanup).
 set -uo pipefail

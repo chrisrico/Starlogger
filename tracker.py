@@ -27,7 +27,7 @@ import time
 import urllib.request
 import webbrowser
 
-from starlogger import catalogs, contracts, scdata, settings
+from starlogger import catalogs, contracts, ignition, scdata, settings
 from starlogger.archive import (
     ARCHIVE_SCHEMA,
     archive_session,
@@ -72,15 +72,25 @@ def _close_timeout() -> float:
 class Presence:
     """Shared liveness state between the SSE endpoint (which connects/disconnects streams)
     and the shutdown watchdog. `streams` is the count of open dashboard connections;
-    `launcher_dead` is flagged by the SIGUSR1 handler when the launcher exits (Linux)."""
+    `launcher_dead` is flagged via mark_launcher_dead() when the launcher exits (Linux) --
+    by the game-exit watcher under the parent model, or the legacy SIGUSR1 handler."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.streams = 0
         self.last_empty: float | None = None   # monotonic when streams last hit 0
         self.launcher_dead = False
-        self.launcher_dead_at: float | None = None  # monotonic when SIGUSR1 arrived
+        self.launcher_dead_at: float | None = None  # monotonic when the launcher exit was seen
         self.closing = False                   # a tab beaconed a deliberate close
+
+    def mark_launcher_dead(self) -> None:
+        """Flag that the launcher has exited (Linux). Routed to by both the game-exit watcher
+        (parent model: ignition.launch_game) and the legacy SIGUSR1 handler. Doesn't shut
+        anything down -- the watchdog lets the dashboard linger for post-session review and
+        releases us once the last tab closes."""
+        if not self.launcher_dead:                  # first-writer wins; keep the original time
+            self.launcher_dead = True
+            self.launcher_dead_at = time.monotonic()
 
     def stream_connect(self) -> None:
         with self.lock:
@@ -610,9 +620,11 @@ def update_loop(stop: threading.Event, ustate: "UpdateState", state, trigger_res
 def _reexec() -> None:
     """Replace this process with a fresh tracker using the same args/env. The server is
     already stopped and the port released (main's finally), so the replacement binds
-    directly. POSIX: os.execv keeps the PID, so the setpriv --pdeathsig USR1 launcher
-    link survives (main re-arms the SIGUSR1 handler on start). Windows has neither, so
-    spawn-and-exit and let the existing port handoff take over."""
+    directly. POSIX: os.execv keeps the PID and inherits the environment, so launcher-death
+    detection survives the swap -- under --launch the game is still our child and the
+    replacement re-adopts it via $STARLOGGER_GAME_PID (see ignition.launch_game); a legacy
+    setpriv --pdeathsig USR1 link likewise survives (main re-arms the SIGUSR1 handler).
+    Windows has neither, so spawn-and-exit and let the existing port handoff take over."""
     sys.stdout.flush()
     sys.stderr.flush()
     # Preserve interpreter flags (-u, -O, ...) too: they live in orig_argv, not argv.
@@ -677,6 +689,9 @@ def main() -> None:
                     help="with --cleanup: report what would be removed without writing")
     ap.add_argument("--no-browser", action="store_true",
                     help="don't auto-open the dashboard in a browser on launch")
+    ap.add_argument("--launch", action="store_true",
+                    help="spawn the LUG sc-launch.sh as a child and tie its lifetime to ours "
+                         "(the dashboard drives the game; Linux only)")
     args = ap.parse_args()
 
     log_path = args.log or find_log()
@@ -705,6 +720,29 @@ def main() -> None:
         print(json.dumps(build_snapshot(state), indent=2))
         return
 
+    # Lifecycle: live while a dashboard is open OR (on Linux) the launcher runs. The SSE
+    # stream count is the dashboard-presence signal; launcher death (flagged via
+    # presence.mark_launcher_dead) doesn't kill us, so we linger for post-session review and
+    # the watchdog releases us once the last tab closes. Death is observed two ways, both
+    # routing to mark_launcher_dead:
+    #   - parent model (--launch): the game is OUR child; its exit fires the ignition watcher;
+    #   - legacy: SIGUSR1 from a run-tracker.sh started with setpriv --pdeathsig USR1.
+    presence = Presence()
+    has_launcher_detection = hasattr(signal, "SIGUSR1") and not IS_WINDOWS
+    if has_launcher_detection:
+        # Register before serving: the default SIGUSR1 disposition terminates the process.
+        def _on_launcher_death(signum, frame):  # main thread; keep trivial
+            presence.mark_launcher_dead()
+        signal.signal(signal.SIGUSR1, _on_launcher_death)
+
+    # Parent model: spawn the LUG launcher as our child (and refresh StarStrings) so its exit
+    # ties the tracker's lifetime to the game's -- no parent-death signal needed. Done BEFORE
+    # the port-takeover dance so the game always launches promptly (as the old shell launcher
+    # did): a wedged old instance must never prevent the game from starting, and the new game's
+    # `wineserver -k` helps the old session release :8765 sooner.
+    if args.launch and not IS_WINDOWS:
+        ignition.launch_game(log_path, on_exit=presence.mark_launcher_dead)
+
     # Only the live-serving path takes over + auto-opens; the one-shot/maintenance modes
     # above have already returned. A new launch REPLACES any instance already on the port:
     # ask it to quit, then wait for the port to free. This guarantees the latest code runs
@@ -723,19 +761,6 @@ def main() -> None:
     restart = threading.Event()   # set by an apply -> re-exec in the finally below
     ustate = UpdateState()        # 'new build available?' state shared with the dashboard banner
     mstate = MusicState()         # jukebox extraction progress, shared with the dashboard
-
-    # Lifecycle: live while a dashboard is open OR (on Linux) the launcher runs. The SSE
-    # stream count is the dashboard-presence signal; SIGUSR1 (sent by run-tracker.sh's
-    # setpriv --pdeathsig USR1) flags launcher death without killing us, so we linger for
-    # post-session review and the watchdog releases us once the last tab closes.
-    presence = Presence()
-    has_launcher_detection = hasattr(signal, "SIGUSR1") and not IS_WINDOWS
-    if has_launcher_detection:
-        # Register before serving: the default SIGUSR1 disposition terminates the process.
-        def _on_launcher_death(signum, frame):  # main thread; keep trivial
-            presence.launcher_dead = True
-            presence.launcher_dead_at = time.monotonic()
-        signal.signal(signal.SIGUSR1, _on_launcher_death)
 
     def on_epoch_change(prev: int, new: int) -> None:  # runs under state.lock -> stay cheap
         print(f"[epoch] server build {prev} -> {new}; scheduling cleanup")
