@@ -76,10 +76,13 @@ game. The LIVE `Game.log` is auto-detected (Windows:
 
 **Flags & env vars:**
 
-- `--port N` — serve on a different port
+- `--host ADDR` / `--port N` — bind address / port (default `127.0.0.1:8765`)
 - `--log PATH` / `STARLOGGER_LOG` — use a specific `Game.log` (non-default install)
 - `--no-browser` / `STARLOGGER_NO_BROWSER=1` — don't auto-open the browser
 - `--once` — parse once, print JSON, exit; `--rebuild` — backfill the archive from `logbackups/`
+- `--recover-stations` — backfill the `zoneHostId → name` map from your logs, then exit
+- `--cleanup` (with `--dry-run` to preview) — epoch-aware prune of stale
+  `station_names.json` / `overrides.json` rows, then exit
 - `STARLOGGER_DATA_DIR` — where generated `*.json` + the extractor binary live (default
   `$XDG_DATA_HOME/starlogger` ≈ `~/.local/share/starlogger`; `%LOCALAPPDATA%\starlogger` on Windows)
 
@@ -98,9 +101,13 @@ Ctrl-C stops it. `STARLOGGER_DATA_DIR` defaults to `%LOCALAPPDATA%\starlogger`.
 
 ## Dashboard
 
-Four tabs (deep-linked via the URL hash); **Cargo** and **Plan** each hold two
-views behind a segmented toggle:
+The tabs are **mode-aware** (and deep-linked via the URL hash). In **hauling**
+mode you get **Contracts**, **Cargo**, **Plan**, and **Archive**; when you're in a
+mining ship (or pin it with the **MODE** switch — Auto / Cargo / Mining — at the
+top), the cargo-hauling **Cargo** and **Plan** tabs make way for a **Mining** tab.
+**Cargo** and **Plan** each hold two views behind a segmented toggle:
 
+- **Contracts** — full mission table with per-row **Edit** / **Delete**.
 - **Cargo** — **Loading** (per pickup station: total SCU and the cargo to load,
   with each parcel's destination; legs grey out once picked up) ⇄ **Unloading**
   (per destination: total SCU and cargo to drop, with its origin). Opens on the
@@ -110,15 +117,20 @@ views behind a segmented toggle:
   ship's hold packed in delivery order (first-out on top), with a **load
   sequence** of elevators to bring up. Each bay is labelled (Rear, Mid, Nose,
   Module 1…) and a **▲ FWD** marker shows the bow.
-- **Contracts** — full mission table with per-row **Edit** / **Delete**.
+- **Mining** — **identify** a scanned rock by its Rock Signature (decomposing a
+  mixed cluster), a **mineral finder** (which rocks carry a given mineral), and a
+  **blueprint plan** (a crafting recipe's minerals mapped to where to mine them).
+  Built from the p4k mining data (see [Ship cargo data](#ship-cargo-data)).
 - **Archive** — pooled, cross-session logs: a **Contract Log** (with a high-level
   type filter), **Trade Loads** (manual buy/sell P&L plus your best trade routes),
   a **Travel Log** of quantum jumps, and a **Sessions** list with **replay** —
   pick a session and scrub the entire dashboard through its past states.
 
-The live tabs are always cargo-only; non-trade missions (couriers, combat) appear
-only in the Archive. The capacity gauge and grid follow the game-detected ship, or
-a ship you pick in the **SHIP** box at the top. The all-ships grid reference is at
+The header stats and capacity gauge are mode-aware too, and follow the
+game-detected ship — or one you pick in the **SHIP** box at the top. Non-trade
+missions (couriers, combat) appear only in the Archive. A **Jukebox** button in the
+header opens an overlay to play and curate the game soundtrack (decoded from your
+own `Data.p4k`, same as the ship/mining data). The all-ships grid reference is at
 **/grids.html**.
 
 ## Ship cargo data
@@ -158,9 +170,11 @@ run-tracker.sh    Linux: start the tracker for a play session (sc-launch hook)
 run-tracker.bat   Windows: start the tracker for a play session
 starlogger/       package:
                     config · patterns · model · state (log parser) · snapshot ·
-                    planner · overrides · stations · ships · scdata
-                    (Data.p4k extraction) · catalogs (p4k-cache refresh loop) ·
-                    archive · replay (session replay) ·
+                    planner · jsonstore · overrides · stations · tradeflags ·
+                    ships · scdata (Data.p4k extraction) · catalogs (p4k-cache
+                    refresh loop) · reference · contracts · mineables ·
+                    blueprints · music (p4k-derived catalogs) · archive · replay ·
+                    replay_edit (session replay + ephemeral edits) ·
                     maintenance · tailer · settings · server (Flask)
 web/              dashboard front-end:
                     index.html · styles.css · app.js · cargogrid.js (3-D grid
@@ -171,6 +185,7 @@ assets/           social-preview.png · icon.png (repo/brand images)
 
 Generated data lives in `STARLOGGER_DATA_DIR` (default `~/.local/share/starlogger`,
 or `$XDG_DATA_HOME/starlogger`; `%LOCALAPPDATA%\starlogger` on Windows): `overrides.json`,
-`sessions.json`, `settings.json`, `station_names.json`, the p4k-derived `ships.json`,
-`reference.json`, `mineables.json`, `blueprints.json`, `contracts.json`, and the
+`sessions.json`, `settings.json`, `station_names.json`, `trade_flags.json`,
+`music_curation.json`, the p4k-derived `ships.json`, `reference.json`, `mineables.json`,
+`blueprints.json`, `contracts.json`, `music.json` (+ the decoded `music/` oggs), and the
 extractor in `bin/`.
