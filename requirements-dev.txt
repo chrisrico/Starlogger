@@ -1,0 +1,9 @@
+# Dev/test-only dependencies (NOT needed to run the tracker itself).
+# Install into the project venv:  .venv/bin/pip install -r requirements-dev.txt
+#
+# Headless end-to-end tests use Playwright. playwright is pinned to the version whose
+# Chromium build is already cached in ~/.cache/ms-playwright, so `playwright install
+# chromium` is a no-op here rather than a fresh ~280 MB download.
+pytest
+playwright==1.60.0
+pytest-playwright

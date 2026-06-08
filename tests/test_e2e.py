@@ -1,0 +1,133 @@
+"""End-to-end tests that drive the real dashboard in headless Chromium (Playwright).
+
+These cover behaviors unit tests can't: localStorage persistence across reloads, the HTML5
+<audio> jukebox, modal open/close, the Settings "Advanced" collapse, and auto-play. They use
+the `live_server` fixture (a real Flask server over a throwaway temp data dir — see conftest.py)
+so they NEVER touch the live install or the source tree.
+
+Marked `browser`: run with `pytest -m browser`; skip with `pytest -m "not browser"`.
+Requires Chromium (`playwright install chromium`); skips gracefully if absent.
+
+Run: python -m pytest tests/test_e2e.py
+"""
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.browser
+
+
+@pytest.fixture(autouse=True)
+def _need_browser(require_browser):
+    """Skip every test here if Chromium isn't available."""
+
+
+@pytest.fixture(autouse=True)
+def _fast_timeouts(page):
+    """Fail fast (don't sit on Playwright's 30s default) so a broken selector surfaces quickly."""
+    page.set_default_timeout(7000)
+    page.set_default_navigation_timeout(15000)
+
+
+def _set_autoplay(on: bool) -> None:
+    from starlogger import settings
+    settings.update({"music_autoplay": on})        # writes the (temp) settings.json
+    settings._cache["mtime"] = None                # force a fresh read by the server thread
+
+
+# --- page boots cleanly --------------------------------------------------------------- #
+
+def test_page_loads_without_console_errors(page, live_server):
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(live_server)
+    page.wait_for_selector("#sidebar .sb-brand")
+    assert "STARLOGGER" in page.inner_text("#sidebar .sb-brand")
+    assert errors == [], errors
+
+
+# --- Settings: Advanced section + auto-play toggle ------------------------------------ #
+
+def test_settings_advanced_collapsed_by_default(page, live_server):
+    page.goto(live_server)
+    page.click("#navsettings")
+    page.wait_for_selector("#setAdvToggle")
+    # the four advanced rows are hidden until the section is expanded
+    assert page.locator("#set_update_remote").is_hidden()
+    assert page.locator("#set_update_branch").is_hidden()
+    assert page.locator("#set_idle_timeout").is_hidden()
+    # auto-play lives under General (always visible)
+    assert page.locator("#set_music_autoplay").is_visible()
+    # expanding reveals the advanced rows
+    page.click("#setAdvToggle")
+    assert page.locator("#set_update_remote").is_visible()
+
+
+def test_settings_autoplay_toggle_persists_cache(page, live_server):
+    page.goto(live_server)
+    page.click("#navsettings")
+    page.wait_for_selector("#set_music_autoplay")
+    page.check("#set_music_autoplay")
+    page.click("#settingsSave")
+    # saveSettings mirrors the choice into the jukebox boot cache
+    page.wait_for_function("() => localStorage.getItem('jukeAutoplay') === '1'")
+
+
+# --- Jukebox: numbering, total time, shuffle ------------------------------------------ #
+
+def test_jukebox_track_numbers_and_total(page, live_server):
+    page.goto(live_server)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukeList .juke-row")
+    assert page.locator("#jukeList .juke-num").all_inner_texts() == ["1", "2", "3"]
+    # 3 tracks × 2s = 0:06  (the cell is CSS text-transform:uppercase, so lowercase to compare)
+    total = page.inner_text("#jukeTotal").lower()
+    assert "3 tracks" in total and "0:06" in total
+
+
+def test_shuffle_state_persists_across_reload(page, live_server):
+    page.goto(live_server)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukeShuffle")
+    assert "on" not in (page.get_attribute("#jukeShuffle", "class") or "")
+    page.click("#jukeShuffle")
+    assert "on" in (page.get_attribute("#jukeShuffle", "class") or "")
+    page.reload()
+    # the jukebox re-opens itself on load (jukeOpen persisted), so the control is already present
+    page.wait_for_selector("#jukeShuffle")
+    assert "on" in (page.get_attribute("#jukeShuffle", "class") or "")   # restored from localStorage
+
+
+# --- playback: persistence + auto-play ------------------------------------------------ #
+
+_AUDIO_HAS_SRC = "() => { const a = document.getElementById('jukeAudio'); return !!(a && a.currentSrc); }"
+_AUDIO_PLAYING = "() => { const a = document.getElementById('jukeAudio'); return !!(a && a.currentSrc && !a.paused); }"
+
+
+def test_playback_restores_same_track_after_reload(page, live_server):
+    page.goto(live_server)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukeList .juke-row")
+    page.click("#jukeList .juke-row:first-child .juke-title")   # play the first track
+    page.wait_for_function(_AUDIO_HAS_SRC)
+    src = page.evaluate("document.getElementById('jukeAudio').currentSrc")
+    page.reload()
+    # boot sees the saved jukeState and rebuilds the player (no need to reopen the modal)
+    page.wait_for_function(_AUDIO_HAS_SRC)
+    assert page.evaluate("document.getElementById('jukeAudio').currentSrc") == src
+
+
+def test_autoplay_starts_music_when_enabled(page, live_server):
+    _set_autoplay(True)
+    page.goto(live_server)
+    page.click("#navjukebox")                                   # the click is a user gesture
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)         # a track auto-started
+
+
+def test_no_autoplay_when_disabled(page, live_server):
+    _set_autoplay(False)
+    page.goto(live_server)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukeList .juke-row")
+    # nothing auto-started: no track loaded into the player
+    assert page.evaluate("!document.getElementById('jukeAudio').currentSrc")

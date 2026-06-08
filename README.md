@@ -89,13 +89,28 @@ game. The LIVE `Game.log` is auto-detected (Windows:
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest    # Python: parser, state machine, snapshot, catalogs, …
-npm test                      # JS: cargo-grid packer (node --test; needs Node, no deps)
+.venv/bin/python -m pytest                  # Python + e2e (browser tests run if Chromium present)
+.venv/bin/python -m pytest -m "not browser" # skip the browser e2e tests
+npm test                                    # JS: cargo-grid packer (node --test; needs Node, no deps)
 ```
 
-Both are dependency-light — pytest needs only the venv, and the JS suite uses Node's
+The core suites are dependency-light — pytest needs only the venv, and the JS suite uses Node's
 built-in test runner (no `node_modules`). The packer's invariants (orientations, no-float
 support, container caps, hold classification) live in `tests/cargogrid.test.js`.
+
+**Headless-browser (e2e) tests** (`tests/test_e2e.py`, marked `browser`) drive the real dashboard
+in Chromium via Playwright — covering jukebox playback/persistence, the Settings *Advanced*
+collapse, and auto-play. They need the dev extras:
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt   # pytest-playwright + playwright
+.venv/bin/python -m playwright install chromium  # one-time browser download
+.venv/bin/python -m pytest -m browser            # run just the e2e tests
+```
+
+They are fully isolated — a throwaway temp data dir (`STARLOGGER_DATA_DIR`), a real server on an
+ephemeral port, and a generated silent ogg — so they never touch your install or the source tree,
+and they `skip` gracefully when Chromium isn't installed.
 
 ## Run it with the game
 
