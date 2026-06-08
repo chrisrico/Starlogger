@@ -6,7 +6,7 @@ import {
   initMining, miningSub, miningIdentify, miningFind, miningIndex,
   identifyAgain, identifyPredict, identifyKey, bpOpen, bpFilter, bpPick, bpKey,
 } from "./mining.js";
-import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState } from "./jukebox.js";
+import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState, claimJukeboxPrimary } from "./jukebox.js";
 import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
 // Shared hot state (TAB / LAST / ROUTE_ORDER / REPLAY_*) + the snapshot accessor live on the
 // `S` object so the archive/stream/editor modules all mutate the same state. See state.js.
@@ -71,7 +71,9 @@ if (_collapseBtn) _collapseBtn.onclick = () => setCollapsed(!$("sidebar").classL
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
 
 // ---- jukebox overlay (sidebar Jukebox button -> modal, same pattern as Settings) ----
-$("navjukebox") && ($("navjukebox").onclick = openJukebox);
+// Hidden until this tab wins the primary-jukebox lock (see the boot-restore below); only
+// the owning tab shows the button / builds a player, so two tabs can't both play music.
+$("navjukebox") && ($("navjukebox").style.display = "none", $("navjukebox").onclick = openJukebox);
 $("jukeboxClose") && ($("jukeboxClose").onclick = closeJukebox);
 $("jukeboxOverlay") && ($("jukeboxOverlay").onclick = (e) => { if (e.target.id === "jukeboxOverlay") closeJukebox(); });
 document.addEventListener("keydown", (e) => {
@@ -1178,10 +1180,15 @@ connectStream();
 loadShipList();
 // Restore the jukebox across reloads: reopen the modal if it was open, and resume saved
 // playback on first load even if it wasn't (build skeleton, pull tracks, restore track/pos/state).
-try {
-  if (localStorage.getItem("jukeOpen") === "1") openJukebox();
-  else if (localStorage.getItem("jukeState") || localStorage.getItem("jukeAutoplay") === "1") initJukebox();
-} catch (_) {}
+// ...but only in the tab that owns the jukebox -- claimJukeboxPrimary fires this once we
+// hold the lock (immediately for the first tab; on the primary closing for a waiter).
+claimJukeboxPrimary(() => {
+  const b = $("navjukebox"); if (b) b.style.display = "";   // reveal: this tab owns playback
+  try {
+    if (localStorage.getItem("jukeOpen") === "1") openJukebox();
+    else if (localStorage.getItem("jukeState") || localStorage.getItem("jukeAutoplay") === "1") initJukebox();
+  } catch (_) {}
+});
 
 // On a deliberate close, tell the tracker it may stop sooner (it still waits a short grace,
 // so a reload -- which also fires pagehide -- reconnects and cancels it). pagehide is the

@@ -149,6 +149,21 @@ export function initJukebox() {
   jukeLoad();
 }
 
+// Run onPrimary() only when this tab owns the jukebox. Exactly one tab holds the
+// "starlogger-juke-primary" lock at a time; we hold it for the tab's lifetime (a
+// never-resolving promise) so it auto-releases on close and the next open tab becomes
+// primary -- so playback can survive the primary tab closing. Without this, every tab
+// builds its own player and auto-resumes, so multiple tabs play music at once. Degrades
+// to sole-owner if Web Locks is unavailable (or errors), so music is never locked out.
+export function claimJukeboxPrimary(onPrimary) {
+  const locks = navigator.locks;
+  if (!locks || !locks.request) { onPrimary(); return; }
+  locks.request("starlogger-juke-primary", () => {
+    onPrimary();
+    return new Promise(() => {});            // hold the lock until this tab goes away
+  }).catch(() => onPrimary());
+}
+
 export function openJukebox() {
   initJukebox();                       // lazy-build + refresh the track list
   const ov = $("jukeboxOverlay");
