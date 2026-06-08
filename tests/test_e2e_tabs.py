@@ -111,6 +111,19 @@ def test_each_tab_renders_without_errors(page, populated_server):
     assert errors == [], errors
 
 
+def test_mining_tab_renders_in_mining_mode(page, populated_server):
+    """The Mining tab is hidden in cargo mode, so force mining via setMode (a bridged
+    handler) — effectiveMining() honours the override without needing a mining ship — then
+    confirm the tab and its tools shell render with no errors."""
+    errors = _boot(page, populated_server)
+    page.evaluate("window.setMode('mining')")
+    page.wait_for_selector('#nav button[data-tab="mining"]:not(.hide)')
+    page.click('#nav button[data-tab="mining"]')
+    page.wait_for_function("() => document.querySelector('#mining:not(.hide)') "
+                           "&& document.querySelector('#mining').children.length > 0")
+    assert errors == [], errors
+
+
 def test_contracts_editor_opens_via_inline_handler(page, populated_server):
     """Drives editMission (a bridged inline handler) and confirms the editor renders."""
     errors = _boot(page, populated_server)
