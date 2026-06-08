@@ -4,7 +4,7 @@
 // recommendations, and drives the whole dashboard through a reconstructed past snapshot while
 // replaying. Shares the hot state (S.LAST / S.REPLAY_* / S.ROUTE_ORDER) via state.js, calls
 // the core render dispatch (renderAll / replayEdit), and pulls live data via stream's refresh.
-import { $, esc, num, setHTML, logTable, th, tag, tabBar } from "./dom.js";
+import { $, esc, num, setHTML, logTable, footLbl, footNum, th, tag, tabBar } from "./dom.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 import { S, REPLAY_UNAVAILABLE, curData } from "./state.js";
 import { renderAll, replayEdit } from "./app.js";
@@ -46,12 +46,10 @@ function setRouteSort(key) {
   _archRepaint();
 }
 // One Archive section as a tab descriptor; sessionsView() renders the tab bar and the
-// selected section's body (only the active body is built into the DOM).
-function logSection(key, title, foot, body) {
-  // `foot` is the subtle summary line shown BELOW the active panel (totals / QT time),
-  // not in the tab bar. "" => no footer (e.g. a tab whose only stat is its count, which
-  // already shows in the tab label).
-  return { key, title, foot: foot || "", body };
+// selected section's body (only the active body is built into the DOM). Per-tab totals now
+// ride in each table's own <tfoot> column-totals row, so the section carries no summary.
+function logSection(key, title, body) {
+  return { key, title, body };
 }
 
 // Close the Contract Log's Type-filter dropdown on any click outside it (the toggle
@@ -98,13 +96,9 @@ function sessionsView(sessions) {
   if (!secs.some(s => s.key === ARCH_OPEN)) ARCH_OPEN = secs[0].key;
   const active = secs.find(s => s.key === ARCH_OPEN) || secs[0];
   const tabs = tabBar(secs.map(s => [s.key, s.title]), ARCH_OPEN, "toggleArch");
-  // The per-tab summary stat rides BELOW the panel as a muted footer, not in the tab bar.
-  // Tabs whose only stat is a count (Sessions) render no footer -- the count is in the label.
-  const foot = active.foot ? `<div class="arch-foot">${active.foot}</div>` : "";
   return `<div class="arch-acc">
     ${tabs}
     <div class="card logcard arch-panel">${active.body}</div>
-    ${foot}
   </div>`;
 }
 
@@ -141,13 +135,14 @@ function travelLogView(sessions) {
     for (const t of s.travels || []) add(t);
   for (const t of (S.LAST && S.LAST.travels) || []) add(t);  // live session
   rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
-  let totalSecs = 0;
+  let totalSecs = 0, totalFuel = 0;
   const body = rows.map(t => {
     const status = t.arrived
       ? `<span class="lt-tag good" title="arrived ${esc(t.arrived)}">✔ arrived</span>`
       : `<span class="lt-tag" title="no arrival logged">⋯ in transit</span>`;
     const dur = fmtTravelTime(t.ts, t.arrived);
     if (t.arrived) totalSecs += Math.max(0, (new Date(t.arrived) - new Date(t.ts)) / 1000);
+    totalFuel += t.fuel || 0;
     const sys = t.system
       ? `<span class="qt-sys s-${t.system.replace(/\s+/g, "").toLowerCase()}">${esc(t.system)}</span>` : "";
     return `<tr>
@@ -159,12 +154,18 @@ function travelLogView(sessions) {
       <td class="lt-num" title="QT fuel estimate">${fuelShort(t.fuel)}</td>
       <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
   }).join("");
-  // Only the QT-time total goes to the footer; the jump count already shows in the tab label.
-  const tot = totalSecs ? `${fmtElapsed(totalSecs)} in QT` : "";
+  // Column totals: total time spent in QT (Time col) and total estimated QT fuel burned.
+  const foot = rows.length
+    ? footLbl(`${rows.length} jump${rows.length === 1 ? "" : "s"}`, 3)
+      + footNum(totalSecs ? fmtElapsed(totalSecs) : "—", "", "total time in quantum travel")
+      + "<td></td>"
+      + footNum(fuelShort(totalFuel), "", "total estimated QT fuel")
+      + "<td></td>"
+    : "";
   const inner = logTable(
     `<th>Departed</th><th>Status</th><th>Route</th><th class="lt-num">Time</th><th>System</th><th class="lt-num">QT fuel</th><th>Ship</th>`,
-    body, "No quantum travel in range.");
-  return logSection("travel", `Travel Log · ${rows.length}`, tot, inner);
+    body, "No quantum travel in range.", foot);
+  return logSection("travel", `Travel Log · ${rows.length}`, inner);
 }
 
 // High-level contract kind, mirroring backend patterns.classify_contract for archived
@@ -260,13 +261,17 @@ function contractLogView(sessions) {
       TYPE_MENU_OPEN ? `<span class="th-menu">
         <span class="th-menu-act"><button onclick="setAllTypeFilters(true)">All</button><button onclick="setAllTypeFilters(false)">None</button></span>
         ${opts}</span>` : ""}</span>`;
+  const typeNote = hidden ? ` · ${CT_PRESENT.length - hidden}/${CT_PRESENT.length} types` : "";
+  // Column total: total reward across the shown contracts (Reward col).
+  const foot = rows.length
+    ? footLbl(`${rows.length} contract${rows.length === 1 ? "" : "s"}${typeNote}`, 4)
+      + footNum(num(total), "", "total reward")
+    : "";
   const inner = all.length
     ? logTable(`<th>When</th><th>Status</th><th class="th-type">${menu}</th><th>Contract</th>${th("Reward", 1)}`,
-               body, "")
+               body, "", foot)
     : `<div class="empty">No contracts in range.</div>`;
-  const typeNote = hidden ? ` · ${CT_PRESENT.length - hidden}/${CT_PRESENT.length} types` : "";
-  return logSection("contracts", `Contract Log · ${rows.length}`,
-                    `${num(total)} aUEC${typeNote}`, inner);
+  return logSection("contracts", `Contract Log · ${rows.length}`, inner);
 }
 
 // Group manual trades into "loads": a buy paired (FIFO, per commodity) with the
@@ -318,7 +323,7 @@ function tradeLogView(sessions) {
   const loads = buildLoads(trades).sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
   const LOST = new Set((S.LAST && S.LAST.lost_trades) || []);
   const routesBlock = tradeRoutesBlock(loads, LOST);
-  let totalProfit = 0;
+  let totalProfit = 0, totSold = 0, totCost = 0, totRev = 0;
   const body = loads.map(L => {
     const sold = L.soldScu, lost = L.id && LOST.has(L.id);
     // a lost load writes off the unsold remainder: realise the FULL buy cost.
@@ -326,6 +331,7 @@ function tradeLogView(sessions) {
     const profit = Math.round(L.revenue - realisedCost);
     const priced = sold > 0 || lost;   // lost loads realise even with no sells
     if (priced) totalProfit += profit;
+    totSold += sold; totCost += L.cost || 0; totRev += L.revenue || 0;
     const route = [L.buyPlace, (L.sellPlaces || []).join(" / ")].filter(Boolean).join(" → ") || "—";
     let tag, scu;
     if (lost) { tag = `<span class="lt-tag lost">lost</span>`; scu = `${num(sold)}/${num(L.buyScu)}`; }
@@ -348,14 +354,19 @@ function tradeLogView(sessions) {
       <td class="lt-num ${L.revenue ? "pos" : ""}">${L.revenue ? "+" + num(Math.round(L.revenue)) : "—"}</td>
       <td class="lt-num ${!priced ? "" : profit >= 0 ? "pos" : "neg"}">${priced ? (profit >= 0 ? "+" : "−") + num(Math.abs(profit)) : "—"}</td></tr>`;
   }).join("");
+  // Column totals: SCU moved, total buy cost, total revenue, realised profit.
+  const loadsFoot = footLbl(`${loads.length} load${loads.length === 1 ? "" : "s"}`, 4)
+    + footNum(totSold ? num(Math.round(totSold)) : "—", "", "total SCU sold")
+    + footNum(totCost ? "−" + num(Math.round(totCost)) : "—", totCost ? "neg" : "")
+    + footNum(totRev ? "+" + num(Math.round(totRev)) : "—", totRev ? "pos" : "")
+    + footNum((totalProfit >= 0 ? "+" : "−") + num(Math.abs(totalProfit)), totalProfit >= 0 ? "pos" : "neg", "realised profit");
   const loadsTable = loads.length ? `<table class="logtable">
       <thead><tr><th>When</th><th>Commodity</th><th>Status</th><th>Route</th>${th("SCU", 1)}${th("Cost", 1)}${th("Revenue", 1)}${th("Profit", 1)}</tr></thead>
-      <tbody>${body}</tbody></table>` : `<div class="empty">No manual trades in range.</div>`;
+      <tbody>${body}</tbody><tfoot><tr>${loadsFoot}</tr></tfoot></table>` : `<div class="empty">No manual trades in range.</div>`;
   // both tables share one scroll region (the recs/rank bar scroll with them)
   const inner = `<div class="logwrap">${routesBlock}`
     + `<div class="arch-sub">Loads · ${loads.length}</div>${loadsTable}</div>`;
-  return logSection("trades", `Trade Loads · ${loads.length}`,
-                    `<span class="${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span>`, inner);
+  return logSection("trades", `Trade Loads · ${loads.length}`, inner);
 }
 
 // Aggregate completed/partly-sold loads into trade ROUTES keyed by
@@ -426,10 +437,21 @@ function tradeRoutesBlock(loads, lostSet) {
       <td class="lt-num ${r.profit >= 0 ? "pos" : "neg"}">${signed(r.profit)}</td>
       <td class="lt-num ${r.pct >= 0 ? "pos" : "neg"}">${pctFmt(r.pct)}</td>
       <td class="lt-num ${r.perScu >= 0 ? "pos" : "neg"}">${signed(r.perScu)}</td></tr>`).join("");
+  // Column totals: trips, SCU, profit summed; %/per-SCU as the overall (cost/SCU-weighted) blend.
+  const tot = routes.reduce((a, r) => ({
+    trips: a.trips + r.trips, scu: a.scu + r.scu, cost: a.cost + r.cost, profit: a.profit + r.profit,
+  }), { trips: 0, scu: 0, cost: 0, profit: 0 });
+  const oPct = tot.cost ? tot.profit / tot.cost : 0, oPer = tot.scu ? tot.profit / tot.scu : 0;
+  const foot = footLbl(`${routes.length} route${routes.length === 1 ? "" : "s"}`, 2)
+    + footNum(tot.trips, "", "total trips")
+    + footNum(num(Math.round(tot.scu)), "", "total SCU delivered")
+    + footNum(signed(tot.profit), tot.profit >= 0 ? "pos" : "neg", "total profit")
+    + footNum(pctFmt(oPct), oPct >= 0 ? "pos" : "neg", "overall % return")
+    + footNum(signed(oPer), oPer >= 0 ? "pos" : "neg", "overall aUEC / SCU");
   return `<div class="arch-sub">Top routes · ${routes.length}</div>` + recs + bar
-    + `<table class="logtable">
+    + `<table class="logtable rt-table">
       <thead><tr><th>Commodity</th><th>Route</th>${th("Trips", 1)}${th("SCU", 1)}${th("Profit", 1)}${th("%", 1)}${th("/SCU", 1)}</tr></thead>
-      <tbody>${body}</tbody></table>`;
+      <tbody>${body}</tbody><tfoot><tr>${foot}</tr></tfoot></table>`;
 }
 
 async function loadSessions() {
@@ -459,11 +481,13 @@ async function markTradeLost(id, lost) {
 // drives the WHOLE dashboard into its reconstructed past state (see enterReplay).
 function sessionListView(sessions) {
   const list = [...(sessions || [])].sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
+  let totEarned = 0, totDone = 0, totContracts = 0, totTrades = 0;
   const body = list.map(s => {
     const dur = fmtDuration(s.started_at, s.ended_at);
     const c = s.counts || {};
     const ships = (s.ships || []).join(", ");
     const trades = (s.trades || []).length;
+    totEarned += s.earned || 0; totDone += c.completed || 0; totContracts += c.total || 0; totTrades += trades;
     const replaying = S.REPLAY_MODE && S.REPLAY_KEY === s.key;
     const act = replaying
       ? `<button class="lt-act on" onclick="exitReplay()" title="Stop replaying this session">■ exit replay</button>`
@@ -479,10 +503,18 @@ function sessionListView(sessions) {
       <td class="lt-num">${trades || "—"}</td>
       <td class="lt-replay">${act}</td></tr>`;
   }).join("");
+  // Column totals: aUEC earned, contracts completed/total, trades — across every session.
+  const foot = list.length
+    ? footLbl(`${list.length} session${list.length === 1 ? "" : "s"}`, 3)
+      + footNum(totEarned ? num(totEarned) : "—", "", "total aUEC earned")
+      + footNum(`${totDone}/${totContracts}`, "", "contracts completed / total")
+      + footNum(totTrades || "—", "", "total trades")
+      + "<td></td>"
+    : "";
   const inner = logTable(
     `<th>Session</th><th>Player</th><th>Ship(s)</th>${th("Earned", 1)}${th("Done", 1)}${th("Trades", 1)}<th>Replay</th>`,
-    body, "No archived sessions yet.");
-  return logSection("sessions", `Sessions · ${list.length}`, "", inner);
+    body, "No archived sessions yet.", foot);
+  return logSection("sessions", `Sessions · ${list.length}`, inner);
 }
 
 // ---- replay controls ---- //

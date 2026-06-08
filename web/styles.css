@@ -533,13 +533,6 @@ tr:hover .lt-replay .lt-act{opacity:1}
   padding:9px 16px;cursor:pointer;white-space:nowrap;transition:color .14s}
 .arch-tab:hover{color:var(--ink-2)}
 .arch-tab.active{color:var(--cyan);border-bottom-color:var(--cyan)}
-/* Per-tab summary stat (totals / QT time) as a muted footer below the active panel, not in
-   the tab bar. Deliberately subtle (--ink-2, not the bright cyan it used to be); the count
-   itself lives in the tab label, so pure-count tabs render no footer at all. */
-.arch-foot{flex:0 0 auto;text-align:right;font-family:var(--mono);font-size:11px;
-  color:var(--ink-2);padding:2px 6px 0 12px}
-.arch-foot .pos{color:var(--green)}
-.arch-foot .neg{color:var(--red)}
 /* mobile: scroll the Archive sub-tab bar sideways instead of wrapping (placed after the
    base .arch-tabs rule above so this override wins on source order). */
 @media (max-width:680px){
@@ -567,6 +560,22 @@ tr:hover .lt-replay .lt-act{opacity:1}
 .logtable thead th.lt-num{text-align:right}
 .logtable td{padding:6px 12px;border-bottom:1px solid rgba(var(--line-rgb),.06);vertical-align:top}
 .logtable tbody tr:hover{background:rgba(var(--line-rgb),.04)}
+/* Column-totals row: pinned to the bottom of the scrolling panel so the totals stay in view
+   while the rows scroll, with a hairline cap above. Numbers are mono and a touch brighter
+   than the body; the leading label cell is the quiet uppercase tab language.
+   NB: in a border-collapse table, a position:sticky <td> repaints unreliably over scrolling
+   rows (rows bleed through). Sit it ABOVE the rows (z-index) and draw the cap as a box-shadow
+   — which, unlike a border, isn't shared/collapsed — so the cell paints fully opaque. */
+.logtable tfoot td{position:sticky;bottom:0;background:var(--panel);z-index:2;border:0;
+  box-shadow:inset 0 1px 0 var(--line-2);padding:7px 12px}
+.logtable tfoot .lt-foot-lbl{font-family:var(--display);text-transform:uppercase;
+  letter-spacing:.1em;font-size:9.5px;color:var(--ink-3)}
+.logtable tfoot .lt-foot-num{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-1)}
+.logtable tfoot .lt-foot-num.pos{color:var(--green)}
+.logtable tfoot .lt-foot-num.neg{color:var(--red)}
+/* The Trade Loads tab stacks two tables in one scroll region; only the lower (loads) totals
+   pin — the Top-routes totals flow inline so the two don't fight over the bottom edge. */
+.rt-table tfoot td{position:static}
 .lt-when{font-family:var(--mono);color:var(--ink-3);font-size:11px;white-space:nowrap}
 .lt-title{color:var(--ink)}
 .lt-num{font-family:var(--mono);text-align:right;white-space:nowrap}

@@ -29,12 +29,21 @@ export function setHTML(id, html) {
 // ---- small render helpers (DRY the repeated table/log markup) ---- //
 // A scrolling log table, or an empty-state note when there are no body rows.
 // `headRow` is the inner HTML of the <thead> row (the <th> cells); `bodyRows` the
-// concatenated <tr>s ("" / falsy → the empty note). Callers keep full control of cells.
-export function logTable(headRow, bodyRows, emptyMsg) {
-  return bodyRows
-    ? `<div class="logwrap"><table class="logtable"><thead><tr>${headRow}</tr></thead><tbody>${bodyRows}</tbody></table></div>`
-    : `<div class="empty">${emptyMsg}</div>`;
+// concatenated <tr>s ("" / falsy → the empty note). `footRow` (optional) is the inner
+// HTML of a sticky <tfoot> column-totals row (falsy → no foot). Callers keep full control.
+export function logTable(headRow, bodyRows, emptyMsg, footRow) {
+  if (!bodyRows) return `<div class="empty">${emptyMsg}</div>`;
+  const foot = footRow ? `<tfoot><tr>${footRow}</tr></tfoot>` : "";
+  return `<div class="logwrap"><table class="logtable"><thead><tr>${headRow}</tr></thead>`
+    + `<tbody>${bodyRows}</tbody>${foot}</table></div>`;
 }
+// A column-totals row, for a table <tfoot>. `footLbl` is a left summary label spanning the
+// leading columns; `footNum` a right-aligned numeric total under a numeric column (cls adds
+// pos/neg tint). Kept here so every log view builds its totals row the same way.
+export const footLbl = (html, span) =>
+  `<td class="lt-foot-lbl"${span > 1 ? ` colspan="${span}"` : ""}>${html}</td>`;
+export const footNum = (html, cls, tip) =>
+  `<td class="lt-num lt-foot-num${cls ? " " + cls : ""}"${tip ? ` title="${esc(tip)}"` : ""}>${html}</td>`;
 // A header cell; `num` right-aligns it to match a numeric column's values. `tip`
 // (optional) adds a hover tooltip explaining the column.
 export const th = (label, num, tip) =>
