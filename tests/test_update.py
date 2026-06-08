@@ -206,3 +206,20 @@ def test_check_due_disabled_never_checks():
     assert tracker._check_due(None, 1e9, 0) is False
     assert tracker._check_due(1000.0, 1e9, 0) is False
     assert tracker._check_due(1000.0, 1e9, -5) is False
+
+
+# --- _update_remote: ~ expansion for a filesystem-path update source -------- #
+
+def test_update_remote_expands_tilde(monkeypatch):
+    # A path remote with a leading ~ must be expanded (subprocess has no shell to do it).
+    monkeypatch.setattr(tracker.settings, "resolve_str",
+                        lambda key: "~/Code/starlogger" if key == "update_remote" else "main")
+    assert tracker._update_remote() == os.path.expanduser("~/Code/starlogger")
+    assert not tracker._update_remote().startswith("~")
+
+
+def test_update_remote_passes_remote_name_through(monkeypatch):
+    # The default is a bare remote NAME ("origin") -- no ~, must be left exactly as-is.
+    monkeypatch.setattr(tracker.settings, "resolve_str",
+                        lambda key: "origin" if key == "update_remote" else "main")
+    assert tracker._update_remote() == "origin"

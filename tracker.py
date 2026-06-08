@@ -442,6 +442,14 @@ def _git(repo: str, *args: str, check: bool = True) -> str | None:
     return out.stdout
 
 
+def _update_remote() -> str:
+    """The configured update source with a leading ``~`` expanded, so a filesystem-path remote
+    (a local mirror, or a dev checkout like ``~/Code/starlogger``) resolves the way the shell
+    would -- subprocess hands the string to git verbatim, with no shell to expand it. A bare
+    remote NAME such as the default ``origin`` has no ``~`` and passes through unchanged."""
+    return os.path.expanduser(settings.resolve_str("update_remote"))
+
+
 def _repo_ready() -> str | None:
     """BASE_DIR if updates may run there: a git clone with a CLEAN tree that is NOT its own
     update source.
@@ -462,7 +470,7 @@ def _repo_ready() -> str | None:
         return None
     if (_git(repo, "status", "--porcelain", "--untracked-files=no", check=False) or "").strip():
         return None       # tracked changes a reset would clobber; untracked files are safe
-    src = os.path.expanduser(settings.resolve_str("update_remote"))
+    src = _update_remote()
     if os.path.isdir(src) and os.path.realpath(src) == os.path.realpath(repo):
         return None                       # update source IS this checkout -> never git-op it
     return repo
@@ -527,7 +535,7 @@ def _apply(ustate: "UpdateState", trigger_restart) -> bool:
         repo = _repo_ready()
         if not repo:
             return False
-        remote = settings.resolve_str("update_remote")
+        remote = _update_remote()
         branch = settings.resolve_str("update_branch")
         target = _fetch_target(repo, remote, branch)
         if not target or _upstream_current(repo, *target):
@@ -560,7 +568,7 @@ def _check_update(ustate: "UpdateState", state, trigger_restart) -> None:
     repo = _repo_ready()
     if not repo:
         return
-    remote = settings.resolve_str("update_remote")
+    remote = _update_remote()
     branch = settings.resolve_str("update_branch")
     target = _fetch_target(repo, remote, branch)
     if not target:
@@ -583,7 +591,7 @@ def _manual_check(ustate: "UpdateState", state, trigger_restart) -> dict:
     repo = _repo_ready()
     if not repo:
         return {"ok": False, "status": "blocked"}    # dirty tree / not a clone
-    remote = settings.resolve_str("update_remote")
+    remote = _update_remote()
     branch = settings.resolve_str("update_branch")
     target = _fetch_target(repo, remote, branch)
     if not target:
