@@ -12,7 +12,7 @@ from functools import lru_cache
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
 from .archive import filter_sessions, load_sessions
-from .config import MISSION_ICONS_DIR, OVERRIDES_PATH, WEB_DIR
+from .config import MISSION_ICONS_DIR, MUSIC_DIR, OVERRIDES_PATH, WEB_DIR
 from .jsonstore import atomic_write, read_json
 from .overrides import set_leg_field, set_leg_states
 from .replay import build_timeline, snapshot_with_overlay, state_at
@@ -22,6 +22,7 @@ from .settings import resolve_str as settings_str
 from .settings import update as update_settings
 from .blueprints import blueprint_catalog, lookup_blueprint
 from .contracts import load_contracts
+from .music import load_music
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .ships import load_ship_cargo
@@ -60,7 +61,7 @@ def _assets_version() -> str:
 
 
 def create_app(state: State, log_path: str | None = None, presence=None,
-               update_state=None) -> Flask:
+               update_state=None, music_state=None) -> Flask:
     # static_url_path="" serves web/ assets at the root (/styles.css, /app.js).
     # log_path (when known) backs the Archive's session-replay feature, which
     # reconstructs a past session's dashboard by re-feeding its source log.
@@ -84,6 +85,8 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         snap = build_snapshot(state, trade_only=trade_only)
         if update_state is not None:
             snap["update"] = update_state.as_dict()
+        if music_state is not None:
+            snap["music"] = music_state.as_dict()
         return snap
 
     @app.get("/")
@@ -96,6 +99,14 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         # gitignored data dir (absent until contracts are built -> 404, frontend falls
         # back to a glyph). send_from_directory confines `name` to the icons dir.
         return send_from_directory(MISSION_ICONS_DIR, name)
+
+    @app.get("/music/<path:name>")
+    def music_file(name):
+        # A decoded music track (Ogg Vorbis), extracted from the p4k into the gitignored
+        # data dir on demand (absent until the jukebox's Extract is run -> 404).
+        # send_from_directory confines `name` to the music dir. conditional=True so the
+        # <audio> element gets Range support (seek/scrub) for free.
+        return send_from_directory(MUSIC_DIR, name, conditional=True)
 
     @app.get("/api/state")
     def api_state():
@@ -324,6 +335,22 @@ def create_app(state: State, log_path: str | None = None, presence=None,
             return jsonify(fn())
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "status": "error", "error": str(e)}), 500
+
+    @app.get("/api/music")
+    def api_music():
+        # The jukebox track manifest ({tracks, count, ...}); empty until extracted.
+        return jsonify(load_music())
+
+    @app.post("/api/music/extract")
+    def api_music_extract():
+        # User clicked "Extract music" in the jukebox: decode the soundtrack off the request
+        # thread (it's ~2.6 GB / minutes), reporting progress via the SSE snapshot's "music"
+        # field. 503 if extraction wasn't wired (e.g. --once host / no p4k path known).
+        fn = app.config.get("ON_EXTRACT_MUSIC")
+        if fn is None:
+            return jsonify({"ok": False, "error": "music extraction unavailable"}), 503
+        fn()
+        return _ok()
 
     @app.post("/api/update/dismiss")
     def api_update_dismiss():

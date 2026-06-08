@@ -39,3 +39,7 @@ mineables.json
 blueprints.json
 contracts.json
 mission_icons/
+# the jukebox's decoded soundtrack: music.json carries the source marker (the pre-commit
+# hook also catches it), but the music/ oggs are non-JSON so THIS entry is their only guard.
+music.json
+music/

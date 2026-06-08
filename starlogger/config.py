@@ -50,6 +50,11 @@ CONTRACTS_PATH = os.path.join(DATA_DIR, "contracts.json")
 # p4k alongside contracts.json and served at /mission-icons/<slug>.svg. p4k-derived =>
 # gitignored, never committed (same rule as the .json caches).
 MISSION_ICONS_DIR = os.path.join(DATA_DIR, "mission_icons")
+# Decoded game music (one Ogg Vorbis per Wwise WEM id), extracted on demand from the p4k
+# for the jukebox tab and served at /music/<id>.ogg, with a manifest in music.json. Heavy
+# (~2.6 GB) and p4k-derived => gitignored, never committed (same rule as the .json caches).
+MUSIC_DIR = os.path.join(DATA_DIR, "music")
+MUSIC_PATH = os.path.join(DATA_DIR, "music.json")
 TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")

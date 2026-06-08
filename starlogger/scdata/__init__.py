@@ -12,6 +12,7 @@ from ._contracts import (
     build_contract_taxonomy, build_contract_generators, build_cargo_manifests,
     build_contracts_from_p4k,
 )
+from ._music import build_music_from_p4k
 
 __all__ = [
     "SB_VERSION", "find_p4k", "build_ships",
@@ -20,4 +21,5 @@ __all__ = [
     "build_blueprints", "build_blueprints_from_p4k",
     "build_contract_taxonomy", "build_contract_generators", "build_cargo_manifests",
     "build_contracts_from_p4k",
+    "build_music_from_p4k",
 ]

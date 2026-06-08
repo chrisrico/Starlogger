@@ -102,7 +102,7 @@ const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(te
 let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "pickup" · "dropoff"
 
 // ---- tabs (with URL-hash deep-linking) ---- //
-const TABS = ["cargo", "plan", "contracts", "archive", "mining"];
+const TABS = ["cargo", "plan", "contracts", "archive", "mining", "jukebox"];
 function activateTab(name) {
   if (!TABS.includes(name)) return;
   TAB = name;
@@ -113,6 +113,7 @@ function activateTab(name) {
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
   if (name === "archive") { ARCH_PICK = true; loadSessions(); }
   if (name === "mining") initMining();
+  if (name === "jukebox") initJukebox();
 }
 
 // ---- sidebar: wide (icon + label) ⇄ skinny (icons only) ----
@@ -285,8 +286,8 @@ function modeSwitchHtml(d) {
 // sense, so the Cargo and Plan tabs are hidden and the Mining tab takes their slot right
 // after Contracts. Driven from renderAll on every snapshot; idempotent via MINING_LAYOUT so
 // it only touches the DOM on an actual mode change.
-const HAUL_TABS = ["contracts", "cargo", "plan", "archive"];
-const MINE_TABS = ["contracts", "mining", "archive"];
+const HAUL_TABS = ["contracts", "cargo", "plan", "archive", "jukebox"];
+const MINE_TABS = ["contracts", "mining", "archive", "jukebox"];
 let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
 function applyTabLayout(mining) {
   if (MINING_LAYOUT === mining) return;
@@ -1997,10 +1998,170 @@ function notifyIfUpdated(v) {
   localStorage.setItem(k, v);
 }
 
+// ---- jukebox: extract + play the game soundtrack decoded from the p4k ---- //
+// The tab is lazy-built on first activation (initJukebox). Extraction is a one-time, ~2.6 GB
+// server-side decode kicked by the Extract button (POST /api/music/extract); its progress
+// rides the SSE snapshot's `music` field (jukeApplyMusicState), so there's no polling. Tracks
+// have no names in the shipped soundbanks — only hashed ids — so a row is length + #id.
+let JUKE_BUILT = false;       // panel skeleton injected?
+let JUKE_TRACKS = [];         // manifest rows {id, file, duration, size}, longest-first
+let JUKE_CUR = null;          // id of the track loaded in the player
+let JUKE_PHASE = null;        // last-seen extraction phase (to catch the extracting->done edge)
+
+function jukeFmt(sec) {
+  if (sec == null) return "—";
+  const s = Math.round(sec), m = Math.floor(s / 60);
+  return m + ":" + String(s % 60).padStart(2, "0");
+}
+
+function initJukebox() {
+  if (!JUKE_BUILT) {
+    setHTML("jukebox",
+      `<div class="juke">
+        <div class="juke-bar">
+          <div class="juke-extract">
+            <button class="sp-btn" id="jukeExtractBtn">Extract music</button>
+            <span class="sp-note" id="jukeExtractMsg"></span>
+          </div>
+          <label class="juke-filter" title="Hide tracks shorter than this">Min length
+            <input type="range" id="jukeMin" min="0" max="600" step="15" value="0">
+            <span id="jukeMinLbl" class="juke-minlbl">0:00</span>
+          </label>
+        </div>
+        <ul class="juke-list" id="jukeList"></ul>
+        <div class="juke-player">
+          <div class="juke-now" id="jukeNow">Nothing playing</div>
+          <div class="juke-trans">
+            <button class="juke-nav" id="jukePrev" title="Previous">⏮</button>
+            <button class="juke-nav" id="jukeNext" title="Next">⏭</button>
+            <audio id="jukeAudio" controls preload="none"></audio>
+          </div>
+        </div>
+      </div>`);
+    $("jukeExtractBtn").onclick = jukeExtract;
+    $("jukeMin").oninput = jukeApplyFilter;
+    $("jukePrev").onclick = () => jukeStep(-1);
+    $("jukeNext").onclick = () => jukeStep(1);
+    $("jukeAudio").onended = () => jukeStep(1);
+    JUKE_BUILT = true;
+    if (LAST && LAST.music) jukeApplyMusicState(LAST.music);  // reflect an in-flight extraction
+  }
+  jukeLoad();
+}
+
+async function jukeLoad() {
+  try {
+    const d = await getJSON("/api/music");
+    JUKE_TRACKS = (d && d.tracks) || [];
+  } catch (_) {
+    JUKE_TRACKS = [];
+  }
+  renderJukeList();
+}
+
+function renderJukeList() {
+  const list = $("jukeList");
+  if (!list) return;
+  if (!JUKE_TRACKS.length) {
+    list.innerHTML = `<li class="juke-empty">No music extracted yet — click <b>Extract music</b> to decode the soundtrack from your game files.</li>`;
+    return;
+  }
+  list.innerHTML = JUKE_TRACKS.map((t, i) =>
+    `<li class="juke-row" data-id="${esc(t.id)}" data-dur="${t.duration || 0}" data-file="${esc(t.file)}">` +
+    `<span class="juke-num">${i + 1}</span>` +
+    `<span class="juke-dur">${jukeFmt(t.duration)}</span>` +
+    `<span class="juke-id">#${esc(t.id)}</span></li>`).join("");
+  list.querySelectorAll(".juke-row").forEach(r => {
+    r.onclick = () => jukePlay(r.dataset.id);
+  });
+  jukeApplyFilter();
+  if (JUKE_CUR) _jukeHighlight(JUKE_CUR);
+}
+
+function jukeApplyFilter() {
+  const min = +($("jukeMin")?.value || 0);
+  const lbl = $("jukeMinLbl");
+  if (lbl) lbl.textContent = jukeFmt(min);
+  let shown = 0;
+  $("jukeList")?.querySelectorAll(".juke-row").forEach(r => {
+    const hide = (+r.dataset.dur) < min;
+    r.classList.toggle("hide", hide);
+    if (!hide) shown++;
+  });
+}
+
+function jukePlay(id) {
+  const row = $("jukeList")?.querySelector(`.juke-row[data-id="${CSS.escape(id)}"]`);
+  if (!row) return;
+  const audio = $("jukeAudio");
+  audio.src = "/music/" + encodeURIComponent(row.dataset.file);
+  audio.play().catch(() => {});   // autoplay may be blocked until a gesture; the click counts
+  JUKE_CUR = id;
+  _jukeHighlight(id);
+  const now = $("jukeNow");
+  if (now) now.textContent = `Track #${id} · ${jukeFmt(+row.dataset.dur)}`;
+}
+
+function _jukeHighlight(id) {
+  $("jukeList")?.querySelectorAll(".juke-row").forEach(r =>
+    r.classList.toggle("playing", r.dataset.id === id));
+}
+
+// Step to the previous/next VISIBLE track (filter-aware); auto-advance (audio 'ended') reuses
+// this with dir=+1 and simply stops at the end of the list.
+function jukeStep(dir) {
+  const rows = [...($("jukeList")?.querySelectorAll(".juke-row:not(.hide)") || [])];
+  if (!rows.length) return;
+  let i = rows.findIndex(r => r.dataset.id === JUKE_CUR);
+  i = i < 0 ? (dir > 0 ? 0 : rows.length - 1) : i + dir;
+  if (i < 0 || i >= rows.length) return;   // off either end → stop
+  jukePlay(rows[i].dataset.id);
+}
+
+async function jukeExtract() {
+  const btn = $("jukeExtractBtn"), msg = $("jukeExtractMsg");
+  if (!btn) return;
+  btn.disabled = true; msg.textContent = "Starting…"; msg.classList.remove("err");
+  try {
+    const r = await postJSON("/api/music/extract");
+    if (r && r.ok === false) {
+      msg.textContent = r.error || "Music extraction isn't available on this install.";
+      msg.classList.add("err"); btn.disabled = false;
+    }
+    // success path: progress + completion arrive via the SSE snapshot (jukeApplyMusicState)
+  } catch (e) {
+    msg.textContent = "Couldn't start extraction."; msg.classList.add("err"); btn.disabled = false;
+  }
+}
+
+// Reflect the server's extraction state (pushed in every snapshot) onto the jukebox controls.
+function jukeApplyMusicState(m) {
+  const wasExtracting = JUKE_PHASE === "extracting";
+  JUKE_PHASE = m.phase;
+  const btn = $("jukeExtractBtn"), msg = $("jukeExtractMsg");
+  if (!btn || !msg) return;   // panel not built yet — phase captured for when it is
+  msg.classList.remove("err");
+  if (m.phase === "extracting") {
+    btn.disabled = true;
+    msg.textContent = m.total ? `Extracting ${m.done}/${m.total}…` : "Decoding soundbank…";
+  } else if (m.phase === "error") {
+    btn.disabled = false;
+    msg.textContent = m.error || "Extraction failed."; msg.classList.add("err");
+  } else if (m.phase === "done") {
+    btn.disabled = false;
+    msg.textContent = m.total ? `${m.total} tracks ✓` : "Done ✓";
+    if (wasExtracting) jukeLoad();   // finished just now → pull the fresh track list in
+  } else {
+    btn.disabled = false;
+    msg.textContent = "";
+  }
+}
+
 // Apply a freshly-received live snapshot — from the SSE push or a manual refresh().
 function applySnapshot(d) {
   LAST = d;
   renderUpdateBar(d.update);   // update banner is global — show it even in replay mode
+  if (d.music) jukeApplyMusicState(d.music);   // push extraction progress to the jukebox (no polling)
   notifyIfUpdated(d.app_version);   // toast once when the running build changed under us
   if (REPLAY_MODE) return;   // keep LAST fresh underneath; the replay view owns the screen
   // Skip the whole render pass when the snapshot is byte-identical to the last one
