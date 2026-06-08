@@ -85,6 +85,21 @@ def test_jukebox_track_numbers_and_total(page, live_server):
     assert "3 tracks" in total and "0:06" in total
 
 
+def test_skip_keeps_row_visible_and_bypasses_in_playback(page, live_server):
+    page.goto(live_server)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukeList .juke-row")
+    # there is no "show hidden" control any more — Skip greys but never removes
+    assert page.locator("#jukeShowHidden").count() == 0
+    first = "#jukeList .juke-row:first-child"
+    page.click(f"{first} .juke-skip")
+    page.wait_for_selector(f"{first}.skipped-row")          # stays in the list, just marked
+    assert page.locator("#jukeList .juke-row").count() == 3  # nothing removed
+    # un-skip restores it
+    page.click(f"{first} .juke-skip")
+    assert "skipped-row" not in (page.get_attribute(first, "class") or "")
+
+
 def test_shuffle_state_persists_across_reload(page, live_server):
     page.goto(live_server)
     page.click("#navjukebox")

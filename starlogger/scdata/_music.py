@@ -164,7 +164,7 @@ def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
     sb = sb or ensure_binary()
     durations = _durations(p4k, sb)
     hirc = dump_music_hirc(p4k, sb)   # dumped once; reused for selection AND the context labels
-    from ._music_context import best_song_ids, primary_context, build_context_labels
+    from ._music_context import best_song_ids, track_context, build_context_labels
     labels = build_context_labels(p4k, sb, hirc)
     keep = best_song_ids(hirc, durations, labels)
     total = len(keep)
@@ -207,16 +207,18 @@ def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
         poller.join(timeout=2)
 
     _reap()  # final sweep: drop any non-song ogg the poller didn't catch before the decode ended
-    # The gameplay context each song plays under (region/mood/cue), from the labels already built.
+    # The gameplay context each song plays under, split into (system, detail) from the labels
+    # already built -- the jukebox shows "System · Detail" and sorts its default order by it.
     rows: list[dict] = []
     for f in glob.glob(os.path.join(out_dir, "*.ogg")):
         wid = os.path.basename(f)[:-4]
         if wid not in keep:
             os.remove(f)
             continue
+        system, detail = track_context(labels.get(wid, []))
         rows.append({"id": wid, "file": os.path.basename(f),
                      "duration": durations.get(wid), "size": os.path.getsize(f),
-                     "context": primary_context(labels.get(wid, []))})
+                     "system": system, "detail": detail})
     rows.sort(key=lambda r: -(r["duration"] or 0))
     progress(len(rows), total)
     return rows

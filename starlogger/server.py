@@ -340,7 +340,7 @@ def create_app(state: State, log_path: str | None = None, presence=None,
     @app.get("/api/music")
     def api_music():
         # The jukebox full-song manifest ({tracks, count, ...}) plus the effective curation
-        # (playlist order, hidden ids, custom names = shipped default overlaid by local edits).
+        # (playlist order, skipped ids, custom names = shipped default overlaid by local edits).
         # Empty until the background extract has run once.
         d = dict(load_music())
         d["curation"] = load_curation()
@@ -349,22 +349,22 @@ def create_app(state: State, log_path: str | None = None, presence=None,
 
     @app.post("/api/music/curate")
     def api_music_curate():
-        # Persist a jukebox curation edit (reorder / hide / rename) to the local sidecar. Accepts
-        # any of {order:[id...], hidden:[id...], names:{id:name}}; merges partials. _ok() bumps the
+        # Persist a jukebox curation edit (reorder / skip / rename) to the local sidecar. Accepts
+        # any of {order:[id...], skipped:[id...], names:{id:name}}; merges partials. _ok() bumps the
         # version so the change rides the SSE push to every open dashboard.
         body = request.get_json(silent=True) or {}
         order = body.get("order")
-        hidden = body.get("hidden")
+        skipped = body.get("skipped")
         names = body.get("names")
         if order is not None and not isinstance(order, list):
             return jsonify({"ok": False, "error": "order must be a list"}), 400
-        if hidden is not None and not isinstance(hidden, list):
-            return jsonify({"ok": False, "error": "hidden must be a list"}), 400
+        if skipped is not None and not isinstance(skipped, list):
+            return jsonify({"ok": False, "error": "skipped must be a list"}), 400
         if names is not None and not isinstance(names, dict):
             return jsonify({"ok": False, "error": "names must be an object"}), 400
-        if order is None and hidden is None and names is None:
+        if order is None and skipped is None and names is None:
             return jsonify({"ok": False, "error": "nothing to update"}), 400
-        set_curation(order=order, hidden=hidden, names=names)
+        set_curation(order=order, skipped=skipped, names=names)
         return _ok()
 
     @app.post("/api/update/dismiss")

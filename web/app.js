@@ -2076,12 +2076,11 @@ function notifyIfUpdated(v) {
 // in the data — hashed ids only — so the user curates: drag to reorder, rename, and hide duds.
 // Curation persists server-side (POST /api/music/curate) and rides the SSE snapshot.
 let JUKE_BUILT = false;       // panel skeleton injected?
-let JUKE_TRACKS = [];         // manifest rows {id, file, duration, size}, longest-first
-let JUKE_CURATION = { order: [], hidden: [], names: {} };   // effective curation (default+local)
+let JUKE_TRACKS = [];         // manifest rows {id, file, duration, size, system, detail}, longest-first
+let JUKE_CURATION = { order: [], skipped: [], names: {} };   // effective curation (default+local)
 let JUKE_CUR = null;          // id of the track loaded in the player
 let JUKE_PHASE = null;        // last-seen build phase (to catch the extracting->done edge)
 let JUKE_SEEKING = false;     // user is dragging the seek bar (don't fight it with timeupdate)
-let JUKE_SHOW_HIDDEN = false; // reveal hidden tracks (to un-hide them)
 let JUKE_SHUFFLE = false;     // shuffle playback order (persisted in localStorage)
 let JUKE_HISTORY = [];        // ids in play order, capped — lets "previous" work under shuffle
 let JUKE_RESTORED = false;    // playback state already restored from localStorage this load?
@@ -2119,16 +2118,26 @@ function jukeRank(id) {
   return i < 0 ? "M-??" : "M-" + String(i + 1).padStart(2, "0");
 }
 function jukeName(id) { return JUKE_CURATION.names[id] || jukeRank(id); }
-function jukeHidden(id) { return JUKE_CURATION.hidden.includes(id); }
+function jukeSkipped(id) { return JUKE_CURATION.skipped.includes(id); }
+
+// Default sort: by System, then Detail (empties last), with longest-first as the final
+// tiebreak. This is the canonical order for any track the user hasn't manually placed.
+function jukeCmp(a, b) {
+  const as = a.system || "￿", bs = b.system || "￿";
+  if (as !== bs) return as.localeCompare(bs);
+  const ad = a.detail || "￿", bd = b.detail || "￿";
+  if (ad !== bd) return ad.localeCompare(bd);
+  return (b.duration || 0) - (a.duration || 0);
+}
 
 // Track ids in effective playlist order: curated order first (existing ids only), then any
-// manifest songs not yet in the order (new after a patch), appended longest-first.
+// manifest songs not yet in the order (new after a patch), sorted by System, Detail.
 function jukeOrderedIds() {
   const have = new Set(JUKE_TRACKS.map(t => t.id));
   const seen = new Set();
   const out = [];
   for (const id of JUKE_CURATION.order) if (have.has(id) && !seen.has(id)) { out.push(id); seen.add(id); }
-  for (const t of JUKE_TRACKS) if (!seen.has(t.id)) out.push(t.id);
+  for (const t of JUKE_TRACKS.filter(t => !seen.has(t.id)).slice().sort(jukeCmp)) out.push(t.id);
   return out;
 }
 
@@ -2138,8 +2147,6 @@ function initJukebox() {
       `<div class="juke-bar">
         <span class="juke-status" id="jukeStatus"></span>
         <span class="juke-total" id="jukeTotal"></span>
-        <label class="juke-showhidden hide" id="jukeShowHiddenRow">
-          <input type="checkbox" id="jukeShowHidden"> show hidden</label>
       </div>
       <ul class="juke-list" id="jukeList"></ul>`);
     setHTML("jukeboxFoot",
@@ -2162,7 +2169,6 @@ function initJukebox() {
     JUKE_SHUFFLE = (() => { try { return localStorage.getItem("jukeShuffle") === "1"; } catch (_) { return false; } })();
     $("jukeShuffle").onclick = jukeToggleShuffle;
     jukeReflectShuffle();
-    $("jukeShowHidden").onchange = (e) => { JUKE_SHOW_HIDDEN = e.target.checked; renderJukeList(); };
     const a = $("jukeAudio");
     a.onended = () => jukeStep(1);
     a.onplay = () => { jukeSetPlaying(true); jukePersist(); };
@@ -2259,7 +2265,7 @@ async function jukeLoad() {
     const d = await getJSON("/api/music");
     JUKE_TRACKS = (d && d.tracks) || [];
     const c = (d && d.curation) || {};
-    JUKE_CURATION = { order: c.order || [], hidden: c.hidden || [], names: c.names || {} };
+    JUKE_CURATION = { order: c.order || [], skipped: c.skipped || [], names: c.names || {} };
     JUKE_AUTOPLAY = !!(d && d.autoplay);
     try { localStorage.setItem("jukeAutoplay", JUKE_AUTOPLAY ? "1" : "0"); } catch (_) {}   // cache for boot
   } catch (_) {
@@ -2279,7 +2285,7 @@ function jukeRestore() {
   if (st && st.id && JUKE_TRACKS.some(t => t.id === st.id)) {
     jukeLoadTrack(st.id, { time: +st.time || 0, autoplay: JUKE_AUTOPLAY });
   } else if (JUKE_AUTOPLAY) {
-    const first = jukeOrderedIds().find(id => !jukeHidden(id));   // nothing saved → start the playlist
+    const first = jukeOrderedIds().find(id => !jukeSkipped(id));   // nothing saved → start the playlist
     if (first) jukeLoadTrack(first, { time: 0, autoplay: true });
   }
 }
@@ -2287,28 +2293,25 @@ function jukeRestore() {
 function renderJukeList() {
   const list = $("jukeList");
   if (!list) return;
-  const nHidden = JUKE_TRACKS.filter(t => jukeHidden(t.id)).length;
-  $("jukeShowHiddenRow")?.classList.toggle("hide", nHidden === 0);
-  const sh = $("jukeShowHidden");
-  if (sh) { sh.checked = JUKE_SHOW_HIDDEN; sh.nextSibling.textContent = ` show hidden (${nHidden})`; }
   if (!JUKE_TRACKS.length) {
     list.innerHTML = `<li class="juke-empty">Music is being prepared in the background — the full songs are decoded from your game files once. This list fills in automatically when it's ready.</li>`;
     return;
   }
   const byId = Object.fromEntries(JUKE_TRACKS.map(t => [t.id, t]));
-  const visible = jukeOrderedIds().filter(id => JUKE_SHOW_HIDDEN || !jukeHidden(id));
+  const visible = jukeOrderedIds();          // every track is shown; skipped ones stay, greyed
   const total = visible.reduce((s, id) => s + (byId[id]?.duration || 0), 0);
   const tot = $("jukeTotal");
   if (tot) tot.textContent = `${visible.length} track${visible.length === 1 ? "" : "s"} · ${jukeFmtLong(total)}`;
   const rows = visible
     .map(id => {
       const t = byId[id]; if (!t) return "";
-      const hid = jukeHidden(id);
-      // context: where this cue plays in-game (region/mood/cue), mined from the music switch
-      // hierarchy — a readable hint the FNV-hashed ids otherwise lack. Shown as a subtitle.
-      const ctx = t.context
-        ? `<span class="juke-context" title="${esc(t.context)}">${esc(t.context)}</span>` : "";
-      return `<li class="juke-row${hid ? " hidden-row" : ""}" draggable="true" data-id="${esc(id)}" data-dur="${t.duration || 0}" data-file="${esc(t.file)}">` +
+      const skip = jukeSkipped(id);
+      // context: where this cue plays in-game, mined from the music switch hierarchy — a readable
+      // hint the FNV-hashed ids otherwise lack. Shown as a "System · Detail" subtitle.
+      const ctxText = [t.system || "", t.detail || ""].filter(Boolean).join(" · ");
+      const ctx = ctxText
+        ? `<span class="juke-context" title="${esc(ctxText)}">${esc(ctxText)}</span>` : "";
+      return `<li class="juke-row${skip ? " skipped-row" : ""}" draggable="true" data-id="${esc(id)}" data-dur="${t.duration || 0}" data-file="${esc(t.file)}">` +
         `<span class="juke-grip" title="Drag to reorder" aria-hidden="true">⠿</span>` +
         `<span class="juke-num" aria-hidden="true"></span>` +
         `<div class="juke-title" title="${esc("#" + id)}">` +
@@ -2316,7 +2319,7 @@ function renderJukeList() {
         `</div>` +
         `<span class="juke-dur">${jukeFmt(t.duration)}</span>` +
         `<button class="juke-act juke-rename" title="Rename" aria-label="Rename track">✎</button>` +
-        `<button class="juke-act juke-hide" title="${hid ? "Un-hide" : "Hide from playlist"}" aria-label="${hid ? "Un-hide" : "Hide"} track">${hid ? "↺" : "✕"}</button>` +
+        `<button class="juke-act juke-skip" title="${skip ? "Un-skip" : "Skip in playback"}" aria-label="${skip ? "Un-skip" : "Skip"} track">${skip ? "↺" : "⏭"}</button>` +
         `</li>`;
     }).join("");
   list.innerHTML = rows;
@@ -2325,7 +2328,7 @@ function renderJukeList() {
     r.querySelector(".juke-title").onclick = () => jukePlay(id);
     r.querySelector(".juke-dur").onclick = () => jukePlay(id);
     r.querySelector(".juke-rename").onclick = (e) => { e.stopPropagation(); jukeRename(id); };
-    r.querySelector(".juke-hide").onclick = (e) => { e.stopPropagation(); jukeToggleHidden(id); };
+    r.querySelector(".juke-skip").onclick = (e) => { e.stopPropagation(); jukeToggleSkip(id); };
     r.ondragstart = (e) => { _jukeDragId = id; r.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; };
     r.ondragend = () => { r.classList.remove("dragging"); _jukeDragId = null; jukeCommitOrder(); };
     r.ondragover = (e) => { e.preventDefault(); jukeDragOver(r, e.clientY); };
@@ -2355,18 +2358,10 @@ function jukeDragOver(target, y) {
   jukeRenumber();
 }
 
-// Persist the current on-screen order. When "show hidden" is off the DOM omits hidden ids, so
-// splice the visible order back into the full order (hidden ids keep their relative slots).
+// Persist the current on-screen order. Every track (skipped included) is in the list, so the
+// DOM order is the full order — no splicing needed.
 function jukeCommitOrder() {
-  const visible = [...($("jukeList")?.querySelectorAll(".juke-row") || [])].map(r => r.dataset.id);
-  let order;
-  if (JUKE_SHOW_HIDDEN) {
-    order = visible;
-  } else {
-    const vis = new Set(visible);
-    let k = 0;
-    order = jukeOrderedIds().map(id => vis.has(id) ? visible[k++] : id);
-  }
+  const order = [...($("jukeList")?.querySelectorAll(".juke-row") || [])].map(r => r.dataset.id);
   JUKE_CURATION.order = order;          // optimistic
   jukeRenumber();
   jukeSave({ order });
@@ -2383,13 +2378,13 @@ async function jukeRename(id) {
   await jukeSave({ names: { [id]: trimmed } });
 }
 
-function jukeToggleHidden(id) {
-  const hid = jukeHidden(id);
-  JUKE_CURATION.hidden = hid
-    ? JUKE_CURATION.hidden.filter(x => x !== id)
-    : [...JUKE_CURATION.hidden, id];
+function jukeToggleSkip(id) {
+  const skip = jukeSkipped(id);
+  JUKE_CURATION.skipped = skip
+    ? JUKE_CURATION.skipped.filter(x => x !== id)
+    : [...JUKE_CURATION.skipped, id];
   renderJukeList();
-  jukeSave({ hidden: JUKE_CURATION.hidden });
+  jukeSave({ skipped: JUKE_CURATION.skipped });
 }
 
 async function jukeSave(patch) {
@@ -2412,7 +2407,7 @@ function jukeNowPlayingLabel(id) {
 
 // Load a track into the player. autoplay=false (with time>0) is used to restore a saved
 // position paused; the seek is applied in onloadedmetadata via _jukeRestoreTime. Looks the file
-// up from the manifest (not the DOM) so it works even for hidden tracks or before the modal opens.
+// up from the manifest (not the DOM) so it works even for skipped tracks or before the modal opens.
 function jukeLoadTrack(id, { time = 0, autoplay = true } = {}) {
   const t = JUKE_TRACKS.find(x => x.id === id);
   if (!t) return;
@@ -2491,28 +2486,32 @@ function _jukeHighlight(id) {
     r.classList.toggle("playing", r.dataset.id === id));
 }
 
-// Step to the previous/next track in the visible playlist order; auto-advance (audio 'ended')
-// reuses this with dir=+1 and simply stops at the end of the list. Under shuffle, "next" picks a
-// random other visible track and "previous" walks back through the play history.
+// Step to the previous/next playable track; auto-advance (audio 'ended') reuses this with
+// dir=+1 and simply stops at the end of the list. Skipped tracks stay in the list but are
+// bypassed here (a manually-played skipped track still steps on to its next playable neighbor).
+// Under shuffle, "next" picks a random other playable track and "previous" walks the history.
 function jukeStep(dir) {
-  const rows = [...($("jukeList")?.querySelectorAll(".juke-row") || [])];
-  if (!rows.length) return;
+  const allRows = [...($("jukeList")?.querySelectorAll(".juke-row") || [])];
+  const playable = allRows.filter(r => !jukeSkipped(r.dataset.id));
+  if (!playable.length) return;
   if (JUKE_SHUFFLE) {
     if (dir > 0) {
-      const pool = rows.filter(r => r.dataset.id !== JUKE_CUR);
-      const bag = pool.length ? pool : rows;
+      const pool = playable.filter(r => r.dataset.id !== JUKE_CUR);
+      const bag = pool.length ? pool : playable;
       jukePlay(bag[Math.floor(Math.random() * bag.length)].dataset.id);
       return;
     }
     JUKE_HISTORY.pop();                                   // drop current
     const prev = JUKE_HISTORY.pop();                      // jukePlay re-pushes it
-    if (prev && rows.some(r => r.dataset.id === prev)) { jukePlay(prev); return; }
+    if (prev && playable.some(r => r.dataset.id === prev)) { jukePlay(prev); return; }
     // no history → fall through to sequential previous
   }
-  let i = rows.findIndex(r => r.dataset.id === JUKE_CUR);
-  i = i < 0 ? (dir > 0 ? 0 : rows.length - 1) : i + dir;
-  if (i < 0 || i >= rows.length) return;   // off either end → stop
-  jukePlay(rows[i].dataset.id);
+  let i = allRows.findIndex(r => r.dataset.id === JUKE_CUR);
+  if (i < 0) { jukePlay((dir > 0 ? playable[0] : playable[playable.length - 1]).dataset.id); return; }
+  for (i += dir; i >= 0 && i < allRows.length; i += dir) {   // walk to the next non-skipped neighbor
+    if (!jukeSkipped(allRows[i].dataset.id)) { jukePlay(allRows[i].dataset.id); return; }
+  }
+  // off either end → stop
 }
 
 // Reflect the server's background-build state (pushed in every snapshot) onto the jukebox.

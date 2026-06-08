@@ -16,7 +16,7 @@ from ._music import (
     build_music_from_p4k, scan_songs, select_full_songs, dump_music_hirc, FULL_SONG_MIN_DUR,
 )
 from ._music_context import (
-    build_context_labels, context_for_media, primary_context,
+    build_context_labels, context_for_media, track_context,
     best_song_ids, is_quality_song, load_allowlist,
 )
 
@@ -29,6 +29,6 @@ __all__ = [
     "build_contracts_from_p4k",
     "build_music_from_p4k", "scan_songs", "select_full_songs", "dump_music_hirc",
     "FULL_SONG_MIN_DUR",
-    "build_context_labels", "context_for_media", "primary_context",
+    "build_context_labels", "context_for_media", "track_context",
     "best_song_ids", "is_quality_song", "load_allowlist",
 ]
