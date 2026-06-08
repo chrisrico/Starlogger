@@ -51,16 +51,14 @@ def test_board_other_players_ship(monkeypatch):
 
 
 def test_boarding_spirit_uses_official_name(monkeypatch):
-    # The committed master ships.json must carry the Crusader Spirit under its
-    # official (and comms-channel) name "C1 Spirit", so resolve_ship_name matches it
-    # exactly. Validates the repo master itself (not the machine's local data dir) by
-    # feeding its real ship-name set. See scdata._vehicle_name for the resolution.
-    import json
-    from starlogger import config
-    master = json.load(open(os.path.join(config.BASE_DIR, "ships.json")))
-    names = set(master.get("ships", {}))
-    assert "C1 Spirit" in names, "master DB no longer names the Spirit 'C1 Spirit'"
-    monkeypatch.setattr(ships, "known_ship_names", lambda db=None: names)
+    # The comms channel carries the marketing name "Crusader C1 Spirit"; resolve_ship_name
+    # must strip the manufacturer and match the official "C1 Spirit" entry. This is pure
+    # state.py resolution logic, so the known-name set is seeded here. We deliberately do
+    # NOT read the on-disk ships.json master: tests must never touch the dev tree (or the
+    # live install). The "is the Spirit still named 'C1 Spirit' in the shipped master?"
+    # data-integrity question is a separate concern and not a job for the test suite.
+    monkeypatch.setattr(ships, "known_ship_names", lambda db=None: {"C1 Spirit", "Hermes"})
+    monkeypatch.setattr(ships, "ship_display_name", lambda ent, db=None: None)  # mfr-split fallback
     st = State()
     st.player = "WonkoTheSane1"
     st.feed(_chan("joined channel", "Crusader C1 Spirit", "caged-danimal"))

@@ -37,9 +37,12 @@ from .stations import set_station_name
 SSE_KEEPALIVE_SECS = 15.0
 
 
-# The four frontend files this process serves. A relaunch with a new build changes
-# their bytes; a server-only relaunch leaves them identical.
-_ASSET_FILES = ("index.html", "app.js", "styles.css", "cargogrid.js")
+def _asset_files() -> list[str]:
+    """Every frontend file this process serves: the page, the stylesheet, and ALL JS in
+    web/ (app.js is split into ES modules, so glob rather than hardcode — a new module is
+    picked up automatically). Sorted for a deterministic hash."""
+    return ["index.html", "styles.css"] + sorted(
+        f for f in os.listdir(WEB_DIR) if f.endswith(".js"))
 
 
 @lru_cache(maxsize=1)
@@ -50,7 +53,7 @@ def _assets_version() -> str:
     Cached for process life -- the tracker is re-exec'd per launch, so it can't go
     stale (same reasoning as snapshot._app_version)."""
     h = hashlib.sha256()
-    for name in _ASSET_FILES:
+    for name in _asset_files():
         try:
             with open(os.path.join(WEB_DIR, name), "rb") as f:
                 h.update(f.read())

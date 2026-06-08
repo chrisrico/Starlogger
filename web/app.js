@@ -1,98 +1,26 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
-// Defensive read of an input's value by id ("" when the element isn't in the DOM yet).
-const val = (id) => ($(id) || {}).value || "";
-const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"]/g,
-  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const num = (n) => (n == null ? "" : Number(n).toLocaleString());
+import { $, val, esc, num, setHTML, logTable, th, tag, tabBar, toast } from "./dom.js";
+import { postJSON, postRaw, getJSON } from "./net.js";
+import {
+  initMining, miningSub, miningIdentify, miningFind, miningIndex,
+  identifyAgain, identifyPredict, identifyKey, bpOpen, bpFilter, bpPick, bpKey,
+} from "./mining.js";
+import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState } from "./jukebox.js";
+import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
+// Shared hot state (TAB / LAST / ROUTE_ORDER / REPLAY_*) + the snapshot accessor live on the
+// `S` object so the archive/stream/editor modules all mutate the same state. See state.js.
+import { S, REPLAY_UNAVAILABLE, curData } from "./state.js";
+// Archive tab + replay (self-wires its own inline handlers); typeMark is shared with the
+// live contracts table. archive.js imports renderAll/replayEdit back from here.
+import { loadSessions, activateArchiveTab, typeMark } from "./archive.js";
+// Live SSE feed + update banner. connectStream boots the feed (from the bootstrap below);
+// refresh is the one-shot pull the editor reaches for after a write.
+import { connectStream, refresh } from "./stream.js";
 
-// Only touch the DOM when the rendered HTML actually changes. Kills the 3s poll
-// flicker and means entrance animations replay only on real updates.
-const _rendered = {};
-const _seen = {};
-function setHTML(id, html) {
-  if (_rendered[id] === html) return;
-  _rendered[id] = html;
-  const el = $(id);
-  el.classList.toggle("noanim", !!_seen[id]);  // entrance animation on first paint only
-  el.innerHTML = html;
-  _seen[id] = true;
-}
-
-let TAB = "contracts";   // Contracts is the first/default tab
-let LAST = null;      // latest snapshot
-let _lastRenderSig = null;  // serialized snapshot last rendered by the poll (skip identical re-renders)
 let EDIT = null;      // mission_id whose editor is open (Contracts tab)
 let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
-let ASSET_VER = null; // frontend asset hash from the SSE `meta` frame; reload if it changes
-let SESSIONS = null;  // archived sessions
 
-// ---- session replay ---- //
-// When a session is replayed, the WHOLE dashboard renders a reconstructed past
-// snapshot instead of live data: curData() returns REPLAY_SNAPSHOT and the poll pauses.
-// REPLAY_POINTS is the scrub timeline (index/ts/label); REPLAY_I the current checkpoint.
-// Archive editing is fully interactive but EPHEMERAL: every edit goes to an in-memory
-// overlay (REPLAY_EDITS) via /api/replay/edit — which recomputes the snapshot exactly
-// like live but writes nothing to disk. null until the first edit (disk state shown).
-let REPLAY_MODE = false, REPLAY_KEY = null, REPLAY_POINTS = [], REPLAY_I = 0, REPLAY_SNAPSHOT = null;
-let REPLAY_EDITS = null, REPLAY_SAVED_ORDER = null;
-let REPLAY_UNAVAILABLE = new Set();  // session keys whose source log is gone
-let _scrubTimer = null;
-
-// Which Archive section is expanded (accordion — only one at a time). Empty = all
-// collapsed. Persists the user's explicit choice; no built-in default (see archDefaultSection).
-let ARCH_OPEN = localStorage.getItem("archOpen") || "";
-function toggleArch(key) {
-  if (ARCH_OPEN === key) return;   // the open section stays open — only selecting another switches
-  ARCH_OPEN = key;
-  localStorage.setItem("archOpen", ARCH_OPEN);
-  _archRepaint();
-}
-// When the Archive opens with NOTHING expanded, auto-open whichever of the Contract Log /
-// Trade Loads reflects the most recent activity. If a section is already open (a previous
-// selection), it's left as-is. Compared on the same data each view shows.
-let ARCH_PICK = false;
-function archDefaultSection() {
-  let cT = "", tT = "";
-  for (const s of SESSIONS || []) {
-    for (const m of s.missions || []) {
-      const t = m.ended_at || m.accepted_at || s.started_at || "";
-      if (t > cT) cT = t;
-    }
-    for (const t of s.trades || []) if ((t.ts || "") > tT) tT = t.ts || "";
-  }
-  for (const t of (LAST && LAST.trades) || []) if ((t.ts || "") > tT) tT = t.ts || "";
-  return tT > cT ? "trades" : "contracts";
-}
-// How the Trade Routes recommendations are ranked: total aUEC, % return, or aUEC/SCU.
-let ROUTE_SORT = localStorage.getItem("routeSort") || "profit";
-function setRouteSort(key) {
-  ROUTE_SORT = key;
-  localStorage.setItem("routeSort", key);
-  _archRepaint();
-}
-// One Archive section as a tab descriptor; sessionsView() renders the tab bar and the
-// selected section's body (only the active body is built into the DOM).
-function logSection(key, title, headSpan, body) {
-  return { key, title, headSpan: headSpan || "", body };
-}
-
-// ---- small render helpers (DRY the repeated archive markup) ---- //
-// A scrolling log table, or an empty-state note when there are no body rows.
-// `headRow` is the inner HTML of the <thead> row (the <th> cells); `bodyRows` the
-// concatenated <tr>s ("" / falsy → the empty note). Callers keep full control of cells.
-function logTable(headRow, bodyRows, emptyMsg) {
-  return bodyRows
-    ? `<div class="logwrap"><table class="logtable"><thead><tr>${headRow}</tr></thead><tbody>${bodyRows}</tbody></table></div>`
-    : `<div class="empty">${emptyMsg}</div>`;
-}
-// A header cell; `num` right-aligns it to match a numeric column's values. `tip`
-// (optional) adds a hover tooltip explaining the column.
-const th = (label, num, tip) =>
-  `<th${num ? ' class="lt-num"' : ""}${tip ? ` title="${esc(tip)}"` : ""}>${label}</th>`;
-// A small uppercased status/category pill (the .lt-tag family).
-const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
 
 // ---- Cargo / Plan sub-tabs ---- //
 // Loading+Unloading live under the Cargo tab; Routes+Manifest under the Plan tab,
@@ -105,13 +33,13 @@ let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "p
 const TABS = ["cargo", "plan", "contracts", "archive", "mining"];
 function activateTab(name) {
   if (!TABS.includes(name)) return;
-  TAB = name;
+  S.TAB = name;
   document.querySelectorAll("#nav button").forEach(b => {
     b.classList.toggle("active", b.dataset.tab === name);
   });
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
-  if (name === "archive") { ARCH_PICK = true; loadSessions(); }
+  if (name === "archive") activateArchiveTab();
   if (name === "mining") initMining();
 }
 
@@ -141,175 +69,6 @@ const _collapseBtn = $("navtoggle");
 if (_collapseBtn) _collapseBtn.onclick = () => setCollapsed(!$("sidebar").classList.contains("collapsed"));
 
 document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
-
-// ---- settings overlay (sidebar gear -> dashboard-managed settings.json) ----
-// Renders straight from /api/settings' schema: one row per knob, grouped, with bool ->
-// checkbox / int|number -> number input / enum -> <select> / string -> text input. A knob shadowed by an
-// env var comes back env_override:true and is shown read-only ("set via $VAR"), since
-// env wins at read time. Save POSTs only the rows the user actually changed.
-let SETTINGS_SCHEMA = null;
-function _settingsCtl(f) {
-  const id = "set_" + f.key, dis = f.env_override ? " disabled" : "";
-  let ctl;
-  if (f.type === "bool") ctl = `<input type="checkbox" id="${id}"${f.value ? " checked" : ""}${dis}>`;
-  else if (f.type === "int" || f.type === "number")
-    ctl = `<input type="number" id="${id}" step="${f.type === "int" ? "1" : "0.5"}" value="${esc(f.value)}"${dis}>`;
-  else if (f.type === "enum")
-    ctl = `<select id="${id}"${dis}>` + (f.options || []).map(o =>
-      `<option value="${esc(o)}"${o === f.value ? " selected" : ""}>${esc(o[0].toUpperCase() + o.slice(1))}</option>`).join("") + `</select>`;
-  else ctl = `<input type="text" id="${id}" value="${esc(f.value)}"${dis}>`;
-  const env = f.env_override ? `<span class="sp-env">set via ${esc(f.env)}</span>` : "";
-  return `<div class="sp-ctl">${ctl}${env}</div>`;
-}
-// Keys tucked into a collapsed "Advanced" section — rarely-touched plumbing that would
-// otherwise clutter the main form. Presentation-only, so it lives in the frontend.
-const SET_ADVANCED = new Set(["idle_timeout", "close_timeout", "update_remote", "update_branch"]);
-
-function _settingsRow(f) {
-  return `<div class="sp-row"><div class="sp-label"><span class="t">${esc(f.label)}</span>` +
-    `<span class="h">${esc(f.help)}</span></div>${_settingsCtl(f)}</div>`;
-}
-
-function renderSettings(schema) {
-  const groups = [];
-  const advanced = [];
-  for (const f of schema) {
-    if (SET_ADVANCED.has(f.key)) { advanced.push(f); continue; }
-    let g = groups.find(x => x.name === f.group);
-    if (!g) { g = { name: f.group, fields: [] }; groups.push(g); }
-    g.fields.push(f);
-  }
-  let html = groups.map(g =>
-    `<div class="sp-group"><h3 class="sp-group-h">${esc(g.name)}</h3>` +
-    g.fields.map(_settingsRow).join("") +
-    (g.name === "Updates" ? _updateCheckRow() + _shutdownRow() : "") +
-    `</div>`).join("");
-  if (advanced.length) {
-    let open = false;
-    try { open = localStorage.getItem("setAdvOpen") === "1"; } catch (_) {}
-    html += `<div class="sp-group sp-adv${open ? " open" : ""}">` +
-      `<button type="button" class="sp-adv-h" id="setAdvToggle" aria-expanded="${open}">` +
-      `<svg class="sp-adv-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>Advanced</button>` +
-      `<div class="sp-adv-body"${open ? "" : " hidden"}>` + advanced.map(_settingsRow).join("") + `</div></div>`;
-  }
-  $("settingsBody").innerHTML = html;
-  const cb = $("checkUpdateBtn");
-  if (cb) cb.onclick = checkForUpdate;
-  const sd = $("shutdownBtn");
-  if (sd) sd.onclick = shutdownTracker;
-  const adv = $("setAdvToggle");
-  if (adv) adv.onclick = toggleSetAdvanced;
-}
-
-function toggleSetAdvanced() {
-  const grp = $("setAdvToggle")?.closest(".sp-adv");
-  if (!grp) return;
-  const open = !grp.classList.contains("open");
-  grp.classList.toggle("open", open);
-  grp.querySelector(".sp-adv-body")?.toggleAttribute("hidden", !open);
-  $("setAdvToggle").setAttribute("aria-expanded", open ? "true" : "false");
-  try { localStorage.setItem("setAdvOpen", open ? "1" : "0"); } catch (_) {}
-}
-// A "Check for updates" action row appended to the Updates group: fetch + apply on the spot,
-// no prompt (the click is the approval). Distinct from the banner, which is the passive prompt.
-function _updateCheckRow() {
-  return `<div class="sp-row sp-action"><div class="sp-label">` +
-    `<span class="t">Check for updates</span>` +
-    `<span class="h">Fetch the latest build now and apply it immediately — no prompt.</span></div>` +
-    `<div class="sp-ctl"><button class="sp-btn" id="checkUpdateBtn">Check now</button>` +
-    `<span class="sp-note" id="checkUpdateMsg"></span></div></div>`;
-}
-async function checkForUpdate() {
-  const btn = $("checkUpdateBtn"), msg = $("checkUpdateMsg");
-  if (!btn) return;
-  btn.disabled = true; msg.textContent = "Checking…"; msg.classList.remove("err");
-  const done = (text, err) => { msg.textContent = text; msg.classList.toggle("err", !!err); btn.disabled = false; };
-  // Use postRaw, NOT postJSON: every non-update outcome comes back as {ok:false, status},
-  // and postJSON throws on ok:false — which would collapse them all into one opaque error.
-  let r;
-  try { r = await postRaw("/api/update/check"); }
-  catch (e) { return done("Couldn't reach the tracker — is it still running?", true); }
-  switch (r && r.status) {
-    case "updating": msg.textContent = `Updating → ${esc(r.latest)}…`; break;  // server restarts; tab reloads
-    case "current":  return done(`Already up to date${r.build ? " (" + esc(r.build) + ")" : ""}.`);
-    case "offline":  return done("Couldn't reach the update source — check your network or the configured remote.", true);
-    case "blocked":  return done("Can't update: this checkout has uncommitted changes or isn't a managed git clone.", true);
-    case "unavailable": return done("Updates aren't available on this install.", true);
-    case "error":    return done(`Update check failed: ${esc(r.error || "unknown error")}`, true);
-    default:         return done(`Update check failed${r && r.status ? " (" + esc(r.status) + ")" : ""}.`, true);
-  }
-}
-// Stop the tracker process entirely (POST /api/quit -> the WSGI server's .shutdown()). Deliberate,
-// so it's confirmed; the dashboard goes dead afterwards (no auto-relaunch until the next SC launch).
-function _shutdownRow() {
-  return `<div class="sp-row sp-action"><div class="sp-label">` +
-    `<span class="t">Shut down tracker</span>` +
-    `<span class="h">Stop the tracker process. The dashboard will go offline until it's launched again.</span></div>` +
-    `<div class="sp-ctl"><button class="sp-btn danger" id="shutdownBtn">Shut down</button>` +
-    `<span class="sp-note" id="shutdownMsg"></span></div></div>`;
-}
-async function shutdownTracker() {
-  const btn = $("shutdownBtn"), msg = $("shutdownMsg");
-  if (!btn) return;
-  if (!confirm("Shut down the tracker? The dashboard will go offline until it's launched again.")) return;
-  btn.disabled = true; msg.textContent = "Shutting down…"; msg.classList.remove("err");
-  // The server stops right after acking, so the connection drops — a fetch error here is success.
-  try { await postRaw("/api/quit"); } catch (_) {}
-  msg.textContent = "Tracker stopped.";
-}
-async function openSettings() {
-  const ov = $("settingsOverlay");
-  $("settingsMsg").textContent = ""; $("settingsMsg").className = "sp-msg";
-  $("settingsBody").innerHTML = `<div class="sp-row"><span class="h">loading…</span></div>`;
-  ov.classList.remove("hide"); ov.setAttribute("aria-hidden", "false");
-  try {
-    const r = await getJSON("/api/settings");
-    SETTINGS_SCHEMA = r.schema || [];
-    renderSettings(SETTINGS_SCHEMA);
-  } catch (e) {
-    $("settingsBody").innerHTML = `<div class="sp-row"><span class="h">couldn't load settings: ${esc(e)}</span></div>`;
-  }
-}
-function closeSettings() {
-  const ov = $("settingsOverlay");
-  ov.classList.add("hide"); ov.setAttribute("aria-hidden", "true");
-}
-function _settingsErr(msg) { const m = $("settingsMsg"); m.textContent = msg; m.className = "sp-msg err"; }
-async function saveSettings() {
-  if (!SETTINGS_SCHEMA) return closeSettings();
-  const payload = {};
-  for (const f of SETTINGS_SCHEMA) {
-    if (f.env_override) continue;                  // read-only: env wins at read time
-    const el = $("set_" + f.key);
-    if (!el) continue;
-    let v;
-    if (f.type === "bool") v = el.checked;
-    else if (f.type === "int" || f.type === "number") {
-      if (el.value.trim() === "") continue;        // left blank -> leave unchanged
-      v = Number(el.value);
-      if (Number.isNaN(v)) return _settingsErr(`“${f.label}” must be a number`);
-    } else v = el.value.trim();
-    if (v !== f.value) payload[f.key] = v;          // only send genuine changes
-  }
-  if (!Object.keys(payload).length) return closeSettings();
-  const btn = $("settingsSave"); btn.disabled = true;
-  try {
-    await postJSON("/api/settings", payload);
-    closeSettings();
-  }
-  catch (e) { _settingsErr(String(e)); }
-  finally { btn.disabled = false; }
-}
-$("navsettings") && ($("navsettings").onclick = openSettings);
-$("settingsClose") && ($("settingsClose").onclick = closeSettings);
-$("settingsCancel") && ($("settingsCancel").onclick = closeSettings);
-$("settingsSave") && ($("settingsSave").onclick = saveSettings);
-// Backdrop click closes (clicks on the panel don't reach the overlay element itself).
-$("settingsOverlay") && ($("settingsOverlay").onclick = (e) => { if (e.target.id === "settingsOverlay") closeSettings(); });
-// Escape closes (matches the type-filter / combobox / inline-editor convention).
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("settingsOverlay").classList.contains("hide")) closeSettings();
-});
 
 // ---- jukebox overlay (sidebar Jukebox button -> modal, same pattern as Settings) ----
 $("navjukebox") && ($("navjukebox").onclick = openJukebox);
@@ -365,18 +124,9 @@ function applyTabLayout(mining) {
     if (i >= 0) b.style.order = i;   // flex order: keep the visible slots contiguous
   });
   // If the active tab just got hidden, fall back to a sensible visible one.
-  if (!order.includes(TAB)) activateTab(mining ? "mining" : "contracts");
+  if (!order.includes(S.TAB)) activateTab(mining ? "mining" : "contracts");
 }
 
-// Close the Contract Log's Type-filter dropdown on any click outside it (the toggle
-// button and the menu itself live inside .th-menu-wrap, so those are ignored).
-document.addEventListener("click", (e) => {
-  if (TYPE_MENU_OPEN && !e.target.closest(".th-menu-wrap")) { TYPE_MENU_OPEN = false; _archRepaint(); }
-});
-// Escape closes the Type-filter dropdown (matches the ship combobox / inline editors).
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && TYPE_MENU_OPEN) { TYPE_MENU_OPEN = false; _archRepaint(); }
-});
 
 // ---- header: status pill, ship selector, telemetry readouts, capacity gauge ---- //
 
@@ -389,7 +139,7 @@ async function loadShipList() {
   try {
     const db = await getJSON("/api/ships");
     SHIP_DB = db.ships || {};
-    if (LAST) renderAll(curData());  // repaint now that we have the catalog
+    if (S.LAST) renderAll(curData());  // repaint now that we have the catalog
   } catch (e) { /* leave null; the box still shows the current ship */ }
 }
 
@@ -455,7 +205,7 @@ function onShipBlur() {
   const menu = $("shipMenu"); if (menu) menu.classList.remove("open");
   const inp = $("shipSel");
   if (inp) { inp.setAttribute("aria-expanded", "false"); inp.setAttribute("aria-activedescendant", ""); }
-  if (inp && LAST) inp.value = LAST.ship || "";  // drop unselected typing
+  if (inp && S.LAST) inp.value = S.LAST.ship || "";  // drop unselected typing
 }
 // Arrow Up/Down move the highlight, Enter selects it (else the first match),
 // Escape closes. Mirrors how a native <select>/combobox behaves.
@@ -490,7 +240,7 @@ function pickShip(ev, name) {
 }
 
 async function selectShip(name) {
-  if (REPLAY_MODE) return replayEdit({ kind: "select_ship", ship: name || null });
+  if (S.REPLAY_MODE) return replayEdit({ kind: "select_ship", ship: name || null });
   try { await postJSON("/api/select-ship", { ship: name || null }); }
   catch (e) { alert("Couldn't set ship: " + e); return; }
   refresh();
@@ -687,7 +437,7 @@ async function edCommit(el) {
   if (EDIT_CELL !== cellTok(f)) return;   // already cancelled/committed
   const raw = (el.value || "").trim();
   EDIT_BUSY = true; EDIT_CELL = null;
-  if (REPLAY_MODE) {
+  if (S.REPLAY_MODE) {
     const op = f.k === "station" ? { kind: "station_name", zone: f.zone, name: raw }
       : f.k === "origin" ? { kind: "override", mission_id: f.mid, override: { ...rawOverride(f.mid), origin: raw || null } }
         : { kind: "leg_field", mission_id: f.mid, oid: f.oid, field: f.k, value: raw };
@@ -703,39 +453,23 @@ async function edCommit(el) {
   EDIT_BUSY = false;
   refresh();
 }
-async function postJSON(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json().catch(() => ({}));
-  if (!j.ok) throw new Error(j.error || r.status);
-  return j;
-}
-// POST returning a raw JSON body (no {ok} envelope) — the replay snapshot/edit responses.
-async function postRaw(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify(body), cache: "no-store" });
-  return r.json();
-}
 // Archive edit: send one edit op to the ephemeral overlay, swap in the recomputed snapshot
 // + updated overlay (nothing is persisted), and repaint. The single path every editor uses
 // in replay mode in place of its live /api/* write.
-async function replayEdit(op) {
+// Exported: archive.js's markTradeLost routes through this while replaying.
+export async function replayEdit(op) {
   try {
     const j = await postRaw("/api/replay/edit",
-      { key: REPLAY_KEY, at: REPLAY_I, overlay: REPLAY_EDITS, op });
+      { key: S.REPLAY_KEY, at: S.REPLAY_I, overlay: S.REPLAY_EDITS, op });
     if (!j || !j.snapshot) throw new Error((j && j.error) || "edit failed");
-    REPLAY_EDITS = j.overlay; REPLAY_SNAPSHOT = j.snapshot;
+    S.REPLAY_EDITS = j.overlay; S.REPLAY_SNAPSHOT = j.snapshot;
     EDIT = null; renderAll(curData());
   } catch (e) { alert("Edit failed: " + e); }
-}
-// GET + parse JSON for the live dashboard's no-cache reads (state/sessions/replay/ships).
-// Mining catalog lookups use their own plain fetch (cacheable, no `ok` envelope).
-async function getJSON(url) {
-  return (await fetch(url, { cache: "no-store" })).json();
 }
 // Re-render only the edit-bearing containers from the current snapshot (used when
 // opening/cancelling an inline editor, without a network round-trip).
 function rerenderEdits() {
-  if (!LAST) return;
+  if (!S.LAST) return;
   const d = curData(); if (!d) return;
   setHTML("cargo", cargoView(d));
   setHTML("plan", planView(d));
@@ -759,17 +493,6 @@ function cargoSub(k) {
   localStorage.setItem("cargoSub", k);
   const d = curData(); if (d) setHTML("cargo", cargoView(d));
 }
-// Build an .arch-tabs segmented control: `items` is [[key,label],...]; `active` the
-// selected key; `fn` the handler name invoked with the key. opts.attr(key) adds per-button
-// attributes (e.g. data-sub); opts.tail is extra HTML appended inside the bar (e.g. the
-// archive summary span). Shared by every secondary-nav strip (cargo/plan/archive/mining).
-function tabBar(items, active, fn, opts = {}) {
-  const btns = items.map(([k, t]) => {
-    const attr = opts.attr ? " " + opts.attr(k) : "";
-    return `<button class="arch-tab${k === active ? " active" : ""}"${attr} onclick="${fn}('${k}')">${t}</button>`;
-  }).join("");
-  return `<div class="arch-tabs">${btns}${opts.tail || ""}</div>`;
-}
 function cargoView(d) {
   const sub = cargoSubActive(d);
   const body = sub === "dropoff"
@@ -779,7 +502,7 @@ function cargoView(d) {
 }
 
 // ---- Plan tab: ONE section — the ordered itinerary IS the load order, with the 3D
-// hold below it. Dragging a stop sets the visit & load order (ROUTE_ORDER) that both
+// hold below it. Dragging a stop sets the visit & load order (S.ROUTE_ORDER) that both
 // the list and the hold packing follow. (Was two sub-tabs, Routes ⇄ Manifest, keyed on
 // different units — a stop vs. a packed elevator — which never agreed; now one unit:
 // the destination stop = one list row = one hold band.) See planView below.
@@ -820,7 +543,7 @@ function legCheck(mid, oid, done, legsJson) {
 
 async function markDelivered(legs, done) {
   if (typeof legs === "string") legs = JSON.parse(legs);
-  if (REPLAY_MODE) return replayEdit({ kind: "leg_state", legs, done });
+  if (S.REPLAY_MODE) return replayEdit({ kind: "leg_state", legs, done });
   try { await postJSON("/api/leg-state", { legs, done }); }
   catch (e) { alert("Update failed: " + e); return; }
   refresh();
@@ -872,7 +595,7 @@ function planHead(d, stops, jumps, hasGrid, access, packed, cap, placed, totalSc
     ? "no cargo staged — accept hauling contracts and your route &amp; load plan appear here"
     : (hasGrid ? `${accessLabel(access)} · ${strategyCopy(packed)}${free}`
                : "drag a stop to set your visit &amp; load order");
-  const reset = ROUTE_ORDER
+  const reset = S.ROUTE_ORDER
     ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
   return `<header class="plan-head"><span class="arch-title">${title}</span>
     <span class="sub">${sub}</span>${reset}</header>`;
@@ -1013,7 +736,7 @@ function routeDrop(ev) {
   if (dropDest === DRAG_DEST) return routeDragEnd();
   order = order.filter(x => x !== DRAG_DEST);
   order.splice(order.indexOf(dropDest), 0, DRAG_DEST);
-  ROUTE_ORDER = order;
+  S.ROUTE_ORDER = order;
   persistRouteOrder();
   routeDragEnd();
   renderAll(curData());
@@ -1021,12 +744,12 @@ function routeDrop(ev) {
 // Persist the manual route order to localStorage — but only when live. In archive replay
 // the order is ephemeral (restored on exit), so it must not bleed into the live view.
 function persistRouteOrder() {
-  if (REPLAY_MODE) return;
-  if (ROUTE_ORDER) localStorage.setItem("routeOrder", JSON.stringify(ROUTE_ORDER));
+  if (S.REPLAY_MODE) return;
+  if (S.ROUTE_ORDER) localStorage.setItem("routeOrder", JSON.stringify(S.ROUTE_ORDER));
   else localStorage.removeItem("routeOrder");
 }
 function resetRouteOrder() {
-  ROUTE_ORDER = null;
+  S.ROUTE_ORDER = null;
   persistRouteOrder();
   renderAll(curData());
 }
@@ -1037,7 +760,7 @@ function moveRoute(dest, dir) {
   const i = order.indexOf(dest), j = i + dir;
   if (i < 0 || j < 0 || j >= order.length) return;
   order.splice(i, 1); order.splice(j, 0, dest);
-  ROUTE_ORDER = order;
+  S.ROUTE_ORDER = order;
   persistRouteOrder();
   renderAll(curData());
   setTimeout(() => {   // restore focus to the grip in its new position
@@ -1201,11 +924,11 @@ function renderMissions() { const d = curData(); if (d) setHTML("contracts", mis
 const destHue = (i) => Math.round((i * 137.508) % 360);
 
 // ---- cargo groups, elevator staging + load-order packing ---- //
-// The snapshot every tab renders from (live session only).
-const curData = () => (REPLAY_MODE ? REPLAY_SNAPSHOT : LAST);
+// (curData — the snapshot every tab renders from — lives in state.js.)
 
 // Render every tab from one snapshot `d` (the live snapshot).
-function renderAll(d) {
+// Exported: archive.js's replay controls re-render the whole dashboard through this.
+export function renderAll(d) {
   if (!d) return;
   applyTabLayout(effectiveMining(d));   // detected mining ship (or the MODE switch) → Mining tabs
   renderHeader(d);
@@ -1220,20 +943,16 @@ function renderAll(d) {
 
 const loadOrder = (gs) => [...gs].sort((a, b) => b.routeIdx - a.routeIdx);
 
-// Manual delivery order: a persisted list of destination stations the user dragged
-// into their preferred visit sequence. When set it overrides the planner's order
-// everywhere (route cards, trip plan, and the load order via deliveryIndex). Unknown
+// Manual delivery order (S.ROUTE_ORDER, persisted — see state.js) overrides the planner's
+// order everywhere (route cards, trip plan, and the load order via deliveryIndex). Unknown
 // destinations (new contracts) fall through to the server order until next reordered.
-let ROUTE_ORDER = (() => {
-  try { return JSON.parse(localStorage.getItem("routeOrder") || "null"); } catch (e) { return null; }
-})();
 const routeRank = (dest) => {
-  const i = ROUTE_ORDER ? ROUTE_ORDER.indexOf(dest) : -1;
+  const i = S.ROUTE_ORDER ? S.ROUTE_ORDER.indexOf(dest) : -1;
   return i >= 0 ? i : Infinity;
 };
 // Stable-sort items by the manual order, keeping the server order for ties/unknowns.
 function byRouteOrder(arr, destOf) {
-  if (!ROUTE_ORDER || !arr) return arr || [];
+  if (!S.ROUTE_ORDER || !arr) return arr || [];
   return arr.map((x, i) => [x, i])
     .sort((a, b) => (routeRank(destOf(a[0])) - routeRank(destOf(b[0]))) || (a[1] - b[1]))
     .map(p => p[0]);
@@ -1241,8 +960,8 @@ function byRouteOrder(arr, destOf) {
 
 // delivery position of a destination from the plotted route (0 = delivered first).
 function deliveryIndex(d, dest) {
-  if (ROUTE_ORDER) {           // user's manual drag order wins when set
-    const r = ROUTE_ORDER.indexOf(dest);
+  if (S.ROUTE_ORDER) {           // user's manual drag order wins when set
+    const r = S.ROUTE_ORDER.indexOf(dest);
     if (r >= 0) return r;
   }
   const stops = (d.plan && d.plan.stops) || [];
@@ -1379,7 +1098,7 @@ function holdHtml(d, packed, access) {
 }
 
 // ---- editor actions ---- //
-// current override for a mission, from whatever data is displayed (live LAST or the
+// current override for a mission, from whatever data is displayed (live S.LAST or the
 // replayed snapshot) so archive edits merge onto the overlay's existing override.
 const rawOverride = (mid) => {
   const d = curData();
@@ -1446,1193 +1165,14 @@ function buildOverride() {
 }
 
 async function postOverride(mid, override) {
-  if (REPLAY_MODE) return replayEdit({ kind: "override", mission_id: mid, override });
+  if (S.REPLAY_MODE) return replayEdit({ kind: "override", mission_id: mid, override });
   try { await postJSON("/api/override", { mission_id: mid, override }); }
   catch (e) { alert("Save failed: " + e); }
   EDIT = null;
   refresh();
 }
 
-// ---- archive / history ---- //
-function fmtWhen(iso) {
-  if (!iso) return "?";
-  const d = new Date(iso);
-  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " +
-    d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-// Format an elapsed span in seconds. Default is Xh Ym / Xm (session length, QT total);
-// {seconds:true} gives Xm Ys / Xs for short hops (per-jump travel time). "" if invalid.
-function fmtElapsed(sec, { seconds = false } = {}) {
-  if (sec == null || sec < 0 || !isFinite(sec)) return "";
-  if (seconds) {
-    sec = Math.round(sec);
-    const m = Math.floor(sec / 60);
-    return m ? `${m}m ${sec % 60}s` : `${sec}s`;
-  }
-  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
-  return h ? `${h}h ${m}m` : `${m}m`;
-}
-function fmtDuration(a, b) {
-  if (!a || !b) return "";
-  return fmtElapsed((new Date(b) - new Date(a)) / 1000);
-}
 
-function sessionsView(sessions) {
-  if (!sessions) return `<div class="empty">loading archive…</div>`;
-  if (!sessions.length) return `<div class="empty">No archived sessions yet. A session is saved here when you log out or relaunch the game.</div>`;
-  // Pooled logs as horizontal tabs (Contract Log, Trade Loads — which now also carries
-  // the trade-route recommendations — and Travel Log); the selected tab's body fills the
-  // viewport. ARCH_OPEN is the active tab — defaulted by recency (archDefaultSection).
-  const secs = [contractLogView(sessions), tradeLogView(sessions), travelLogView(sessions), sessionListView(sessions)];
-  if (!secs.some(s => s.key === ARCH_OPEN)) ARCH_OPEN = secs[0].key;
-  const active = secs.find(s => s.key === ARCH_OPEN) || secs[0];
-  const tabs = tabBar(secs.map(s => [s.key, s.title]), ARCH_OPEN, "toggleArch",
-    { tail: `<span class="arch-sum">${active.headSpan}</span>` });
-  return `<div class="arch-acc">
-    ${tabs}
-    <div class="card logcard arch-panel">${active.body}</div>
-  </div>`;
-}
-
-// Departed → arrived elapsed, seconds-aware (jumps run seconds to minutes). "" if no arrival.
-function fmtTravelTime(dep, arr) {
-  if (!dep || !arr) return "";
-  return fmtElapsed((new Date(arr) - new Date(dep)) / 1000, { seconds: true });
-}
-
-// Pool every session's trades + the live ones, deduped (shared by the trade & travel logs).
-function pooledTrades(sessions) {
-  const out = [], seen = new Set();
-  const add = t => {
-    const k = `${t.ts}|${t.action}|${t.commodity_guid}|${t.scu}`;
-    if (!seen.has(k)) { seen.add(k); out.push(t); }
-  };
-  for (const s of sessions || []) for (const t of s.trades || []) add(t);
-  for (const t of (LAST && LAST.trades) || []) add(t);
-  return out;
-}
-function fuelShort(n) {
-  return !n ? "—" : n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : "" + n;
-}
-
-// Cross-session quantum-travel log: each jump as Status · From → To · Time · System ·
-// QT fuel · Ship. Pooled with the live session's jumps. Newest first.
-function travelLogView(sessions) {
-  const seen = new Set(), rows = [];
-  const add = t => {
-    const k = `${t.ts}|${t.ship}|${t.to_code}`;
-    if (!seen.has(k)) { seen.add(k); rows.push(t); }
-  };
-  for (const s of sessions || [])
-    for (const t of s.travels || []) add(t);
-  for (const t of (LAST && LAST.travels) || []) add(t);  // live session
-  rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
-  let totalSecs = 0;
-  const body = rows.map(t => {
-    const status = t.arrived
-      ? `<span class="lt-tag good" title="arrived ${esc(t.arrived)}">✔ arrived</span>`
-      : `<span class="lt-tag" title="no arrival logged">⋯ in transit</span>`;
-    const dur = fmtTravelTime(t.ts, t.arrived);
-    if (t.arrived) totalSecs += Math.max(0, (new Date(t.arrived) - new Date(t.ts)) / 1000);
-    const sys = t.system
-      ? `<span class="qt-sys s-${t.system.replace(/\s+/g, "").toLowerCase()}">${esc(t.system)}</span>` : "";
-    return `<tr>
-      <td class="lt-when">${fmtWhen(t.ts)}</td>
-      <td>${status}</td>
-      <td class="lt-title">${esc(t.from)} <span class="qt-leg">→</span> ${esc(t.to)}</td>
-      <td class="lt-num">${dur || '<span class="qt-none">—</span>'}</td>
-      <td>${sys}</td>
-      <td class="lt-num" title="QT fuel estimate">${fuelShort(t.fuel)}</td>
-      <td class="lt-shop">${esc(t.ship || "")}</td></tr>`;
-  }).join("");
-  const tot = totalSecs ? ` · ${fmtElapsed(totalSecs)} in QT` : "";
-  const inner = logTable(
-    `<th>Departed</th><th>Status</th><th>Route</th><th class="lt-num">Time</th><th>System</th><th class="lt-num">QT fuel</th><th>Ship</th>`,
-    body, "No quantum travel in range.");
-  return logSection("travel", `Travel Log · ${rows.length}`,
-                    `<span class="scu">${rows.length} jumps${tot}</span>`, inner);
-}
-
-// High-level contract kind, mirroring backend patterns.classify_contract for archived
-// sessions that predate the stored `type` (logbackup gone, never re-archived). Falls
-// back to title/is_trade only (org/contract aren't kept in the summary).
-const _CT_COMBAT = ["bounty", "bounties", "eliminate", "kill", "destroy", "defeat",
-  "mercenary", "security", "defend", "defence", "defense", "assault", "attack",
-  "combat", "pirate", "raid", "ambush", "wanted", "hostile", "strike"];
-const _CT_DELIVERY = ["deliver", "courier", "transport", "package", "parcel", "dossier",
-  "retrieve", "recover", "fetch", "files", "investigate", "smuggl"];
-function contractType(m) {
-  if (m.type) return m.type;
-  if (m.is_trade) return "Hauling";
-  const hay = (m.title || "").toLowerCase();
-  if (_CT_COMBAT.some(w => hay.includes(w))) return "Bounty / Combat";
-  if (_CT_DELIVERY.some(w => hay.includes(w))) return "Delivery";
-  return "Other";
-}
-// The authoritative label→slug table lives ONLY in the backend (scdata._TYPE_MAP): every
-// p4k mission type ships its slug per mission (decoded.icon live, m.icon archived), so the
-// frontend never restates it. The one thing that has no per-mission icon is contractType()'s
-// own heuristic fallback labels (they're not p4k types) — give just those four a fixed slug.
-const HEUR_SLUG = { "Hauling": "haul", "Delivery": "deliver",
-  "Bounty / Combat": "bounty", "Other": "other" };
-const ctSlug = (label, icon) => icon || HEUR_SLUG[label] || "other";
-// The game's own mobiGlas type icon, with the label as a tooltip. Icon-forward; if the SVG
-// isn't on disk (contracts not yet extracted / offline) the row reveals the text label.
-function typeMark(label, icon) {
-  const l = label || "Other";
-  const s = ctSlug(l, icon);
-  return `<span class="ct-mark ct-${s}" title="${esc(l)}"><img class="ct-ico" alt="${esc(l)}"`
-    + ` src="/mission-icons/${s}.svg" onerror="this.closest('.ct-mark').classList.add('noico')">`
-    + `<span class="ct-lbl lt-tag ct-${s}">${esc(l)}</span></span>`;
-}
-
-// Contract Log type filter — a set of EXCLUDED types (empty = show all), persisted.
-// The open/closed dropdown state lives in globals so the 3s poll's re-render preserves
-// it; CT_PRESENT caches the types the current data offers (for the All/None buttons).
-let CONTRACT_TYPE_HIDDEN = new Set(JSON.parse(localStorage.getItem("ctHidden") || "[]"));
-let TYPE_MENU_OPEN = false;
-let CT_PRESENT = [];
-function _saveCtHidden() { localStorage.setItem("ctHidden", JSON.stringify([...CONTRACT_TYPE_HIDDEN])); }
-function _archRepaint() { setHTML("archive", sessionsView(SESSIONS)); }
-function toggleTypeMenu() { TYPE_MENU_OPEN = !TYPE_MENU_OPEN; _archRepaint(); }
-function toggleTypeFilter(t) {
-  CONTRACT_TYPE_HIDDEN.has(t) ? CONTRACT_TYPE_HIDDEN.delete(t) : CONTRACT_TYPE_HIDDEN.add(t);
-  _saveCtHidden(); _archRepaint();
-}
-function setAllTypeFilters(showAll) {
-  CONTRACT_TYPE_HIDDEN = showAll ? new Set() : new Set(CT_PRESENT);
-  _saveCtHidden(); _archRepaint();
-}
-
-// Flat, cross-session log of every mission contract, time-ordered (newest first) by
-// when it ended (else when accepted — both now carried per mission in the archive).
-// Unfinished contracts (active when the session ended) are always hidden here; they're
-// still kept in the sessions file, just not shown. The Type column header carries a
-// multiselect dropdown that filters rows by high-level contract kind.
-function contractLogView(sessions) {
-  const all = [];
-  const slugOf = {};   // label -> icon slug, learned from the data (p4k types carry m.icon)
-  const count = {};
-  for (const s of sessions || [])
-    for (const m of s.missions || [])
-      if (m.status !== "unfinished") {
-        const type = contractType(m);
-        if (!slugOf[type] || slugOf[type] === "other") slugOf[type] = ctSlug(type, m.icon);
-        count[type] = (count[type] || 0) + 1;
-        all.push({ when: m.ended_at || m.accepted_at || s.started_at, m, type });
-      }
-  // types present, ordered by frequency (then name); the catch-all "Other" sinks last
-  CT_PRESENT = Object.keys(count).sort((a, b) =>
-    (a === "Other") - (b === "Other") || count[b] - count[a] || a.localeCompare(b));
-  const rows = all.filter(r => !CONTRACT_TYPE_HIDDEN.has(r.type))
-    .sort((a, b) => (b.when || "").localeCompare(a.when || ""));
-  const total = rows.reduce((a, r) => a + (r.m.reward || 0), 0);
-  const body = rows.map(r => {
-    const dest = (r.m.destinations || []).filter(Boolean);
-    return `<tr>
-      <td class="lt-when">${fmtWhen(r.when)}</td>
-      <td><span class="badge b-${r.m.status}">${esc(r.m.status)}</span></td>
-      <td class="lt-type">${typeMark(r.type, r.m.icon)}</td>
-      <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
-      <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
-  }).join("") || `<tr><td colspan="5" class="lt-empty">No contracts match the selected types.</td></tr>`;
-  const hidden = CT_PRESENT.filter(t => CONTRACT_TYPE_HIDDEN.has(t)).length;
-  const opts = CT_PRESENT.map(t =>
-    `<label class="th-opt"><input type="checkbox" ${CONTRACT_TYPE_HIDDEN.has(t) ? "" : "checked"}
-       onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')"><img class="ct-ico opt-ico" alt=""
-       src="/mission-icons/${slugOf[t]}.svg" onerror="this.style.display='none'">${tag(t, "ct-" + slugOf[t])}</label>`).join("");
-  const menu = `<span class="th-menu-wrap">
-    <button class="th-menu-btn${hidden ? " on" : ""}" aria-haspopup="true" aria-expanded="${TYPE_MENU_OPEN}" onclick="toggleTypeMenu()">Type ▾</button>${
-      TYPE_MENU_OPEN ? `<span class="th-menu">
-        <span class="th-menu-act"><button onclick="setAllTypeFilters(true)">All</button><button onclick="setAllTypeFilters(false)">None</button></span>
-        ${opts}</span>` : ""}</span>`;
-  const inner = all.length
-    ? logTable(`<th>When</th><th>Status</th><th class="th-type">${menu}</th><th>Contract</th>${th("Reward", 1)}`,
-               body, "")
-    : `<div class="empty">No contracts in range.</div>`;
-  const typeNote = hidden ? ` · ${CT_PRESENT.length - hidden}/${CT_PRESENT.length} types` : "";
-  return logSection("contracts", `Contract Log · ${rows.length}`,
-                    `<span class="scu">${num(total)} aUEC${typeNote}</span>`, inner);
-}
-
-// Group manual trades into "loads": a buy paired (FIFO, per commodity) with the
-// possibly-split sells that draw it down, so profit can be read per whole load even
-// when a sell is split. A buy not yet fully sold is "open"/"holding" (profit only on
-// the sold portion); a sell with no buy in range surfaces as a "no basis" row.
-// Stable id matching State.trade_id (ts|action|guid|shop, raw shop name), so a load
-// can be flagged lost server-side. Computed from fields the trade dict already has.
-const tradeId = t => t.id || `${t.ts}|${t.action}|${t.commodity_guid}|${t.shop_raw || t.shop}`;
-
-function buildLoads(trades) {
-  const chrono = [...trades].sort((a, b) => (a.ts || "").localeCompare(b.ts || ""));
-  const open = {};   // commodity key -> FIFO queue of open buy lots
-  const loads = [];
-  for (const t of chrono) {
-    const key = t.commodity_guid || t.commodity;
-    if (t.action === "buy") {
-      const lot = { commodity: t.commodity, ts: t.ts, buyPlace: t.shop, buyScu: t.scu,
-                    cost: t.auec, soldScu: 0, revenue: 0, sellPlaces: [], id: tradeId(t) };
-      (open[key] = open[key] || []).push(lot);
-      loads.push(lot);
-    } else {
-      let remain = t.scu;
-      const q = open[key] || [];
-      while (remain > 0 && q.length) {
-        const lot = q[0], take = Math.min(lot.buyScu - lot.soldScu, remain);
-        lot.soldScu += take;
-        lot.revenue += t.auec * (t.scu ? take / t.scu : 1);  // prorate split sells
-        if (t.shop && !lot.sellPlaces.includes(t.shop)) lot.sellPlaces.push(t.shop);
-        remain -= take;
-        if (lot.soldScu >= lot.buyScu - 0.001) q.shift();
-      }
-      if (remain > 0)  // sold more than any tracked buy → unmatched sell
-        loads.push({ commodity: t.commodity, ts: t.ts, buyPlace: null, buyScu: 0, cost: 0,
-                     soldScu: remain, revenue: t.auec * (t.scu ? remain / t.scu : 1),
-                     sellPlaces: [t.shop], noBasis: true });
-    }
-  }
-  return loads;
-}
-
-// Cross-session manual-trade LOAD log: the trade-route recommendations (folded in from
-// the former Trade Routes tab) on top, then each load as a row (buy + its sells with
-// realised profit = revenue − the cost of the sold portion). Newest load first.
-function tradeLogView(sessions) {
-  // Pool archived trades with the CURRENT (un-archived) session's so a just-made trade
-  // shows immediately (not only after logout); pooledTrades dedups both feeds.
-  const trades = pooledTrades(sessions);
-  const loads = buildLoads(trades).sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
-  const LOST = new Set((LAST && LAST.lost_trades) || []);
-  const routesBlock = tradeRoutesBlock(loads, LOST);
-  let totalProfit = 0;
-  const body = loads.map(L => {
-    const sold = L.soldScu, lost = L.id && LOST.has(L.id);
-    // a lost load writes off the unsold remainder: realise the FULL buy cost.
-    const realisedCost = lost ? L.cost : (L.buyScu ? L.cost * (sold / L.buyScu) : 0);
-    const profit = Math.round(L.revenue - realisedCost);
-    const priced = sold > 0 || lost;   // lost loads realise even with no sells
-    if (priced) totalProfit += profit;
-    const route = [L.buyPlace, (L.sellPlaces || []).join(" / ")].filter(Boolean).join(" → ") || "—";
-    let tag, scu;
-    if (lost) { tag = `<span class="lt-tag lost">lost</span>`; scu = `${num(sold)}/${num(L.buyScu)}`; }
-    else if (L.noBasis) { tag = `<span class="lt-tag warn">no basis</span>`; scu = num(sold); }
-    else if (sold >= L.buyScu) { tag = `<span class="lt-tag good">closed</span>`; scu = num(L.buyScu); }
-    else if (sold > 0) { tag = `<span class="lt-tag">open</span>`; scu = `${num(sold)}/${num(L.buyScu)}`; }
-    else { tag = `<span class="lt-tag">holding</span>`; scu = num(L.buyScu); }
-    // a buy-based load that isn't fully sold can be marked lost (cargo destroyed /
-    // stolen); a lost one can be restored. No action on fully-closed or no-basis rows.
-    let act = "";
-    if (lost) act = `<button class="lt-act" title="Restore — not lost" onclick='markTradeLost(${JSON.stringify(L.id)}, false)'>↩</button>`;
-    else if (!L.noBasis && sold < L.buyScu) act = `<button class="lt-act" title="Mark this haul lost (cargo destroyed/stolen)" onclick='markTradeLost(${JSON.stringify(L.id)}, true)'>✕</button>`;
-    return `<tr class="${lost ? "lt-lost" : ""}">
-      <td class="lt-when">${fmtWhen(L.ts)}</td>
-      <td class="lt-title">${esc(L.commodity)}</td>
-      <td class="lt-status">${tag}${act}</td>
-      <td class="lt-shop">${esc(route)}</td>
-      <td class="lt-num">${scu}</td>
-      <td class="lt-num ${L.cost ? "neg" : ""}">${L.cost ? "−" + num(L.cost) : "—"}</td>
-      <td class="lt-num ${L.revenue ? "pos" : ""}">${L.revenue ? "+" + num(Math.round(L.revenue)) : "—"}</td>
-      <td class="lt-num ${!priced ? "" : profit >= 0 ? "pos" : "neg"}">${priced ? (profit >= 0 ? "+" : "−") + num(Math.abs(profit)) : "—"}</td></tr>`;
-  }).join("");
-  const loadsTable = loads.length ? `<table class="logtable">
-      <thead><tr><th>When</th><th>Commodity</th><th>Status</th><th>Route</th>${th("SCU", 1)}${th("Cost", 1)}${th("Revenue", 1)}${th("Profit", 1)}</tr></thead>
-      <tbody>${body}</tbody></table>` : `<div class="empty">No manual trades in range.</div>`;
-  // both tables share one scroll region (the recs/rank bar scroll with them)
-  const inner = `<div class="logwrap">${routesBlock}`
-    + `<div class="arch-sub">Loads · ${loads.length}</div>${loadsTable}</div>`;
-  return logSection("trades", `Trade Loads · ${loads.length}`,
-                    `<span class="scu ${totalProfit >= 0 ? "pos" : "neg"}">${totalProfit >= 0 ? "+" : "−"}${num(Math.abs(totalProfit))} aUEC profit</span>`, inner);
-}
-
-// Aggregate completed/partly-sold loads into trade ROUTES keyed by
-// commodity + buy station → sell station(s). Each route rolls up every trip's sold
-// SCU, realised cost (cost of the sold portion only, so open loads count fairly),
-// revenue and profit, plus weighted % return and aUEC/SCU. Lost & no-basis loads are
-// excluded — a route recommendation should reflect deliveries that actually completed.
-function tradeRoutes(loads, lostSet) {
-  const agg = {};
-  for (const L of loads) {
-    if (L.noBasis || !L.buyPlace || L.soldScu <= 0) continue;
-    if (L.id && lostSet && lostSet.has(L.id)) continue;
-    const to = (L.sellPlaces || []).join(" / ");
-    if (!to) continue;
-    const realisedCost = L.buyScu ? L.cost * (L.soldScu / L.buyScu) : 0;
-    const key = `${L.commodity}|${L.buyPlace}|${to}`;
-    const a = agg[key] || (agg[key] = {
-      commodity: L.commodity, from: L.buyPlace, to, scu: 0, cost: 0, revenue: 0, trips: 0,
-    });
-    a.scu += L.soldScu; a.cost += realisedCost; a.revenue += L.revenue; a.trips += 1;
-  }
-  return Object.values(agg).map(a => ({
-    ...a,
-    profit: a.revenue - a.cost,
-    pct: a.cost ? (a.revenue - a.cost) / a.cost : 0,
-    perScu: a.scu ? (a.revenue - a.cost) / a.scu : 0,
-  }));
-}
-
-const ROUTE_SORTS = { profit: "Total aUEC", pct: "% return", perScu: "aUEC / SCU" };
-const pctFmt = n => (n >= 0 ? "+" : "−") + (Math.abs(n) * 100).toFixed(Math.abs(n) < 0.1 ? 1 : 0) + "%";
-const signed = n => (n >= 0 ? "+" : "−") + num(Math.abs(Math.round(n)));
-
-// Trade-route recommendations block (folded into the Trade Loads tab): rank the
-// player's own buy→sell routes by the chosen metric (total profit / % return / per-SCU)
-// and call out the single best of each. Built from the same trade loads as the ledger
-// below it, so the caller passes the already-computed loads + lost set. Returns HTML
-// (a "Top routes" subheader + recs + table); "" when there are no completed routes yet.
-function tradeRoutesBlock(loads, lostSet) {
-  const routes = tradeRoutes(loads, lostSet);
-  if (!routes.length)
-    return `<div class="arch-sub">Top routes</div>`
-      + `<div class="empty">No completed trade routes yet. Buy a commodity at one station and sell it at another — your most profitable routes will surface here.</div>`;
-
-  const sortKey = ROUTE_SORTS[ROUTE_SORT] ? ROUTE_SORT : "profit";
-  const ranked = [...routes].sort((a, b) => b[sortKey] - a[sortKey]);
-  const bestProfit = [...routes].sort((a, b) => b.profit - a.profit)[0];
-  const bestPct = [...routes].sort((a, b) => b.pct - a.pct)[0];
-  const callout = (lbl, r, val) => `<div class="rec">
-      <span class="rec-lbl">${lbl}</span>
-      <span class="rec-cmd">${esc(r.commodity)}</span>
-      <span class="rec-route">${esc(r.from)} <span class="qt-leg">→</span> ${esc(r.to)}</span>
-      <span class="rec-val pos">${val}</span></div>`;
-  const recs = `<div class="recs">
-    ${callout("Top earner", bestProfit, `${signed(bestProfit.profit)} aUEC`)}
-    ${callout("Best margin", bestPct, pctFmt(bestPct.pct))}</div>`;
-
-  const bar = `<div class="filtbar">
-    <span class="filt-lbl">Rank by</span>
-    ${Object.entries(ROUTE_SORTS).map(([k, lbl]) =>
-      `<button class="seg${sortKey === k ? " on" : ""}" onclick="setRouteSort('${k}')">${lbl}</button>`).join("")}</div>`;
-
-  const body = ranked.map((r, i) => `<tr class="${i === 0 ? "rt-best" : ""}">
-      <td class="lt-title">${i === 0 ? '<span class="rt-star" title="top route by the selected metric">★</span> ' : ""}${esc(r.commodity)}</td>
-      <td class="lt-shop">${esc(r.from)} <span class="qt-leg">→</span> ${esc(r.to)}</td>
-      <td class="lt-num">${r.trips}</td>
-      <td class="lt-num">${num(Math.round(r.scu))}</td>
-      <td class="lt-num ${r.profit >= 0 ? "pos" : "neg"}">${signed(r.profit)}</td>
-      <td class="lt-num ${r.pct >= 0 ? "pos" : "neg"}">${pctFmt(r.pct)}</td>
-      <td class="lt-num ${r.perScu >= 0 ? "pos" : "neg"}">${signed(r.perScu)}</td></tr>`).join("");
-  return `<div class="arch-sub">Top routes · ${routes.length}</div>` + recs + bar
-    + `<table class="logtable">
-      <thead><tr><th>Commodity</th><th>Route</th>${th("Trips", 1)}${th("SCU", 1)}${th("Profit", 1)}${th("%", 1)}${th("/SCU", 1)}</tr></thead>
-      <tbody>${body}</tbody></table>`;
-}
-
-async function loadSessions() {
-  try {
-    SESSIONS = await getJSON("/api/sessions");
-  } catch (e) { SESSIONS = SESSIONS || []; }
-  if (ARCH_PICK) { if (!ARCH_OPEN) ARCH_OPEN = archDefaultSection(); ARCH_PICK = false; }  // only when none open
-  _archRepaint();
-}
-
-// Flag/unflag a trade load as lost (cargo destroyed/stolen). Optimistically updates
-// the live snapshot's lost set so the row re-renders immediately, then persists.
-async function markTradeLost(id, lost) {
-  if (REPLAY_MODE) return replayEdit({ kind: "trade_lost", trade_id: id, lost });
-  if (LAST) {
-    const set = new Set(LAST.lost_trades || []);
-    lost ? set.add(id) : set.delete(id);
-    LAST.lost_trades = [...set];
-  }
-  _archRepaint();
-  try { await postJSON("/api/trade-lost", { trade_id: id, lost }); }
-  catch (e) { /* next poll reconciles from the server */ }
-}
-
-// Every archived session as a row, newest first: when (+ duration) · player · ship(s) ·
-// earned · contracts (completed/total) · trades · a Replay control. Replaying a session
-// drives the WHOLE dashboard into its reconstructed past state (see enterReplay).
-function sessionListView(sessions) {
-  const list = [...(sessions || [])].sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
-  const body = list.map(s => {
-    const dur = fmtDuration(s.started_at, s.ended_at);
-    const c = s.counts || {};
-    const ships = (s.ships || []).join(", ");
-    const trades = (s.trades || []).length;
-    const replaying = REPLAY_MODE && REPLAY_KEY === s.key;
-    const act = replaying
-      ? `<button class="lt-act on" onclick="exitReplay()" title="Stop replaying this session">■ exit replay</button>`
-      : REPLAY_UNAVAILABLE.has(s.key)
-        ? `<span class="lt-tag" title="The source log for this session is no longer on disk">log gone</span>`
-        : `<button class="lt-act" onclick='enterReplay(${JSON.stringify(s.key)})' title="Replay this session — scrub the whole dashboard through it">▶ replay</button>`;
-    return `<tr class="${replaying ? "sess-replaying" : ""}">
-      <td class="lt-when">${fmtWhen(s.started_at)}${dur ? ` <span class="sub">· ${dur}</span>` : ""}</td>
-      <td class="lt-shop">${esc(s.player || "—")}</td>
-      <td class="lt-shop">${esc(ships || "—")}</td>
-      <td class="lt-num">${s.earned ? num(s.earned) : "—"}</td>
-      <td class="lt-num">${c.completed || 0}/${c.total || 0}</td>
-      <td class="lt-num">${trades || "—"}</td>
-      <td class="lt-replay">${act}</td></tr>`;
-  }).join("");
-  const inner = logTable(
-    `<th>Session</th><th>Player</th><th>Ship(s)</th>${th("Earned", 1)}${th("Done", 1)}${th("Trades", 1)}<th>Replay</th>`,
-    body, "No archived sessions yet.");
-  return logSection("sessions", `Sessions · ${list.length}`,
-                    `<span class="scu">${list.length} archived</span>`, inner);
-}
-
-// ---- replay controls ---- //
-// Enable a session for replay: fetch its scrub timeline, default to the final state,
-// then drive the whole dashboard from the reconstructed snapshot. Live polling pauses.
-async function enterReplay(key) {
-  try {
-    const tl = await getJSON(`/api/replay/timeline?key=${encodeURIComponent(key)}`);
-    if (!tl.available || !tl.count) {
-      REPLAY_UNAVAILABLE.add(key);
-      _archRepaint();
-      return;
-    }
-    REPLAY_KEY = key; REPLAY_POINTS = tl.points; REPLAY_MODE = true;
-    REPLAY_EDITS = null;                  // fresh sandbox; the server seeds it on first edit
-    REPLAY_SAVED_ORDER = ROUTE_ORDER;     // archive reordering is ephemeral — restore on exit
-    // Land on the session's busiest checkpoint (most contracts/cargo on the dashboard)
-    // rather than the last one — session-end usually has empty holds and finished
-    // contracts, so defaulting there makes replay look like it did nothing. Falls back
-    // to the last checkpoint when the session had no cargo activity (e.g. combat-only).
-    let best = tl.count - 1, bestFill = 0;
-    for (const p of tl.points) { const f = p.fill || 0; if (f >= bestFill) { bestFill = f; best = p.i; } }
-    REPLAY_I = bestFill > 0 ? best : tl.count - 1;
-    await loadReplayState();                       // sets REPLAY_SNAPSHOT + renders all tabs
-    renderReplayBar();
-    _archRepaint();     // reflect the active-replay row state
-  } catch (e) {
-    REPLAY_UNAVAILABLE.add(key);
-    _archRepaint();
-  }
-}
-
-// Fetch the snapshot for the current checkpoint and repaint every tab from it.
-async function loadReplayState() {
-  const bar = $("replaybar"); if (bar) bar.classList.add("rb-busy");
-  try {
-    // POST so any ephemeral edits (REPLAY_EDITS) stay applied while scrubbing; null overlay
-    // returns the cached disk-state snapshot for this checkpoint (unchanged behaviour).
-    const snap = await postRaw("/api/replay/state",
-      { key: REPLAY_KEY, at: REPLAY_I, overlay: REPLAY_EDITS });
-    if (snap && snap.available !== false) { REPLAY_SNAPSHOT = snap; renderAll(curData()); }
-  } catch (e) { /* leave the prior frame up */ }
-  if (bar) bar.classList.remove("rb-busy");
-}
-
-// Scrub: move to checkpoint i. Update the bar text immediately (so dragging feels live);
-// debounce the snapshot fetch so a fast drag doesn't fire a request per pixel.
-function scrubTo(i) {
-  REPLAY_I = Math.max(0, Math.min(+i, REPLAY_POINTS.length - 1));
-  updateReplayBar();
-  clearTimeout(_scrubTimer);
-  _scrubTimer = setTimeout(loadReplayState, 110);
-}
-function scrubStep(d) { scrubTo(REPLAY_I + d); }
-
-function exitReplay() {
-  REPLAY_MODE = false; REPLAY_KEY = null; REPLAY_SNAPSHOT = null; REPLAY_POINTS = []; REPLAY_I = 0;
-  REPLAY_EDITS = null;                          // discard the ephemeral edits
-  ROUTE_ORDER = REPLAY_SAVED_ORDER; REPLAY_SAVED_ORDER = null;   // restore the live route order
-  renderReplayBar();
-  if (LAST) renderAll(curData());                 // back to the live snapshot
-  _archRepaint();
-  refresh();                                       // resume live polling now
-}
-
-// Build the replay banner once (on enter/exit) so the range element stays stable while
-// dragging; updateReplayBar() refreshes only the position/time/label text on each scrub.
-function renderReplayBar() {
-  const bar = $("replaybar"); if (!bar) return;
-  const root = document.documentElement.style;
-  if (!REPLAY_MODE) { bar.classList.add("hide"); bar.innerHTML = ""; root.setProperty("--replay-h", "0px"); return; }
-  const n = REPLAY_POINTS.length, sess = (REPLAY_KEY || "").split("|")[0];
-  bar.classList.remove("hide");
-  // Two rows: the fixed-width slider controls on top, the variable-length checkpoint
-  // time + event label on their own line below (left-aligned under the session time) so
-  // the slider doesn't resize as you scrub. The former "REPLAY" badge is now the Exit
-  // button (leftmost), vertically centered across both rows.
-  bar.innerHTML = `<button class="rb-exit" onclick="exitReplay()" title="Return to live data">Exit replay</button>
-    <span class="rb-body">
-      <span class="rb-top">
-        <span class="rb-sess">${esc(fmtWhen(sess))}</span>
-        <button class="rb-step" onclick="scrubStep(-1)" title="previous checkpoint">◀</button>
-        <input id="rb-scrub" class="rb-scrub" type="range" min="0" max="${Math.max(0, n - 1)}"
-          value="${REPLAY_I}" oninput="scrubTo(this.value)">
-        <button class="rb-step" onclick="scrubStep(1)" title="next checkpoint">▶</button>
-        <span id="rb-pos" class="rb-pos"></span>
-      </span>
-      <span class="rb-info">
-        <span id="rb-when" class="rb-when"></span>
-        <span id="rb-label" class="rb-label"></span>
-      </span>
-    </span>`;
-  root.setProperty("--replay-h", bar.offsetHeight + "px");  // archive panel subtracts this
-  updateReplayBar();
-}
-function updateReplayBar() {
-  const n = REPLAY_POINTS.length, p = REPLAY_POINTS[REPLAY_I] || {};
-  const pos = $("rb-pos"), when = $("rb-when"), label = $("rb-label"), scrub = $("rb-scrub");
-  if (pos) pos.textContent = `${REPLAY_I + 1}/${n}`;
-  if (when) when.textContent = p.ts ? fmtWhen(p.ts) : "";
-  if (label) label.textContent = p.label || "";
-  if (scrub && +scrub.value !== REPLAY_I) scrub.value = REPLAY_I;  // keep slider synced for ◀/▶
-}
-
-// ---- live stream ---- //
-// The tracker pushes the full snapshot over SSE whenever the log changes (real-time, no
-// polling). The open connection also tells the server a dashboard is attached, so the
-// tracker stays alive while this tab is open and shuts itself down only once the last tab
-// closes. Shutdown is the server's job now, so this tab never self-closes; on a dropped
-// connection we just show a passive banner and let EventSource auto-reconnect (which also
-// reattaches silently when the tracker is restarted).
-
-function showDisconnect(msg) {
-  let el = $("dcbanner");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "dcbanner";
-    el.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;" +
-      "background:#5a1d1d;color:#f4dada;font:600 13px/1.4 system-ui,sans-serif;" +
-      "text-align:center;padding:6px 12px";
-    document.body.appendChild(el);
-  }
-  el.textContent = msg || "Tracker disconnected — reconnecting…";
-  el.style.display = "block";
-}
-function hideDisconnect() {
-  const el = $("dcbanner");
-  if (el) el.style.display = "none";
-}
-
-// ---- update-available banner (tracker owns updating; this is the prompt) ----
-// The snapshot carries `update` = {available,current,latest,compare_url,mode}. In prompt
-// mode a new build shows this bar; Update now POSTs to apply (the tracker resets + restarts
-// and the asset-hash reload swaps the page), View changes opens the GitHub compare, Dismiss
-// hides it (the server won't re-offer that commit). auto/off never show a banner.
-let _updBusy = false;
-function renderUpdateBar(u) {
-  const el = $("updatebar");
-  if (!el) return;
-  if (!u || !u.available) { el.classList.add("hide"); el.innerHTML = ""; _updBusy = false; return; }
-  const view = u.compare_url
-    ? `<button class="sp-btn" onclick="window.open('${esc(u.compare_url)}','_blank','noopener')">View changes</button>`
-    : "";
-  el.innerHTML =
-    `<span class="ub-msg">⟳ New build available <code>${esc(u.current || "?")}</code> → ` +
-    `<code>${esc(u.latest || "?")}</code></span>` +
-    `<span class="ub-actions"><button class="sp-btn primary" onclick="applyUpdate(this)">Update now</button>` +
-    `${view}<button class="sp-btn" onclick="dismissUpdate()">Dismiss</button></span>`;
-  el.classList.remove("hide");
-}
-async function applyUpdate(btn) {
-  if (_updBusy) return;
-  _updBusy = true;
-  if (btn) { btn.disabled = true; btn.textContent = "Updating…"; }
-  try {
-    await postJSON("/api/update/apply");
-    // The tracker is restarting; its asset-hash bump reloads this tab into the new build.
-    // Leave the button disabled until that happens.
-  } catch (e) {
-    _updBusy = false;
-    if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
-    alert("Update failed: " + e);
-  }
-}
-async function dismissUpdate() {
-  try { await postJSON("/api/update/dismiss"); } catch (_) { /* best-effort */ }
-  $("updatebar").classList.add("hide");
-}
-
-// ---- transient toast notifications ----
-function toast(msg, kind) {
-  const host = $("toaster");
-  if (!host) return;
-  const t = document.createElement("div");
-  t.className = "toast" + (kind ? " " + kind : "");
-  t.textContent = msg;
-  host.appendChild(t);
-  requestAnimationFrame(() => t.classList.add("show"));   // trigger the enter transition
-  const kill = () => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
-  t.onclick = kill;
-  setTimeout(kill, 7000);
-}
-
-// Always announce a completed update. app_version is the running build's git hash; when it
-// changes from the one this browser last saw (a restart re-execed into new code), an update
-// just landed — covers every path (banner, Check now, auto, settings-change). localStorage
-// dedupes across the reload and across tabs; the first load just seeds it (no toast).
-function notifyIfUpdated(v) {
-  if (!v) return;
-  const k = "starlogger_build", prev = localStorage.getItem(k);
-  if (prev && prev !== v) toast(`Update complete — now on build ${v} ✓`, "ok");
-  localStorage.setItem(k, v);
-}
-
-// ---- jukebox: play + curate the game soundtrack decoded from the p4k ---- //
-// A modal overlay (like Settings), opened from the sidebar's Jukebox button. Lazy-built once
-// (initJukebox); thereafter open/close just toggles the overlay so the <audio> element — and any
-// playing track — persists across opens. The soundtrack is decoded automatically in the
-// background (no button); only the long-form *full songs* (~33) are kept. There are no real names
-// in the data — hashed ids only — so the user curates: drag to reorder, rename, and hide duds.
-// Curation persists server-side (POST /api/music/curate) and rides the SSE snapshot.
-let JUKE_BUILT = false;       // panel skeleton injected?
-let JUKE_TRACKS = [];         // manifest rows {id, file, duration, size, system, detail}, longest-first
-let JUKE_CURATION = { order: [], skipped: [], names: {} };   // effective curation (default+local)
-let JUKE_CUR = null;          // id of the track loaded in the player
-let JUKE_PHASE = null;        // last-seen build phase (to catch the extracting->done edge)
-let JUKE_SEEKING = false;     // user is dragging the seek bar (don't fight it with timeupdate)
-let JUKE_SHUFFLE = false;     // shuffle playback order (persisted in localStorage)
-let JUKE_HISTORY = [];        // ids in play order, capped — lets "previous" work under shuffle
-let JUKE_RESTORED = false;    // playback state already restored from localStorage this load?
-// Playback intent: Play turns this on, Stop turns it off (persisted). When on, a reload resumes
-// playing the saved/first track. Initialized from the boot cache so it's known before /api/music.
-let JUKE_AUTOPLAY = (() => { try { return localStorage.getItem("jukeAutoplay") === "1"; } catch (_) { return false; } })();
-let _jukeDragId = null;       // id of the row being dragged
-let _jukeRestoreTime = null;  // pending seek (sec) to apply once the track's metadata loads
-let _jukeSavedAt = 0;         // last currentTime (sec) we persisted, to throttle timeupdate saves
-
-// Transport icons as inline SVG (currentColor) so they sit at one size and inherit the theme,
-// instead of platform media glyphs that render at odd sizes / colors. 15px via .juke-ic.
-const JUKE_IC = {
-  prev: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14L8 12z"/><rect x="5" y="5" width="2.6" height="14" rx="1"/></svg>`,
-  next: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14l10-7z"/><rect x="16.4" y="5" width="2.6" height="14" rx="1"/></svg>`,
-  play: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg>`,
-  pause: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.2v14H7zM13.8 5H17v14h-3.2z"/></svg>`,
-  stop: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>`,
-};
-
-function jukeFmt(sec) {
-  if (sec == null) return "—";
-  const s = Math.round(sec), m = Math.floor(s / 60);
-  return m + ":" + String(s % 60).padStart(2, "0");
-}
-
-// Like jukeFmt but for long spans (whole-playlist totals): H:MM:SS, or M:SS under an hour.
-function jukeFmtLong(sec) {
-  const s = Math.round(sec || 0), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, "0");
-  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
-}
-
-// A stable per-track handle from the longest-first manifest rank (M-01…), used as the default
-// label until the user renames a track. Independent of the curated playlist order.
-function jukeRank(id) {
-  const i = JUKE_TRACKS.findIndex(t => t.id === id);
-  return i < 0 ? "M-??" : "M-" + String(i + 1).padStart(2, "0");
-}
-function jukeName(id) { return JUKE_CURATION.names[id] || jukeRank(id); }
-function jukeSkipped(id) { return JUKE_CURATION.skipped.includes(id); }
-
-// Default sort: by System, then Detail (empties last), with longest-first as the final
-// tiebreak. This is the canonical order for any track the user hasn't manually placed.
-function jukeCmp(a, b) {
-  const as = a.system || "￿", bs = b.system || "￿";
-  if (as !== bs) return as.localeCompare(bs);
-  const ad = a.detail || "￿", bd = b.detail || "￿";
-  if (ad !== bd) return ad.localeCompare(bd);
-  return (b.duration || 0) - (a.duration || 0);
-}
-
-// Track ids in effective playlist order: curated order first (existing ids only), then any
-// manifest songs not yet in the order (new after a patch), sorted by System, Detail.
-function jukeOrderedIds() {
-  const have = new Set(JUKE_TRACKS.map(t => t.id));
-  const seen = new Set();
-  const out = [];
-  for (const id of JUKE_CURATION.order) if (have.has(id) && !seen.has(id)) { out.push(id); seen.add(id); }
-  for (const t of JUKE_TRACKS.filter(t => !seen.has(t.id)).slice().sort(jukeCmp)) out.push(t.id);
-  return out;
-}
-
-function initJukebox() {
-  if (!JUKE_BUILT) {
-    setHTML("jukeboxBody",
-      `<div class="juke-bar">
-        <span class="juke-status" id="jukeStatus"></span>
-        <span class="juke-total" id="jukeTotal"></span>
-      </div>
-      <ul class="juke-list" id="jukeList"></ul>`);
-    setHTML("jukeboxFoot",
-      `<div class="juke-player">
-        <div class="juke-now" id="jukeNow">Nothing playing</div>
-        <div class="juke-transport">
-          <button class="juke-nav juke-shuf" id="jukeShuffle" title="Shuffle" aria-label="Shuffle" aria-pressed="false"><svg class="juke-ic" viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg></button>
-          <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">${JUKE_IC.prev}</button>
-          <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>${JUKE_IC.play}</button>
-          <button class="juke-nav" id="jukeStop" title="Stop" aria-label="Stop" disabled>${JUKE_IC.stop}</button>
-          <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">${JUKE_IC.next}</button>
-          <span class="juke-time" id="jukeCur">0:00</span>
-          <input class="juke-seek" id="jukeSeek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" disabled>
-          <span class="juke-time" id="jukeDur">0:00</span>
-          <audio id="jukeAudio" preload="metadata"></audio>
-        </div>
-      </div>`);
-    $("jukePrev").onclick = () => jukeStep(-1);
-    $("jukeNext").onclick = () => jukeStep(1);
-    $("jukePlay").onclick = jukeToggle;
-    $("jukeStop").onclick = jukeStop;
-    JUKE_SHUFFLE = (() => { try { return localStorage.getItem("jukeShuffle") === "1"; } catch (_) { return false; } })();
-    $("jukeShuffle").onclick = jukeToggleShuffle;
-    jukeReflectShuffle();
-    const a = $("jukeAudio");
-    a.onended = () => jukeStep(1);
-    a.onplay = () => { jukeSetPlaying(true); jukePersist(); };
-    a.onpause = () => { jukeSetPlaying(false); jukePersist(); };
-    a.onloadedmetadata = () => {
-      const s = $("jukeSeek");
-      s.max = a.duration || 0; s.disabled = false;
-      if (_jukeRestoreTime != null) {           // resuming a saved position after a reload
-        a.currentTime = Math.min(_jukeRestoreTime, a.duration || _jukeRestoreTime);
-        _jukeRestoreTime = null;
-      }
-      s.value = a.currentTime || 0;
-      $("jukeCur").textContent = jukeFmt(a.currentTime);
-      $("jukeDur").textContent = jukeFmt(a.duration);
-    };
-    a.ontimeupdate = () => {
-      if (JUKE_SEEKING) return;                 // don't yank the thumb out from under a drag
-      $("jukeSeek").value = a.currentTime || 0;
-      $("jukeCur").textContent = jukeFmt(a.currentTime);
-      const f = $("jukeMiniFill");           // mirror progress onto the mini player's bar
-      if (f && a.duration) f.style.width = (100 * a.currentTime / a.duration) + "%";
-      if (Math.abs((a.currentTime || 0) - _jukeSavedAt) >= 5) jukePersist();  // throttle ~5s
-    };
-    const seek = $("jukeSeek");
-    seek.oninput = () => { JUKE_SEEKING = true; $("jukeCur").textContent = jukeFmt(+seek.value); };
-    seek.onchange = () => { a.currentTime = +seek.value; JUKE_SEEKING = false; jukePersist(); };
-    window.addEventListener("pagehide", jukePersist);   // last-chance save on navigate/close
-    jukeBuildMini();
-    jukeInitMediaSession();
-    JUKE_BUILT = true;
-    if (LAST && LAST.music) jukeApplyMusicState(LAST.music);  // reflect an in-flight build
-  }
-  jukeLoad();
-}
-
-function openJukebox() {
-  initJukebox();                       // lazy-build + refresh the track list
-  const ov = $("jukeboxOverlay");
-  ov.classList.remove("hide");
-  ov.setAttribute("aria-hidden", "false");
-  try { localStorage.setItem("jukeOpen", "1"); } catch (_) {}   // reopen on next load
-  jukeUpdateMini();                    // modal now owns the transport → hide the mini
-}
-
-function closeJukebox() {
-  const ov = $("jukeboxOverlay");      // just hides it — the <audio> keeps playing
-  ov.classList.add("hide");
-  ov.setAttribute("aria-hidden", "true");
-  try { localStorage.setItem("jukeOpen", "0"); } catch (_) {}
-  jukeUpdateMini();                    // a track may still be playing → reveal the mini player
-}
-
-// A compact transport pinned just above the sidebar Jukebox button, shown while a track is
-// loaded and the full modal is closed — so playback stays controllable without reopening it.
-function jukeBuildMini() {
-  const nav = $("navjukebox");
-  if (!nav || $("jukeMini")) return;
-  nav.insertAdjacentHTML("beforebegin",
-    `<div id="jukeMini" class="sb-mini hide">
-      <button class="sb-mini-now" id="jukeMiniNow" title="Open Jukebox" aria-label="Open Jukebox">
-        <span class="sb-mini-eq" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span class="sb-mini-title" id="jukeMiniTitle"></span>
-      </button>
-      <div class="sb-mini-ctrls">
-        <button class="sb-mini-btn" id="jukeMiniPrev" title="Previous" aria-label="Previous track">${JUKE_IC.prev}</button>
-        <button class="sb-mini-btn" id="jukeMiniPlay" title="Play/pause" aria-label="Play or pause">${JUKE_IC.play}</button>
-        <button class="sb-mini-btn" id="jukeMiniNext" title="Next" aria-label="Next track">${JUKE_IC.next}</button>
-      </div>
-      <div class="sb-mini-bar" aria-hidden="true"><div class="sb-mini-fill" id="jukeMiniFill"></div></div>
-    </div>`);
-  $("jukeMiniNow").onclick = openJukebox;
-  $("jukeMiniPrev").onclick = () => jukeStep(-1);
-  $("jukeMiniPlay").onclick = jukeToggle;
-  $("jukeMiniNext").onclick = () => jukeStep(1);
-}
-
-// Reflect now-playing state onto the mini player and toggle its visibility (track loaded AND
-// modal closed). Cheap; called on track change, play/pause, and open/close.
-function jukeUpdateMini() {
-  const mini = $("jukeMini");
-  if (!mini) return;
-  const modalOpen = !$("jukeboxOverlay")?.classList.contains("hide");
-  const show = !!JUKE_CUR && !modalOpen;
-  mini.classList.toggle("hide", !show);
-  if (!show) return;
-  $("jukeMiniTitle").textContent = jukeName(JUKE_CUR);
-  const a = $("jukeAudio"), playing = a && !a.paused;
-  $("jukeMiniPlay").innerHTML = playing ? JUKE_IC.pause : JUKE_IC.play;
-  mini.classList.toggle("playing", !!playing);
-}
-
-async function jukeLoad() {
-  try {
-    const d = await getJSON("/api/music");
-    JUKE_TRACKS = (d && d.tracks) || [];
-    const c = (d && d.curation) || {};
-    JUKE_CURATION = { order: c.order || [], skipped: c.skipped || [], names: c.names || {} };
-  } catch (_) {
-    JUKE_TRACKS = [];
-  }
-  renderJukeList();
-  if (!JUKE_RESTORED) { JUKE_RESTORED = true; jukeRestore(); }   // resume saved playback, once
-}
-
-// On first load: restore the saved track at its position, and decide whether to play. With
-// autoplay on (the user last hit Play, not Stop), start playing (the saved track, or the first
-// track if none); with it off, the saved track is restored paused. Autoplay may be blocked until
-// a gesture — then play() rejects and we just stay paused at the restored spot.
-function jukeRestore() {
-  let st;
-  try { st = JSON.parse(localStorage.getItem("jukeState") || "null"); } catch (_) { st = null; }
-  if (st && st.id && JUKE_TRACKS.some(t => t.id === st.id)) {
-    jukeLoadTrack(st.id, { time: +st.time || 0, autoplay: JUKE_AUTOPLAY });
-  } else if (JUKE_AUTOPLAY) {
-    const first = jukeOrderedIds().find(id => !jukeSkipped(id));   // nothing saved → start the playlist
-    if (first) jukeLoadTrack(first, { time: 0, autoplay: true });
-  }
-}
-
-function renderJukeList() {
-  const list = $("jukeList");
-  if (!list) return;
-  if (!JUKE_TRACKS.length) {
-    list.innerHTML = `<li class="juke-empty">Music is being prepared in the background — the full songs are decoded from your game files once. This list fills in automatically when it's ready.</li>`;
-    return;
-  }
-  const byId = Object.fromEntries(JUKE_TRACKS.map(t => [t.id, t]));
-  const visible = jukeOrderedIds();          // every track is shown; skipped ones stay, greyed
-  const total = visible.reduce((s, id) => s + (byId[id]?.duration || 0), 0);
-  const tot = $("jukeTotal");
-  if (tot) tot.textContent = `${visible.length} track${visible.length === 1 ? "" : "s"} · ${jukeFmtLong(total)}`;
-  const rows = visible
-    .map(id => {
-      const t = byId[id]; if (!t) return "";
-      const skip = jukeSkipped(id);
-      // context: where this cue plays in-game, mined from the music switch hierarchy — a readable
-      // hint the FNV-hashed ids otherwise lack. Shown as a "System · Detail" subtitle.
-      const ctxText = [t.system || "", t.detail || ""].filter(Boolean).join(" · ");
-      const ctx = ctxText
-        ? `<span class="juke-context" title="${esc(ctxText)}">${esc(ctxText)}</span>` : "";
-      return `<li class="juke-row${skip ? " skipped-row" : ""}" draggable="true" data-id="${esc(id)}" data-dur="${t.duration || 0}" data-file="${esc(t.file)}">` +
-        `<span class="juke-grip" title="Drag to reorder" aria-hidden="true">⠿</span>` +
-        `<span class="juke-num" aria-hidden="true"></span>` +
-        `<div class="juke-title" title="${esc("#" + id)}">` +
-          `<span class="juke-name">${esc(jukeName(id))}</span>${ctx}` +
-        `</div>` +
-        `<span class="juke-dur">${jukeFmt(t.duration)}</span>` +
-        `<button class="juke-act juke-rename" title="Rename" aria-label="Rename track">✎</button>` +
-        `<button class="juke-act juke-skip" title="${skip ? "Un-skip" : "Skip in playback"}" aria-label="${skip ? "Un-skip" : "Skip"} track">${skip ? "↺" : "⏭"}</button>` +
-        `</li>`;
-    }).join("");
-  list.innerHTML = rows;
-  list.querySelectorAll(".juke-row").forEach(r => {
-    const id = r.dataset.id;
-    r.querySelector(".juke-title").onclick = () => jukePlay(id);
-    r.querySelector(".juke-dur").onclick = () => jukePlay(id);
-    r.querySelector(".juke-rename").onclick = (e) => { e.stopPropagation(); jukeRename(id); };
-    r.querySelector(".juke-skip").onclick = (e) => { e.stopPropagation(); jukeToggleSkip(id); };
-    r.ondragstart = (e) => { _jukeDragId = id; r.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; };
-    r.ondragend = () => { r.classList.remove("dragging"); _jukeDragId = null; jukeCommitOrder(); };
-    r.ondragover = (e) => { e.preventDefault(); jukeDragOver(r, e.clientY); };
-  });
-  const pb = $("jukePlay"), sb = $("jukeStop");
-  if (pb) pb.disabled = !JUKE_TRACKS.length;   // can start playback once there are songs
-  if (sb) sb.disabled = !JUKE_TRACKS.length;
-  jukeRenumber();
-  if (JUKE_CUR) _jukeHighlight(JUKE_CUR);
-}
-
-// Stamp 1-based playlist positions into the .juke-num cells from current DOM order. Called after
-// render and live during a drag (rows move without a re-render), so the numbers always match.
-function jukeRenumber() {
-  $("jukeList")?.querySelectorAll(".juke-row").forEach((r, i) => {
-    const n = r.querySelector(".juke-num"); if (n) n.textContent = i + 1;
-  });
-}
-
-// Live-reorder the DOM as a row is dragged over another, so the drop lands where you see it.
-function jukeDragOver(target, y) {
-  const list = $("jukeList");
-  const dragging = list?.querySelector(".juke-row.dragging");
-  if (!dragging || dragging === target) return;
-  const rect = target.getBoundingClientRect();
-  const before = y < rect.top + rect.height / 2;
-  list.insertBefore(dragging, before ? target : target.nextSibling);
-  jukeRenumber();
-}
-
-// Persist the current on-screen order. Every track (skipped included) is in the list, so the
-// DOM order is the full order — no splicing needed.
-function jukeCommitOrder() {
-  const order = [...($("jukeList")?.querySelectorAll(".juke-row") || [])].map(r => r.dataset.id);
-  JUKE_CURATION.order = order;          // optimistic
-  jukeRenumber();
-  jukeSave({ order });
-}
-
-async function jukeRename(id) {
-  const cur = JUKE_CURATION.names[id] || "";
-  const name = window.prompt(`Name for ${jukeRank(id)} (#${id}):`, cur);
-  if (name === null) return;            // cancelled
-  const trimmed = name.trim();
-  if (trimmed) JUKE_CURATION.names[id] = trimmed; else delete JUKE_CURATION.names[id];
-  renderJukeList();
-  if (JUKE_CUR === id) jukeNowPlayingLabel(id);
-  await jukeSave({ names: { [id]: trimmed } });
-}
-
-function jukeToggleSkip(id) {
-  const skip = jukeSkipped(id);
-  JUKE_CURATION.skipped = skip
-    ? JUKE_CURATION.skipped.filter(x => x !== id)
-    : [...JUKE_CURATION.skipped, id];
-  renderJukeList();
-  jukeSave({ skipped: JUKE_CURATION.skipped });
-}
-
-async function jukeSave(patch) {
-  try { await postJSON("/api/music/curate", patch); }
-  catch (_) { toast("Couldn't save jukebox change", "err"); }
-}
-
-function jukeNowPlayingLabel(id) {
-  const t = JUKE_TRACKS.find(x => x.id === id);
-  const dur = t ? jukeFmt(t.duration) : "";
-  const now = $("jukeNow");
-  if (now) now.textContent = `${jukeName(id)} · ${dur}`;
-  jukeUpdateMini();
-  if ("mediaSession" in navigator) {       // OS/lock-screen "now playing" card
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: jukeName(id), artist: "Star Citizen", album: "Soundtrack",
-    });
-  }
-}
-
-// Load a track into the player. autoplay=false (with time>0) is used to restore a saved
-// position paused; the seek is applied in onloadedmetadata via _jukeRestoreTime. Looks the file
-// up from the manifest (not the DOM) so it works even for skipped tracks or before the modal opens.
-function jukeLoadTrack(id, { time = 0, autoplay = true } = {}) {
-  const t = JUKE_TRACKS.find(x => x.id === id);
-  if (!t) return;
-  const audio = $("jukeAudio");
-  audio.src = "/music/" + encodeURIComponent(t.file);
-  _jukeRestoreTime = time > 0 ? time : null;
-  JUKE_CUR = id;
-  JUKE_HISTORY.push(id);
-  if (JUKE_HISTORY.length > 50) JUKE_HISTORY.shift();
-  _jukeHighlight(id);
-  jukeNowPlayingLabel(id);
-  if (autoplay) audio.play().catch(() => {});   // autoplay may be blocked until a gesture
-  jukePersist();
-}
-
-function jukePlay(id) { jukeSetAutoplay(true); jukeLoadTrack(id, { time: 0, autoplay: true }); }
-
-// Playback intent, driven by the Play/Stop buttons (and any explicit play). Persisted so a
-// reload knows whether to resume. See jukeRestore.
-function jukeSetAutoplay(on) {
-  JUKE_AUTOPLAY = on;
-  try { localStorage.setItem("jukeAutoplay", on ? "1" : "0"); } catch (_) {}
-}
-
-// Save the now-playing track, position, and play state so a reload can resume them. While a
-// restore is pending (metadata not loaded, currentTime still 0) use the target seek, so a save
-// in that window doesn't clobber the saved position with 0.
-function jukePersist() {
-  try {
-    if (!JUKE_CUR) { localStorage.removeItem("jukeState"); return; }
-    const a = $("jukeAudio");
-    _jukeSavedAt = _jukeRestoreTime != null ? _jukeRestoreTime : (a.currentTime || 0);
-    localStorage.setItem("jukeState", JSON.stringify({ id: JUKE_CUR, time: _jukeSavedAt, playing: !a.paused }));
-  } catch (_) {}
-}
-
-function jukeToggleShuffle() {
-  JUKE_SHUFFLE = !JUKE_SHUFFLE;
-  try { localStorage.setItem("jukeShuffle", JUKE_SHUFFLE ? "1" : "0"); } catch (_) {}
-  jukeReflectShuffle();
-}
-
-function jukeReflectShuffle() {
-  const b = $("jukeShuffle");
-  if (!b) return;
-  b.classList.toggle("on", JUKE_SHUFFLE);
-  b.setAttribute("aria-pressed", JUKE_SHUFFLE ? "true" : "false");
-}
-
-// Toggle play/pause; with nothing loaded yet, start the first visible track. Starting playback
-// (here or via a track click) turns autoplay ON — only Stop turns it off.
-function jukeToggle() {
-  const a = $("jukeAudio");
-  if (!JUKE_CUR) { jukeSetAutoplay(true); jukeStep(1); return; }
-  if (a.paused) { jukeSetAutoplay(true); a.play().catch(() => {}); } else a.pause();
-}
-
-// Stop: halt playback, rewind to the start, and turn autoplay OFF so a reload won't resume.
-function jukeStop() {
-  const a = $("jukeAudio");
-  a.pause();
-  a.currentTime = 0;
-  jukeSetAutoplay(false);
-  jukePersist();
-}
-
-// Reflect playing state onto the play/pause button + the OS media session.
-function jukeSetPlaying(on) {
-  const btn = $("jukePlay");
-  if (btn) {
-    btn.innerHTML = on ? JUKE_IC.pause : JUKE_IC.play;
-    btn.title = on ? "Pause" : "Play";
-    btn.setAttribute("aria-label", on ? "Pause" : "Play");
-  }
-  jukeUpdateMini();
-  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = on ? "playing" : "paused";
-}
-
-// Wire hardware/lock-screen media keys (play/pause/prev/next/seek) to the jukebox, once.
-function jukeInitMediaSession() {
-  if (!("mediaSession" in navigator)) return;
-  const ms = navigator.mediaSession, a = () => $("jukeAudio");
-  const set = (act, fn) => { try { ms.setActionHandler(act, fn); } catch (_) {} };
-  set("play", () => a().play().catch(() => {}));
-  set("pause", () => a().pause());
-  set("previoustrack", () => jukeStep(-1));
-  set("nexttrack", () => jukeStep(1));
-  set("seekto", (d) => { if (d.seekTime != null) a().currentTime = d.seekTime; });
-}
-
-function _jukeHighlight(id) {
-  $("jukeList")?.querySelectorAll(".juke-row").forEach(r =>
-    r.classList.toggle("playing", r.dataset.id === id));
-}
-
-// Step to the previous/next playable track; auto-advance (audio 'ended') reuses this with
-// dir=+1 and simply stops at the end of the list. Skipped tracks stay in the list but are
-// bypassed here (a manually-played skipped track still steps on to its next playable neighbor).
-// Under shuffle, "next" picks a random other playable track and "previous" walks the history.
-function jukeStep(dir) {
-  const allRows = [...($("jukeList")?.querySelectorAll(".juke-row") || [])];
-  const playable = allRows.filter(r => !jukeSkipped(r.dataset.id));
-  if (!playable.length) return;
-  if (JUKE_SHUFFLE) {
-    if (dir > 0) {
-      const pool = playable.filter(r => r.dataset.id !== JUKE_CUR);
-      const bag = pool.length ? pool : playable;
-      jukePlay(bag[Math.floor(Math.random() * bag.length)].dataset.id);
-      return;
-    }
-    JUKE_HISTORY.pop();                                   // drop current
-    const prev = JUKE_HISTORY.pop();                      // jukePlay re-pushes it
-    if (prev && playable.some(r => r.dataset.id === prev)) { jukePlay(prev); return; }
-    // no history → fall through to sequential previous
-  }
-  let i = allRows.findIndex(r => r.dataset.id === JUKE_CUR);
-  if (i < 0) { jukePlay((dir > 0 ? playable[0] : playable[playable.length - 1]).dataset.id); return; }
-  for (i += dir; i >= 0 && i < allRows.length; i += dir) {   // walk to the next non-skipped neighbor
-    if (!jukeSkipped(allRows[i].dataset.id)) { jukePlay(allRows[i].dataset.id); return; }
-  }
-  // off either end → stop
-}
-
-// Reflect the server's background-build state (pushed in every snapshot) onto the jukebox.
-function jukeApplyMusicState(m) {
-  const wasExtracting = JUKE_PHASE === "extracting";
-  JUKE_PHASE = m.phase;
-  const st = $("jukeStatus");
-  if (st) {
-    st.classList.remove("err");
-    if (m.phase === "extracting") st.textContent = m.total ? `Preparing music… ${m.done}/${m.total}` : "Preparing music…";
-    else if (m.phase === "error") { st.textContent = m.error || "Music build failed."; st.classList.add("err"); }
-    else st.textContent = "";
-  }
-  if (m.phase === "done" && wasExtracting) jukeLoad();   // finished just now → pull the fresh list in
-}
-
-// Apply a freshly-received live snapshot — from the SSE push or a manual refresh().
-function applySnapshot(d) {
-  LAST = d;
-  renderUpdateBar(d.update);   // update banner is global — show it even in replay mode
-  if (d.music) jukeApplyMusicState(d.music);   // push extraction progress to the jukebox (no polling)
-  notifyIfUpdated(d.app_version);   // toast once when the running build changed under us
-  if (REPLAY_MODE) return;   // keep LAST fresh underneath; the replay view owns the screen
-  // Skip the whole render pass when the snapshot is byte-identical to the last one
-  // rendered: setHTML already no-ops the DOM, this also skips building the HTML strings +
-  // cargo packing. User interactions call renderAll() directly (unguarded), so an open
-  // editor/drag still repaints immediately.
-  const sig = JSON.stringify(d);
-  if (sig !== _lastRenderSig) {
-    _lastRenderSig = sig;
-    renderAll(curData());                  // render every tab from the live snapshot
-  }
-  if (TAB === "archive") loadSessions();  // keep archive fresh while viewing
-  const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
-  // App build: the short git hash of the running code (logged-in state already
-  // lives in the header status pill, so the footer shows the version instead).
-  const build = "build " + esc(d.app_version || "?");
-  // RSI's patch-notes page is what the launcher links to pre-update (then hides) —
-  // make the parsed game version a link back to it. Index URL always lists the
-  // current LIVE build first, so it needs no per-patch upkeep.
-  const ver = d.game_version
-    ? ` · game <a class="pn-link" href="https://robertsspaceindustries.com/en/patch-notes" target="_blank" rel="noopener">${esc(d.game_version)} ↗</a>`
-    : "";
-  $("foot").innerHTML = `synced ${esc(new Date().toLocaleTimeString())} · ${build}${ver} · ${esc(last)} · cargo db @ ${esc(d.ship_cargo_version || "?")}`;
-}
-
-// One-shot pull used by action handlers to reflect a change immediately. (The mutating
-// POSTs also bump the server version, so other open tabs update via the stream; this just
-// gives the acting tab an instant repaint without waiting for the round-trip push.)
-async function refresh() {
-  try {
-    applySnapshot(await getJSON("/api/state"));
-  } catch (e) {
-    $("foot").textContent = `waiting for tracker… (${e})`;
-  }
-}
-
-let _es = null;            // current EventSource, so we can tell a live one from a dead one
-let _reconnectTimer = null;
-
-function connectStream() {
-  if (_es) { try { _es.close(); } catch (_) {} }   // drop any stale handle before reopening
-  const es = _es = new EventSource("/api/stream");
-  es.onopen = () => hideDisconnect();
-  // Named `meta` event (NOT onmessage) carries the served-asset hash. First connect
-  // records the baseline; a reconnect with a different hash means a new build replaced
-  // the tracker on this port -> reload to run the new code. (The active tab survives via
-  // location.hash.) A server-only relaunch keeps the same hash, so the reconnect is silent.
-  es.addEventListener("meta", (e) => {
-    let m; try { m = JSON.parse(e.data); } catch (_) { return; }
-    if (!m || !m.assets) return;
-    if (ASSET_VER === null) { ASSET_VER = m.assets; return; }
-    if (m.assets !== ASSET_VER) location.reload();
-  });
-  es.onmessage = (e) => {
-    hideDisconnect();
-    try { applySnapshot(JSON.parse(e.data)); } catch (_) { /* ignore a malformed frame */ }
-  };
-  es.onerror = () => {
-    showDisconnect();
-    // EventSource auto-reconnects on a transient drop (readyState stays CONNECTING). But
-    // once the browser marks it CLOSED -- which mobile Firefox/Chrome do when the tab is
-    // backgrounded and the socket is reaped -- it never retries on its own, so reopen it.
-    if (es.readyState === EventSource.CLOSED) {
-      clearTimeout(_reconnectTimer);
-      _reconnectTimer = setTimeout(ensureStream, 2000);
-    }
-  };
-}
-
-// Reopen the stream if it isn't currently OPEN or CONNECTING. Cheap no-op when it's healthy.
-function ensureStream() {
-  if (_es && _es.readyState !== EventSource.CLOSED) return;
-  connectStream();
-}
-
-// A backgrounded tab can have its SSE socket killed without a usable error event, leaving a
-// stale/closed stream when you return. Re-establish it (and pull a fresh snapshot so the view
-// isn't stale) the moment the tab is shown again or connectivity returns.
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") { ensureStream(); refresh(); }
-});
-window.addEventListener("online", ensureStream);
-window.addEventListener("pageshow", ensureStream);
 
 connectStream();
 loadShipList();
@@ -2667,432 +1207,28 @@ window.addEventListener("pagehide", () => {
   window.addEventListener("resize", sync);
 })();
 
-// ============================================================================ //
-// Mining tab — RS (radar signature) + composition tools. Self-contained and
-// independent of the live /api/state poll: it reads the p4k-derived mineables
-// catalog via /api/{rock-lookup,rock-decompose,mineral-lookup,mineral-index,
-// mining-plan}. All three sub-tools (and their own #mres-<sub> results) are built
-// once; switching sub-tabs only toggles which is visible, so each keeps its inputs,
-// results, and scroll. Submitting a query repaints just that sub's #mres-<sub>.
-// ============================================================================ //
-let MINING_SUB = "identify";       // identify | find | plan
-let MINING_MINERALS = null;        // cached mineral names for the autocomplete
-let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the picker
-let MINING_RS = null;              // cached base RS values, seeding Identify's prediction
-let IDENTIFY_HISTORY = [];         // recent valid readings {rs, summary}, newest first
-const IDENTIFY_HIST_MAX = 8;       // how many recent readings to keep on screen
-let MINING_INIT = false;
-
-async function initMining() {
-  if (!MINING_INIT) {
-    MINING_INIT = true;
-    const grab = async (url, key) => {
-      try { return (await getJSON(url))[key] || []; }
-      catch (e) { return []; }
-    };
-    [MINING_MINERALS, MINING_BLUEPRINTS, MINING_RS] = await Promise.all([
-      grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints"),
-      grab("/api/rock-signatures", "signatures")]);
-  }
-  // Build once, only after the catalogs have loaded; switching subs then just toggles.
-  if (MINING_BLUEPRINTS !== null && !$("msub-identify")) renderMiningShell();
-}
-// Switch sub-tabs by toggling visibility — never rebuild, so each sub keeps its state.
-function miningSub(sub) {
-  MINING_SUB = sub;
-  if (!$("msub-" + sub)) { renderMiningShell(); return; }
-  document.querySelectorAll("#mining .arch-tab").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
-  document.querySelectorAll("#mining .msub").forEach(el => el.classList.toggle("hide", el.id !== "msub-" + sub));
-}
-// The active sub's results container — every tool repaints into its own #mres-<sub>.
-const mres = () => "mres-" + MINING_SUB;
-
-const _pct = (x) => (x == null ? "?" : Math.round(x));
-const _chance = (p) => (p == null ? "" : Math.round(p * 100) + "%");
-
-function renderMiningShell() {
-  const subs = [["identify", "Identify rock", identifyToolHtml], ["find", "Find mineral", findToolHtml],
-                ["plan", "Blueprint plan", planToolHtml]];
-  // Same underlined sub-tab strip as the Archive tab, with a data-sub on each button so
-  // miningSub() can toggle .active without a rebuild.
-  const bar = tabBar(subs, MINING_SUB, "miningSub", { attr: k => `data-sub="${k}"` });
-  // Each sub-tool + its own results live in a .msub section; only the active one shows.
-  const sections = subs.map(([k, , toolFn]) =>
-    `<div class="msub${MINING_SUB === k ? "" : " hide"}" id="msub-${k}">${toolFn()}<div id="mres-${k}" class="mres"></div></div>`).join("");
-  const datalist = `<datalist id="dl_mineral">${(MINING_MINERALS || [])
-      .map(m => `<option value="${esc(m)}">`).join("")}</datalist>`;
-  setHTML("mining", `${datalist}<div class="mining">
-    ${bar}
-    ${sections}
-  </div>`);
-}
-
-// small shared bits ---------------------------------------------------------- //
-function elBadge(e) {
-  return `<span class="mn-el"><b>${esc(e.element)}</b>` +
-    ` <span class="mn-pct">${_pct(e.min_pct)}–${_pct(e.max_pct)}%</span>` +
-    (e.probability != null ? ` <span class="mn-prob">${_chance(e.probability)}</span>` : "") + `</span>`;
-}
-// Dedupe a rock list's composition to the distinct possible minerals (keep the
-// richest occurrence), so an ambiguous RS shows "what might be in there".
-function mineralUnion(rocks) {
-  const m = new Map();
-  for (const r of rocks || []) for (const e of r.composition || []) {
-    const cur = m.get(e.element);
-    if (!cur || (e.probability || 0) > (cur.probability || 0)) m.set(e.element, e);
-  }
-  return [...m.values()].sort((a, b) => (b.probability || 0) - (a.probability || 0));
-}
-
-// Compact rock-cracking advisor line from a class's M1 mechanics (p4k); "" when absent.
-// Surfaces the break-difficulty the in-game HUD doesn't show — laser power needed,
-// resistance/instability, optimal-window width, mass. Uses the first rock that carries it.
-function mechHtml(rocks) {
-  const m = (rocks || []).map(r => r.mechanics).find(Boolean);
-  if (!m) return "";
-  const bits = [];
-  if (m.laser_power != null) bits.push(`laser ≥${num(m.laser_power)}`);
-  if (m.resistance != null) bits.push(`resistance ${m.resistance}`);
-  if (m.instability != null) bits.push(`instability ${m.instability}`);
-  if (m.window_size != null) bits.push(`window ${m.window_size}${m.window_max != null ? "–" + m.window_max : ""}`);
-  if (m.mass != null) bits.push(`mass ${num(m.mass)}`);
-  if (!bits.length) return "";
-  return `<div class="mrow"><span class="mk">cracking</span>
-    <div class="mels mn-dim">${esc(bits.join(" · "))}</div></div>`;
-}
-
-// ---- Identify: RS reading → rock class(es), cluster size, possible minerals ---- //
-// Tuned for rapid back-to-back readings: typing a number + Enter (or Identify) shows the
-// result, then clears and refocuses the box for the next reading. A strip of the last few
-// readings (with their top match) stays on screen so earlier scans can be glanced at. As
-// you type, the box predicts the rest from your recent readings (deposits recur while
-// mining) as a selected suffix — Enter accepts it, keep typing or Esc/Backspace to override.
-function identifyToolHtml() {
-  return `<div class="card mtool"><h3><span>RS reading → rock</span></h3>
-    <div class="mform">
-      <input id="mi-rs" type="text" inputmode="numeric" autocomplete="off"
-        placeholder="e.g. 9400" aria-label="Radar signature reading"
-        oninput="identifyPredict(event)" onkeydown="identifyKey(event)">
-      <button class="primary" onclick="miningIdentify()">Identify</button>
-    </div>
-    <div id="mi-hist" class="mi-hist">${identifyHistHtml()}</div>
-    <p class="mhint">The radar number is <code>base RS × number of rocks</code>. RS identifies the rock
-      <b>class</b>, not the exact mineral — many classes share a base, so a reading can be ambiguous.</p>
-  </div>`;
-}
-// The recent-readings strip; chips re-run their reading when clicked.
-function identifyHistHtml() {
-  if (!IDENTIFY_HISTORY.length) return "";
-  return `<span class="mi-hist-k">recent</span>` + IDENTIFY_HISTORY.map(h =>
-    `<button class="mi-chip" onclick="identifyAgain(${h.rs})"
-       title="Re-run RS ${num(h.rs)}"><b>${num(h.rs)}</b> <span>${esc(h.summary)}</span></button>`).join("");
-}
-// One-line gist of a reading's result, for the history chip.
-function identifySummary(candidates, combos) {
-  if (candidates.length) {
-    const c = candidates[0];
-    const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
-    return `${c.count}× ${deps[0]}${deps.length > 1 ? " +" + (deps.length - 1) : ""}`;
-  }
-  if (combos.filter(c => c.parts.length > 1).length) return "mixed cluster";
-  return "no clean match";
-}
-function identifyAgain(rs) {
-  const inp = $("mi-rs"); if (inp) inp.value = rs;
-  miningIdentify();
-}
-// Inline prediction: while typing a prefix, complete it with a likely reading, leaving the
-// guessed suffix selected. Typing replaces the selection (so the guess just refines), → /
-// End accepts it natively, Enter submits, Esc/Backspace drops it. Skipped on deletes so
-// editing stays free. This session's readings win (recurring deposits), then the catalog's
-// base RS values seed a guess before any have been entered.
-function identifyPredict(e) {
-  if (e && e.inputType && e.inputType.startsWith("delete")) return;
-  const inp = $("mi-rs"); if (!inp) return;
-  const typed = inp.value;
-  if (!typed) return;
-  const pool = [...IDENTIFY_HISTORY.map(h => String(h.rs)), ...(MINING_RS || []).map(String)];
-  const hit = pool.find(s => s.length > typed.length && s.startsWith(typed));
-  if (hit) { inp.value = hit; inp.setSelectionRange(typed.length, hit.length); }
-}
-function identifyKey(e) {
-  if (e.key === "Enter") { miningIdentify(); return; }
-  if (e.key === "Escape") {              // drop a predicted suffix without clearing the typed part
-    const inp = $("mi-rs");
-    if (inp && inp.selectionStart < inp.value.length) {
-      inp.value = inp.value.slice(0, inp.selectionStart);
-      e.preventDefault();
-    }
-  }
-}
-async function miningIdentify() {
-  const v = parseFloat(val("mi-rs"));
-  if (!(v > 0)) { setHTML(mres(), `<div class="empty">Enter a positive RS reading.</div>`); return; }
-  setHTML(mres(), `<div class="empty">scanning…</div>`);
-  try {
-    const [look, dec] = await Promise.all([
-      fetch(`/api/rock-lookup?rs=${v}`).then(r => r.json()),
-      fetch(`/api/rock-decompose?rs=${v}`).then(r => r.json()),
-    ]);
-    const candidates = look.candidates || [], combos = dec.combos || [];
-    // Only a valid reading (matches one or more rocks) is kept in the strip — a miss isn't
-    // recorded. A reading already in the history updates in place (re-running a chip mustn't
-    // reorder it); a new one is prepended (newest first).
-    const ok = candidates.length > 0 || combos.some(c => c.parts.length > 1);
-    if (ok) {
-      const entry = { rs: v, summary: identifySummary(candidates, combos) };
-      const at = IDENTIFY_HISTORY.findIndex(h => h.rs === v);
-      if (at >= 0) IDENTIFY_HISTORY[at] = entry;
-      else IDENTIFY_HISTORY = [entry, ...IDENTIFY_HISTORY].slice(0, IDENTIFY_HIST_MAX);
-      setHTML("mi-hist", identifyHistHtml());
-    }
-    // Clear + refocus so the next reading can be typed straight away.
-    const inp = $("mi-rs"); if (inp) { inp.value = ""; inp.focus(); }
-    setHTML(mres(), identifyResultHtml(v, candidates, combos));
-  } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
-}
-function identifyResultHtml(v, candidates, combos) {
-  if (!candidates.length && !combos.length)
-    return `<div class="empty">Nothing reads RS ${num(v)} as a clean cluster.</div>`;
-  let html = "";
-  if (candidates.length) {
-    html += `<div class="mres-h">Single-class readings</div>`;
-    html += candidates.map(c => {
-      const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
-      const minerals = mineralUnion(c.rocks);
-      const extra = deps.length > 1 ? ` <span class="mn-dim">+${deps.length - 1} more</span>` : "";
-      return `<div class="card mcand">
-        <h3><span>${c.count} × <b>${esc(deps[0])}</b>${extra}</span>
-            <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>
-        <div class="mcand-body">
-          ${deps.length > 1 ? `<div class="mrow"><span class="mk">reads as</span>
-             <div class="mels">${deps.map(d => tag(d)).join(" ")}</div></div>` : ""}
-          <div class="mrow"><span class="mk">possible minerals</span>
-            <div class="mels">${minerals.map(elBadge).join("") || '<span class="mn-dim">—</span>'}</div></div>
-          ${mechHtml(c.rocks)}
-        </div></div>`;
-    }).join("");
-  }
-  const mixed = combos.filter(c => c.parts.length > 1);
-  if (mixed.length) {
-    html += `<div class="mres-h">Mixed-cluster interpretations</div><div class="card">` + logTable(
-      th("Cluster") + th("Total RS", true) + th("Rocks", true),
-      mixed.slice(0, 12).map(c =>
-        `<tr><td>${c.parts.map(p => `${p.count}× ${esc(p.names[0] || ("RS " + p.base_rs))}`).join(" + ")}</td>` +
-        `<td class="lt-num">${num(c.total)}</td><td class="lt-num">${c.count}</td></tr>`).join(""),
-      "") + `</div>`;
-  }
-  return html;
-}
-
-// ---- Find: mineral → RS to scan for + ranked source rocks (+ browse all) ---- //
-function findToolHtml() {
-  return `<div class="card mtool"><h3><span>Mineral → where to mine</span></h3>
-    <div class="mform">
-      <input id="mf-name" list="dl_mineral" placeholder="e.g. Bexalite" autocomplete="off"
-        aria-label="Mineral name" onkeydown="if(event.key==='Enter')miningFind()">
-      <button class="primary" onclick="miningFind()">Find</button>
-      <button onclick="miningIndex()">Browse all</button>
-    </div>
-    <p class="mhint">Shows the RS value(s) to scan for and the richest source rocks, ranked by
-      probability × yield.</p>
-  </div>`;
-}
-async function miningFind() {
-  const name = val("mf-name").trim();
-  if (!name) { setHTML(mres(), `<div class="empty">Enter or pick a mineral.</div>`); return; }
-  setHTML(mres(), `<div class="empty">searching…</div>`);
-  try {
-    const r = await fetch(`/api/mineral-lookup?name=${encodeURIComponent(name)}`).then(x => x.json());
-    setHTML(mres(), findResultHtml(r));
-  } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
-}
-function findResultHtml(r) {
-  if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
-  const sigs = (r.signatures || []).map(s => `<span class="mscan-rs">${num(s)}</span>`).join("");
-  const rows = r.rocks.map(x => `<tr>
-    <td class="lt-num">${num(x.rs)}</td><td>${esc(x.name)}</td>
-    <td class="lt-num">${_pct(x.min_pct)}–${_pct(x.max_pct)}%</td>
-    <td class="lt-num">${_chance(x.probability)}</td><td class="lt-num">${x.score}</td></tr>`).join("");
-  return `<div class="card">
-    <div class="mscan"><span class="mscan-k">Scan for</span>
-      <div class="mscan-vals">${sigs || '<span class="mn-dim">—</span>'}</div></div>
-    ${logTable(
-      th("RS", true, "Radar signature a single rock of this type reads") +
-      th("Rock", false, "The mineable rock / deposit type") +
-      th("Yield %", true, `Percentage of ${esc(r.mineral)} in the rock (min–max)`) +
-      th("Chance", true, "Probability a rock of this type actually contains it") +
-      th("Score", true, "Source ranking = probability × yield (higher is a better source)"),
-      rows, "")}
-  </div>`;
-}
-async function miningIndex() {
-  setHTML(mres(), `<div class="empty">loading…</div>`);
-  try {
-    const r = await fetch("/api/mineral-index").then(x => x.json());
-    setHTML(mres(), indexResultHtml(r.minerals || []));
-  } catch (e) { setHTML(mres(), `<div class="empty">load failed</div>`); }
-}
-function indexResultHtml(minerals) {
-  if (!minerals.length) return `<div class="empty">No mineral data.</div>`;
-  const rows = minerals.map(m => `<tr>
-    <td><b>${esc(m.mineral)}</b></td>
-    <td>${(m.signatures || []).slice(0, 8).map(num).join(", ")}</td>
-    <td>${m.rocks.slice(0, 4).map(x => esc(x.name)).join("; ")}${m.rocks.length > 4 ? ` <span class="mn-dim">…+${m.rocks.length - 4}</span>` : ""}</td>
-  </tr>`).join("");
-  return `<div class="card"><h3><span>All minerals → source rocks</span><span class="scu">${minerals.length}</span></h3>` +
-    logTable(
-      th("Mineral", false, "The refined mineral") +
-      th("RS to scan", false, "Radar signature value(s) whose rocks can contain it") +
-      th("Best sources", false, "The richest source rocks for this mineral"),
-      rows, "") + `</div>`;
-}
-
-// ---- Plan: blueprint → deposit coverage + sources ---- //
-// A searchable picker whose options are grouped into sections: the server tags each
-// blueprint with its main {type} and a {detail} (component size, weapon model line, FPS
-// weapon type, or armour set), and we lay those out as rule-separated sections with a
-// sticky header carrying the full "type · detail". Selecting an item plans — no button.
-const _BP_TYPE_ORDER = ["Vehicle Component", "Vehicle Weapons", "FPS Weapons", "FPS Armours"];
-// Group the catalog into ordered sections keyed by (type, detail); within a section items
-// are ordered by size then name (so a weapon model line reads S1→S6).
-function _bpSections() {
-  const byKey = new Map();
-  for (const b of MINING_BLUEPRINTS || []) {
-    const key = b.type + "\u0000" + (b.detail || "");
-    if (!byKey.has(key)) byKey.set(key, { type: b.type, detail: b.detail || "", items: [] });
-    byKey.get(key).items.push(b);
-  }
-  const ord = (t) => { const i = _BP_TYPE_ORDER.indexOf(t); return i < 0 ? 99 : i; };
-  return [...byKey.values()]
-    .sort((a, b) => ord(a.type) - ord(b.type) || a.type.localeCompare(b.type) ||
-      a.detail.localeCompare(b.detail))
-    .map(s => {
-      s.items.sort((x, y) => (x.size ?? 99) - (y.size ?? 99) || x.name.localeCompare(y.name));
-      return s;
-    });
-}
-function blueprintMenuHtml() {
-  return _bpSections().map(s => {
-    const items = s.items.map(b => {
-      // Vehicle weapons span sizes within a model line — tag each with its size, shown
-      // leading the name (left) so the column of sizes reads at a glance.
-      const sz = s.type === "Vehicle Weapons" && b.size != null ? `<span class="bp-dd-sz">S${b.size}</span>` : "";
-      return `<div class="bp-dd-item" data-search="${esc(b.name.toLowerCase())}"
-         onclick="bpPick(this.dataset.name)" data-name="${esc(b.name)}">${sz}<span>${esc(b.name)}</span></div>`;
-    }).join("");
-    const label = `<span class="bp-dd-type">${esc(s.type)}</span>` +
-      (s.detail ? ` <span class="bp-dd-detail">${esc(s.detail)}</span>` : "");
-    return `<div class="bp-dd-sec">
-      <div class="bp-dd-grp"><span class="bp-dd-lbl">${label}</span></div>${items}</div>`;
-  }).join("");
-}
-function planToolHtml() {
-  return `<div class="card mtool"><h3><span>Blueprint mining plan</span></h3>
-    <div class="mform">
-      <div class="bp-dd">
-        <input id="mp-bp" autocomplete="off" aria-label="Search blueprints"
-          placeholder="Search blueprints by name…"
-          oninput="bpFilter(this.value)" onfocus="bpOpen(true)"
-          onblur="bpOpen(false)" onkeydown="bpKey(event)">
-        <div id="bp-dd-list" class="bp-dd-list" onmousedown="event.preventDefault()">${blueprintMenuHtml()}</div>
-      </div>
-    </div>
-    <p class="mhint">Pick a blueprint — grouped by type and size — to pull its required minerals straight
-      from the game files. Deposits are ranked by how many of the ingredients each can yield.</p>
-  </div>`;
-}
-function bpOpen(show) {
-  const el = $("bp-dd-list"); if (!el) return;
-  el.classList.toggle("open", !!show);
-  // The card clips descendants via clip-path; drop it while the menu is open so the
-  // dropdown can overflow past the card edge.
-  const card = el.closest(".card"); if (card) card.classList.toggle("dd-open", !!show);
-}
-function bpPick(name) {
-  const inp = $("mp-bp"); if (inp) inp.value = name;
-  bpOpen(false);
-  miningPlanFromBlueprint(name);
-}
-// Filter items by a case-insensitive substring; hide whole sections with no visible items.
-function bpFilter(q) {
-  const list = $("bp-dd-list"); if (!list) return;
-  list.classList.add("open");
-  const needle = (q || "").trim().toLowerCase();
-  for (const sec of list.querySelectorAll(".bp-dd-sec")) {
-    let any = false;
-    for (const it of sec.querySelectorAll(".bp-dd-item")) {
-      const show = !needle || it.dataset.search.includes(needle);
-      it.style.display = show ? "" : "none";
-      if (show) any = true;
-    }
-    sec.classList.toggle("hide", !any);
-  }
-}
-function bpKey(e) {
-  if (e.key === "Escape") { bpOpen(false); return; }
-  if (e.key !== "Enter") return;
-  const first = [...($("bp-dd-list") || {}).querySelectorAll?.(".bp-dd-item") || []]
-    .find(it => it.style.display !== "none");
-  if (first) bpPick(first.dataset.name);
-}
-const _miningDur = (s) => {
-  s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;
-  return m ? `${m}m${sec ? " " + sec + "s" : ""}` : `${sec}s`;
-};
-async function miningPlanFromBlueprint(name) {
-  name = (name || val("mp-bp")).trim();
-  if (!name) { setHTML(mres(), `<div class="empty">Pick a blueprint.</div>`); return; }
-  setHTML(mres(), `<div class="empty">loading blueprint…</div>`);
-  try {
-    const bp = await fetch(`/api/blueprint?name=${encodeURIComponent(name)}`).then(r => r.json());
-    if (bp.ok === false) { setHTML(mres(), `<div class="empty">No blueprint “${esc(name)}”.</div>`); return; }
-    const plan = await fetch("/api/mining-plan", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ minerals: bp.minerals || [] }),
-    }).then(r => r.json());
-    setHTML(mres(), recipeHtml(bp) + planResultHtml(plan));
-  } catch (e) { setHTML(mres(), `<div class="empty">plan failed</div>`); }
-}
-function recipeHtml(bp) {
-  const meta = [esc(bp.category || ""), bp.craft_seconds ? _miningDur(bp.craft_seconds) : ""].filter(Boolean).join(" · ");
-  const rows = (bp.requirements || []).map(r => `<tr>
-    <td>${esc(r.slot || "")}</td><td><b>${esc(r.resource)}</b></td>
-    <td class="lt-num">${r.scu} SCU</td>
-    <td class="lt-num">${r.min_quality > 0 ? "Q≥" + r.min_quality : "—"}</td></tr>`).join("");
-  return `<div class="card"><h3><span>${esc(bp.name)}</span><span class="scu">${meta}</span></h3>
-    ${logTable(
-      th("Slot", false, "The recipe slot this material fills") +
-      th("Material", false, "The mineral or resource the slot requires") +
-      th("Qty", true, "Amount needed, in SCU") +
-      th("Min quality", true, "Minimum refined quality the material must meet (— = any)"),
-      rows, "No materials.")}
-  </div>`;
-}
-function planResultHtml(r) {
-  const targets = r.targets || [];
-  if (!targets.length) return `<div class="empty">No minerals given.</div>`;
-  const covRows = (r.coverage || []).slice(0, 15).map(c => `<tr>
-    <td><b>${esc(c.deposit)}</b></td>
-    <td class="lt-num">${c.n_covers}/${targets.length}</td>
-    <td>${c.covers.map(x => tag(x)).join(" ")}</td>
-    <td>${(c.signatures || []).map(num).join(", ")}</td></tr>`).join("");
-  const srcs = (r.per_mineral || []).map(p => {
-    const best = (p.rocks || []).slice(0, 3).map(x =>
-      `${esc(x.name)} <span class="mn-dim">(RS ${num(x.rs)}${x.probability != null ? ", " + _chance(x.probability) : ""})</span>`).join("<br>");
-    return `<div class="mrow"><span class="mk">${esc(p.mineral)}</span>
-      <div>${best || '<span class="mn-dim">no source found</span>'}</div></div>`;
-  }).join("");
-  return `<div class="card"><h3><span>Best deposits — by coverage</span></h3>
-      ${logTable(
-        th("Deposit", false, "A rock deposit / cluster type you can mine") +
-        th("Covers", true, "How many of the blueprint's ingredients this deposit can yield") +
-        th("Ingredients", false, "Which of the wanted minerals it covers") +
-        th("RS", false, "Radar signature value(s) to scan for to find this deposit"),
-        covRows, "No deposit yields any of these minerals.")}
-    </div>
-    <div class="card"><h3><span>Per-ingredient sources</span></h3><div class="mplan-srcs">${srcs}</div></div>`;
-}
+// ---- window bridge ---- //
+// Inline HTML handlers (onclick="editMission(…)", the interpolated onclick="${fn}(…)" in
+// tabBar, etc.) resolve names against `window`. Under <script type="module"> top-level
+// declarations are module-scoped, NOT global — so every function reachable from an inline
+// handler must be re-exposed here explicitly. tests/test_window_bridge.py statically enforces
+// that this block covers every handler-referenced name (fails the build on drift). Other
+// modules bridge their own handlers the same way: archive.js (archive/replay + the contract-
+// log type filter), stream.js (the update banner), mining.js, settings.js, jukebox.js.
+Object.assign(window, {
+  // contracts / mission editor
+  editMission, saveMission, cancelEdit, deleteMission, resetMission, restoreMission, addLeg, edFormKey,
+  // unified inline cell editor
+  edOpen, edKey, edCommit,
+  // header / ship selector
+  setMode, pickShip, openShipMenu, filterShipMenu, shipKeydown, onShipBlur,
+  // cargo / plan tabs + route reorder
+  cargoSub, resetRouteOrder, rowHover, boxHover, markDelivered,
+  routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,
+  // mining (Identify / Find / Plan)
+  miningSub, miningIdentify, miningFind, miningIndex, identifyAgain, identifyPredict, identifyKey,
+  bpOpen, bpFilter, bpPick, bpKey,
+});
 
 // ---- deep-link resolution (runs last, once all tab state + functions exist) ---- //
 // Honour the URL hash, including legacy ones from before the Cargo/Plan merge: #loading /
