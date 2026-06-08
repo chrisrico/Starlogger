@@ -125,6 +125,9 @@ nav button.active::before{content:"";position:absolute;left:0;top:7px;bottom:7px
   text-transform:uppercase;letter-spacing:.12em}
 .sb-settings:hover{color:var(--cyan)}
 .sb-settings + .sb-collapse{border-top:0}
+/* the bottom group can hold >1 .sb-settings (Jukebox above Settings): the divider sits above
+   the first one only, so a following .sb-settings drops its own top border. */
+.sb-settings + .sb-settings{border-top:0}
 
 /* ---- skinny mode: an icons-only rail (default on mobile; toggle on desktop) ---- */
 .sidebar.collapsed{flex-basis:62px;width:62px}
@@ -923,9 +926,12 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 #updatebar .ub-msg code{color:var(--amber);font-weight:600;font-size:12px}
 #updatebar .ub-actions{display:flex;gap:8px;flex-wrap:wrap}
 
-/* ---- jukebox: extract + play the decoded soundtrack ---- */
-.juke{display:flex;flex-direction:column;gap:12px}
-.juke-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+/* ---- jukebox: extract + play the decoded soundtrack (modal, like Settings) ---- */
+.juke-panel{width:min(680px,100%)}                 /* wider than Settings for the track list */
+/* head (fixed) · body (scrolls) · foot/player (fixed) — make the body the flex scroll region */
+.juke-body{display:flex;flex-direction:column;gap:12px;flex:1 1 auto;min-height:0}
+.juke-bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;background:var(--panel-2);padding:6px 0 10px}
 .juke-extract{display:flex;align-items:center;gap:10px}
 .juke-extract .sp-note{text-align:left;max-width:none}
 .juke-filter{display:flex;align-items:center;gap:8px;font-family:var(--display);font-size:11px;
@@ -948,9 +954,8 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .juke-dur{color:var(--ink);text-align:right}
 .juke-id{color:var(--ink-2)}
 .juke-row.playing .juke-dur,.juke-row.playing .juke-id{color:var(--cyan)}
-.juke-player{position:sticky;bottom:0;z-index:4;display:flex;align-items:center;gap:14px;
-  flex-wrap:wrap;padding:10px 14px;border:1px solid var(--line-2);background:var(--panel-2);
-  box-shadow:0 -8px 22px rgba(0,0,0,.45)}
+.juke-foot{padding:10px 16px;border-top:1px solid var(--line)}   /* the panel's pinned player bar */
+.juke-player{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .juke-now{font-family:var(--display);font-size:12px;letter-spacing:.05em;color:var(--ink);
   text-transform:uppercase;flex:1 1 140px;min-width:0;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

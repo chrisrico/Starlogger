@@ -102,7 +102,7 @@ const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(te
 let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "pickup" · "dropoff"
 
 // ---- tabs (with URL-hash deep-linking) ---- //
-const TABS = ["cargo", "plan", "contracts", "archive", "mining", "jukebox"];
+const TABS = ["cargo", "plan", "contracts", "archive", "mining"];
 function activateTab(name) {
   if (!TABS.includes(name)) return;
   TAB = name;
@@ -113,7 +113,6 @@ function activateTab(name) {
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
   if (name === "archive") { ARCH_PICK = true; loadSessions(); }
   if (name === "mining") initMining();
-  if (name === "jukebox") initJukebox();
 }
 
 // ---- sidebar: wide (icon + label) ⇄ skinny (icons only) ----
@@ -253,6 +252,14 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("settingsOverlay").classList.contains("hide")) closeSettings();
 });
 
+// ---- jukebox overlay (sidebar Jukebox button -> modal, same pattern as Settings) ----
+$("navjukebox") && ($("navjukebox").onclick = openJukebox);
+$("jukeboxClose") && ($("jukeboxClose").onclick = closeJukebox);
+$("jukeboxOverlay") && ($("jukeboxOverlay").onclick = (e) => { if (e.target.id === "jukeboxOverlay") closeJukebox(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("jukeboxOverlay").classList.contains("hide")) closeJukebox();
+});
+
 // ---- mining vs cargo mode ---- //
 // Mode normally follows the snapshot: a mining vehicle (mining_ship — Prospector, MOLE,
 // ROC…) hides the cargo-hauling tabs and shows Mining, and the header stats/gauge swap to
@@ -286,8 +293,8 @@ function modeSwitchHtml(d) {
 // sense, so the Cargo and Plan tabs are hidden and the Mining tab takes their slot right
 // after Contracts. Driven from renderAll on every snapshot; idempotent via MINING_LAYOUT so
 // it only touches the DOM on an actual mode change.
-const HAUL_TABS = ["contracts", "cargo", "plan", "archive", "jukebox"];
-const MINE_TABS = ["contracts", "mining", "archive", "jukebox"];
+const HAUL_TABS = ["contracts", "cargo", "plan", "archive"];
+const MINE_TABS = ["contracts", "mining", "archive"];
 let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
 function applyTabLayout(mining) {
   if (MINING_LAYOUT === mining) return;
@@ -1999,10 +2006,12 @@ function notifyIfUpdated(v) {
 }
 
 // ---- jukebox: extract + play the game soundtrack decoded from the p4k ---- //
-// The tab is lazy-built on first activation (initJukebox). Extraction is a one-time, ~2.6 GB
-// server-side decode kicked by the Extract button (POST /api/music/extract); its progress
-// rides the SSE snapshot's `music` field (jukeApplyMusicState), so there's no polling. Tracks
-// have no names in the shipped soundbanks — only hashed ids — so a row is length + #id.
+// A modal overlay (like Settings), opened from the sidebar's Jukebox button. Lazy-built once
+// (initJukebox); thereafter open/close just toggles the overlay so the <audio> element — and
+// any playing track — persists across opens. Extraction is a one-time, ~2.6 GB server-side
+// decode kicked by the Extract button (POST /api/music/extract); its progress rides the SSE
+// snapshot's `music` field (jukeApplyMusicState), so there's no polling. Tracks have no names
+// in the shipped soundbanks — only hashed ids — so a row is length + #id.
 let JUKE_BUILT = false;       // panel skeleton injected?
 let JUKE_TRACKS = [];         // manifest rows {id, file, duration, size}, longest-first
 let JUKE_CUR = null;          // id of the track loaded in the player
@@ -2017,30 +2026,29 @@ function jukeFmt(sec) {
 
 function initJukebox() {
   if (!JUKE_BUILT) {
-    setHTML("jukebox",
-      `<div class="juke">
-        <div class="juke-bar">
-          <div class="juke-extract">
-            <button class="sp-btn" id="jukeExtractBtn">Extract music</button>
-            <span class="sp-note" id="jukeExtractMsg"></span>
-          </div>
-          <label class="juke-filter" title="Hide tracks shorter than this">Min length
-            <input type="range" id="jukeMin" min="0" max="600" step="15" value="0">
-            <span id="jukeMinLbl" class="juke-minlbl">0:00</span>
-          </label>
+    setHTML("jukeboxBody",
+      `<div class="juke-bar">
+        <div class="juke-extract">
+          <button class="sp-btn" id="jukeExtractBtn">Extract music</button>
+          <span class="sp-note" id="jukeExtractMsg"></span>
         </div>
-        <ul class="juke-list" id="jukeList"></ul>
-        <div class="juke-player">
-          <div class="juke-now" id="jukeNow">Nothing playing</div>
-          <div class="juke-transport">
-            <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">⏮</button>
-            <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>▶</button>
-            <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">⏭</button>
-            <span class="juke-time" id="jukeCur">0:00</span>
-            <input class="juke-seek" id="jukeSeek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" disabled>
-            <span class="juke-time" id="jukeDur">0:00</span>
-            <audio id="jukeAudio" preload="none"></audio>
-          </div>
+        <label class="juke-filter" title="Hide tracks shorter than this">Min length
+          <input type="range" id="jukeMin" min="0" max="600" step="15" value="0">
+          <span id="jukeMinLbl" class="juke-minlbl">0:00</span>
+        </label>
+      </div>
+      <ul class="juke-list" id="jukeList"></ul>`);
+    setHTML("jukeboxFoot",
+      `<div class="juke-player">
+        <div class="juke-now" id="jukeNow">Nothing playing</div>
+        <div class="juke-transport">
+          <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">⏮</button>
+          <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>▶</button>
+          <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">⏭</button>
+          <span class="juke-time" id="jukeCur">0:00</span>
+          <input class="juke-seek" id="jukeSeek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" disabled>
+          <span class="juke-time" id="jukeDur">0:00</span>
+          <audio id="jukeAudio" preload="none"></audio>
         </div>
       </div>`);
     $("jukeExtractBtn").onclick = jukeExtract;
@@ -2070,6 +2078,19 @@ function initJukebox() {
     if (LAST && LAST.music) jukeApplyMusicState(LAST.music);  // reflect an in-flight extraction
   }
   jukeLoad();
+}
+
+function openJukebox() {
+  initJukebox();                       // lazy-build + refresh the track list
+  const ov = $("jukeboxOverlay");
+  ov.classList.remove("hide");
+  ov.setAttribute("aria-hidden", "false");
+}
+
+function closeJukebox() {
+  const ov = $("jukeboxOverlay");      // just hides it — the <audio> keeps playing
+  ov.classList.add("hide");
+  ov.setAttribute("aria-hidden", "true");
 }
 
 async function jukeLoad() {
