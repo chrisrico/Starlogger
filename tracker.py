@@ -600,20 +600,38 @@ def _manual_check(ustate: "UpdateState", state, trigger_restart) -> dict:
     return {"ok": True, "status": "updating", "current": have[:9], "latest": want[:9]}
 
 
+def _check_due(last_check: float | None, now: float, secs: int) -> bool:
+    """Whether update_loop should run a check now. Never when disabled (secs <= 0);
+    immediately when it has never checked (the initial post-launch check); otherwise once
+    `secs` have elapsed since the last check. Crucially this is evaluated against the
+    *current* interval every tick, so SHORTENING the interval in the Settings panel takes
+    effect within one loop tick instead of waiting out the old interval."""
+    if secs <= 0:
+        return False
+    if last_check is None:
+        return True
+    return (now - last_check) >= secs
+
+
 def update_loop(stop: threading.Event, ustate: "UpdateState", state, trigger_restart) -> None:
     """Daemon: an initial check ~20s after start (so a launch-time update is offered promptly,
-    like the old dialog), then every live_update_secs. Mode + interval are re-read each tick,
-    so a settings change takes effect without a restart; interval <= 0 idles but keeps the
-    loop alive so re-enabling resumes checks."""
+    like the old dialog), then every live_update_secs. The interval is re-read on a short tick
+    (not just once per check), so changing it in the Settings panel takes effect within a few
+    seconds rather than after the old interval elapses. interval <= 0 genuinely disables checks
+    but keeps the loop alive so re-enabling resumes them."""
     if stop.wait(20):                         # interruptible initial delay; True => shutting down
         return
+    last_check: float | None = None           # None => the initial check is due now
     while True:
-        try:
-            _check_update(ustate, state, trigger_restart)
-        except Exception as e:                # transient git/network error -> retry next tick
-            print(f"[update] check failed: {e}", flush=True)
-        secs = _live_update_secs()
-        if stop.wait(secs if secs > 0 else 300.0):  # interruptible sleep; True => shutting down
+        if _check_due(last_check, time.monotonic(), _live_update_secs()):
+            try:
+                _check_update(ustate, state, trigger_restart)
+            except Exception as e:            # transient git/network error -> retry next tick
+                print(f"[update] check failed: {e}", flush=True)
+            last_check = time.monotonic()
+        # Re-read the interval every few seconds so a settings change applies promptly; `stop`
+        # still interrupts instantly for shutdown. Re-reads are cheap (settings.json is mtime-cached).
+        if stop.wait(5.0):                    # True => shutting down
             return
 
 

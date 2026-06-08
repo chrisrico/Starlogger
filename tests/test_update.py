@@ -178,3 +178,31 @@ def test_repo_ready_ignores_untracked_files(monkeypatch, tmp_path):
                         lambda key: "origin" if key == "update_remote" else "main")
     assert tracker._repo_ready() == str(repo)
     assert "--untracked-files=no" in seen["status_args"]   # tracked-only, untracked don't block
+
+
+# --- update_loop interval responsiveness (_check_due decision) ------------- #
+
+def test_check_due_initial_check_is_immediate():
+    # last_check is None => the post-launch check fires on the first tick.
+    assert tracker._check_due(None, 1000.0, 900) is True
+
+
+def test_check_due_waits_for_interval():
+    # 100s since the last check, interval 900s -> not yet.
+    assert tracker._check_due(1000.0, 1100.0, 900) is False
+    # ...and exactly at the interval -> due.
+    assert tracker._check_due(1000.0, 1900.0, 900) is True
+
+
+def test_check_due_shortened_interval_takes_effect_now():
+    # The whole point: 100s elapsed under a 900s interval is NOT due, but if the user shortens
+    # it to 60s, the same elapsed time IS due -- because _check_due reads the CURRENT interval.
+    assert tracker._check_due(1000.0, 1100.0, 900) is False
+    assert tracker._check_due(1000.0, 1100.0, 60) is True
+
+
+def test_check_due_disabled_never_checks():
+    # interval <= 0 genuinely disables checks (matches the "0 disables" help), even long after.
+    assert tracker._check_due(None, 1e9, 0) is False
+    assert tracker._check_due(1000.0, 1e9, 0) is False
+    assert tracker._check_due(1000.0, 1e9, -5) is False
