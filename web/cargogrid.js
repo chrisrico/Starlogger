@@ -145,6 +145,10 @@
   }
 
   // ---- packed mode: discrete sized cargo boxes placed by a 3D first-fit packer ----
+  // NOTE: the packing invariants below (yaw-only orientations, no-float support, the
+  // per-tier container cap, primary/secondary hold classification) are NOT covered by
+  // automated tests — the repo has no JS test runner. Verify packing changes by eye in
+  // the Cargo tab; if a JS harness is ever added, these are the first rules to lock.
   // Standard SC container sizes as [width, length, height] in SCU units (height is
   // the vertical extent; the long axis lies flat — long boxes are never stood on
   // end). Each size gets a hue.

@@ -66,7 +66,8 @@ def seed_overlay() -> dict:
 def apply_replay_op(overlay: dict, op: dict, state) -> dict:
     """Apply one edit op to an ephemeral overlay (mutates and returns it), mirroring the
     live POST endpoints exactly but never touching disk. ``state`` is the reconstructed
-    State at the current checkpoint, used for origin sibling-matching."""
+    State at the current checkpoint, used for origin sibling-matching.
+    The never-persists guarantee is locked by tests/test_replay_edit.py."""
     kind = op.get("kind")
     ov = overlay["overrides"]
     if kind == "override":

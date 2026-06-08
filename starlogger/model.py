@@ -106,7 +106,8 @@ class Mission:
         artifact, not a real endpoint — naming a leg from it would mislabel every
         contract whose true destination differs from where it was accepted. The
         deliver-objective text (Leg.location) is the only trustworthy source until
-        then. Mirrors origin_zone's same-zone skip, on the dropoff side."""
+        then. Mirrors origin_zone's same-zone skip, on the dropoff side.
+        host_artifact_zones / origin_zone are locked by tests/test_locations.py."""
         pick = {l.zone_host_id for l in self.legs.values()
                 if l.kind == "pickup" and l.zone_host_id}
         drop = {l.zone_host_id for l in self.legs.values()

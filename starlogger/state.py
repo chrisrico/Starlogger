@@ -150,7 +150,8 @@ class State:
         """Flag the session for a live archive upsert when its finished work changes --
         a mission reaching a terminal state, a new trade, or an award. Mere acceptance or
         in-progress objective updates don't move the signature, so we don't write for them.
-        Called under self.lock at the end of every fed line."""
+        Called under self.lock at the end of every fed line.
+        Locked by tests/test_live_archive.py (accept doesn't flush; completions coalesce)."""
         sig = (len(self.trades), self.total_awarded,
                sum(1 for m in self.missions.values() if m.status in _TERMINAL_STATUSES))
         if sig != self._archive_sig:
@@ -188,7 +189,10 @@ class State:
         self.session_gamerules = gr
         if gr == "SC_Frontend":
             # back to main menu == logged out == all missions abandoned. Reset
-            # ONLY here (dedup by ts so an establisher burst counts once).
+            # ONLY here (dedup by ts so an establisher burst counts once). The
+            # frontend-dedup and SC_Default-relaunch-keeps-missions rules are locked
+            # by tests/test_state.py (test_frontend_boundary_resets_once_per_timestamp,
+            # test_relaunch_into_pu_does_not_reset).
             if ts != self.session_boundary_ts:
                 self.reset()  # keeps player name
                 self.session_boundary_ts = ts
@@ -206,7 +210,8 @@ class State:
         """Clean quit-to-desktop: archive + reset like a logout. The game writes no
         SC_Frontend boundary on this path, so without it the session would linger
         until the next launch rotated the log. Guarded on logged_in (and dedup'd by
-        that flag) so a stray re-match can't double-archive or wipe a fresh login."""
+        that flag) so a stray re-match can't double-archive or wipe a fresh login.
+        Locked by tests/test_state.py::test_fastshutdown_archives_once_not_twice."""
         if not patterns.SHUTDOWN.search(line):
             return False
         if self.logged_in or self.missions or self.total_awarded or self.trades:
@@ -285,6 +290,7 @@ class State:
         record (no settle/confirm follow-up), so it's treated as effective. SCU comes
         from the box data (boxSize x unitAmount), authoritative for both directions.
         Keyed by ts|action|guid|shop so re-feeding the log upserts, not duplicates.
+        Locked by tests/test_trades.py (SCU derivation + idempotent refeed).
 
         Also learns kioskId -> place from the kiosk-binding line (logged when the kiosk
         is opened, before the transaction), which names the station ("Cordys") the
@@ -387,7 +393,7 @@ class State:
             mis.completion_type = m.group("ctype")
             mis.reason = m.group("reason")
             mis.status = patterns.classify_end(m.group("ctype"), m.group("reason"))
-            if mis.status == "completed":  # only completed missions pay out
+            if mis.status == "completed":  # only completed missions pay out (test_state.py)
                 self._pending_award.append(mis.mission_id)
             return
 
@@ -458,6 +464,8 @@ class State:
         # events and any later Deliver text map straight in), all sharing this zone.
         # Multi-DESTINATION contracts (SingleToMulti*) have a distinct zone per drop, so
         # they're excluded -- their per-oid markers/text already split correctly.
+        # Locked by tests/test_state.py (test_multicommodity_marker_expands_to_one_leg_per_commodity,
+        # test_singletomulti_marker_is_not_expanded).
         cargos = patterns.decode_cargo_from_contract(mis.contract)
         if kind == "dropoff" and len(cargos) > 1 and "SingleToMulti" not in mis.contract:
             base = oid.rsplit("_", 1)[0]

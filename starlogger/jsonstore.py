@@ -26,7 +26,8 @@ def read_json(path: str, default=None):
 
 def atomic_write(path: str, data, *, sort_keys: bool = True) -> None:
     """Write `data` as indented JSON via a temp file + `os.replace`, so a concurrent
-    reader always sees either the old file or the complete new one, never a partial."""
+    reader always sees either the old file or the complete new one, never a partial.
+    Locked by tests/test_jsonstore.py (roundtrip + a failed write leaves the prior file intact)."""
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, sort_keys=sort_keys)

@@ -119,6 +119,8 @@ AWARD = re.compile(r'Added notification "Awarded\s*(?P<amt>\d+)\s*aUEC')
 #      Cargo Box Data: boxSize[16.000000] | unitAmount[18] ...
 #   ...SendCommoditySellRequest> ... shopName[SCShop_...] ... amount[793520.000000]
 #      ... resourceGUID[9e65a7bd-...] ... Cargo Box Data:  [boxSize[16] | unitAmount[14]] ...
+# The SCU-from-box rule is locked by tests/test_patterns.py::test_trade_buy_sell_capture_box_not_quantity
+# and tests/test_trades.py (parse + idempotent refeed).
 _BOX = r".*?boxSize\[(?P<box>[0-9.]+)\]\s*\|\s*unitAmount\[(?P<units>\d+)\]"
 TRADE_BUY = re.compile(
     r"SendCommodityBuyRequest>.*?shopName\[(?P<shop>[^\]]*)\].*?kioskId\[(?P<kiosk>\d+)\].*?"

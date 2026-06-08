@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import types
 
 import pytest
 
@@ -145,6 +146,122 @@ def test_bump_version_wakes_a_waiter():
     st.bump_version()
     t.join(2)
     assert woke == [1]
+
+
+# --- multi-commodity marker expansion (state-level) ----------------------- #
+# decode_cargo_from_contract's token split is covered in test_patterns.py; this
+# locks the _marker() behaviour built on top of it: a single-destination contract
+# carrying several commodities logs a CreateMarker for only dropoff_<phase>_0, and
+# the state must fan that lone marker out into one leg per commodity.
+
+def _marker(mid, oid, contract, zone="100", x=1.0, y=2.0, z=3.0):
+    return (f"<2026-06-06T00:00:00.000Z> [Notice] <Mission> Creating objective marker: "
+            f"missionId [{mid}], generator name [gen], contract [{contract}], "
+            f"contractDefinitionId[cdef], objectiveId [{oid}], markerEntityId [12345], "
+            f"zoneHostId [{zone}], position [x: {x}, y: {y}, z: {z}]\n")
+
+
+def test_multicommodity_marker_expands_to_one_leg_per_commodity():
+    st = State()
+    contract = "HaulCargo_AToB_RefinedOre_Mixed_AluminiumTungstenCorundum_Stanton_x"
+    st.feed(_marker("0a-1", "dropoff_1_0", contract, zone="500"))
+    legs = st.missions["0a-1"].legs
+    assert sorted(legs) == ["dropoff_1_0", "dropoff_1_1", "dropoff_1_2"]
+    assert [legs[k].cargo for k in sorted(legs)] == ["Aluminum", "Tungsten", "Corundum"]
+    assert all(legs[k].zone_host_id == "500" for k in legs)   # all share the one dropoff zone
+
+
+def test_singletomulti_marker_is_not_expanded():
+    # Multi-DESTINATION contracts have a distinct zone per drop; their per-oid markers
+    # already split correctly, so the lone-marker fan-out must NOT fire.
+    st = State()
+    contract = "HaulCargo_SingleToMulti3_RefinedOre_Mixed_AluminiumTungstenCorundum_Stanton_x"
+    st.feed(_marker("0b-2", "dropoff_0", contract, zone="600"))
+    assert list(st.missions["0b-2"].legs) == ["dropoff_0"]
+
+
+# --- award queue gating --------------------------------------------------- #
+# Only a completed mission queues for the next "Awarded N aUEC" line; failed /
+# abandoned / expired endings must never claim a payout.
+
+def _end(mid, ctype, reason):
+    return (f"<2026-06-06T00:00:00.000Z> [Notice] <Mission> Ending mission for player. "
+            f"MissionId[{mid}] Player[Foo] z CompletionType[{ctype}] Reason[{reason}]\n")
+
+
+def test_only_completed_missions_queue_awards():
+    st = State()
+    st.feed(_end("fa-1", "Failed", "Failed"))
+    st.feed(_end("ab-1", "Abandoned", "Abandoned"))
+    assert len(st._pending_award) == 0                 # non-completions never queue
+    st.feed(_end("dd-1", "Completed", "Success"))
+    assert list(st._pending_award) == ["dd-1"]
+
+
+# --- session-boundary semantics ------------------------------------------- #
+
+def _accept(mid, title="Haul"):
+    return (f'<2026-06-06T00:00:00.000Z> [Notice] <SHUDEvent_OnNotification> Added notification '
+            f'"Contract Accepted:  {title}: " [1] to queue. New queue size: 1, '
+            f'MissionId: [{mid}], ObjectiveId: [] [x]\n')
+
+
+def _frontend(ts):
+    return f'<{ts}> [Notice] <CVS> eCVS_InGame gamerules="SC_Frontend"\n'
+
+
+def _pu(ts):
+    return f'<{ts}> [Notice] <CVS> eCVS_InGame gamerules="SC_Default"\n'
+
+
+def _shutdown(ts):
+    return f'<{ts}> [Notice] <System> CCIGBroker::FastShutdown requested\n'
+
+
+def _count_resets(st):
+    """Wrap st.reset on the instance (which feed() resolves before the class method)
+    so the test can count how many times a boundary actually reset the session."""
+    seen: list = []
+    real = State.reset
+
+    def counting(self, **kw):
+        seen.append(kw)
+        return real(self, **kw)
+
+    st.reset = types.MethodType(counting, st)
+    return seen
+
+
+def test_frontend_boundary_resets_once_per_timestamp():
+    st = State()
+    seen = _count_resets(st)
+    st.feed(_accept("0a-1"))
+    st.feed(_frontend("2026-06-06T01:00:00.000Z"))   # logout -> reset
+    st.feed(_frontend("2026-06-06T01:00:00.000Z"))   # same establisher burst -> deduped
+    assert len(seen) == 1
+    st.feed(_frontend("2026-06-06T02:00:00.000Z"))   # a later, distinct logout -> resets again
+    assert len(seen) == 2
+
+
+def test_relaunch_into_pu_does_not_reset():
+    st = State()
+    seen = _count_resets(st)
+    st.feed(_accept("0a-1"))
+    st.feed(_pu("2026-06-06T01:00:00.000Z"))         # SC_Default establisher (login/relaunch)
+    assert seen == []                                # missions the game restores must survive
+    assert "0a-1" in st.missions
+    assert st.logged_in is True
+
+
+def test_fastshutdown_archives_once_not_twice():
+    st = State()
+    archived: list = []
+    st.on_session_end = lambda s: archived.append(len(s.missions))
+    st.feed(_pu("2026-06-06T01:00:00.000Z"))         # logged in
+    st.feed(_accept("0a-1"))
+    st.feed(_shutdown("2026-06-06T02:00:00.000Z"))   # archive + reset like a logout
+    st.feed(_shutdown("2026-06-06T02:00:01.000Z"))   # nothing left -> no double-archive
+    assert archived == [1]
 
 
 if __name__ == "__main__":
