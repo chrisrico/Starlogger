@@ -449,7 +449,7 @@ function tradeRoutesBlock(loads, lostSet) {
     + footNum(pctFmt(oPct), oPct >= 0 ? "pos" : "neg", "overall % return")
     + footNum(signed(oPer), oPer >= 0 ? "pos" : "neg", "overall aUEC / SCU");
   return `<div class="arch-sub">Top routes · ${routes.length}</div>` + recs + bar
-    + `<table class="logtable rt-table">
+    + `<table class="logtable">
       <thead><tr><th>Commodity</th><th>Route</th>${th("Trips", 1)}${th("SCU", 1)}${th("Profit", 1)}${th("%", 1)}${th("/SCU", 1)}</tr></thead>
       <tbody>${body}</tbody><tfoot><tr>${foot}</tr></tfoot></table>`;
 }
