@@ -1,24 +1,7 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
-// Defensive read of an input's value by id ("" when the element isn't in the DOM yet).
-const val = (id) => ($(id) || {}).value || "";
-const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"]/g,
-  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const num = (n) => (n == null ? "" : Number(n).toLocaleString());
-
-// Only touch the DOM when the rendered HTML actually changes. Kills the 3s poll
-// flicker and means entrance animations replay only on real updates.
-const _rendered = {};
-const _seen = {};
-function setHTML(id, html) {
-  if (_rendered[id] === html) return;
-  _rendered[id] = html;
-  const el = $(id);
-  el.classList.toggle("noanim", !!_seen[id]);  // entrance animation on first paint only
-  el.innerHTML = html;
-  _seen[id] = true;
-}
+import { $, val, esc, num, setHTML, logTable, th, tag } from "./dom.js";
+import { postJSON, postRaw, getJSON } from "./net.js";
 
 let TAB = "contracts";   // Contracts is the first/default tab
 let LAST = null;      // latest snapshot
@@ -77,22 +60,6 @@ function setRouteSort(key) {
 function logSection(key, title, headSpan, body) {
   return { key, title, headSpan: headSpan || "", body };
 }
-
-// ---- small render helpers (DRY the repeated archive markup) ---- //
-// A scrolling log table, or an empty-state note when there are no body rows.
-// `headRow` is the inner HTML of the <thead> row (the <th> cells); `bodyRows` the
-// concatenated <tr>s ("" / falsy → the empty note). Callers keep full control of cells.
-function logTable(headRow, bodyRows, emptyMsg) {
-  return bodyRows
-    ? `<div class="logwrap"><table class="logtable"><thead><tr>${headRow}</tr></thead><tbody>${bodyRows}</tbody></table></div>`
-    : `<div class="empty">${emptyMsg}</div>`;
-}
-// A header cell; `num` right-aligns it to match a numeric column's values. `tip`
-// (optional) adds a hover tooltip explaining the column.
-const th = (label, num, tip) =>
-  `<th${num ? ' class="lt-num"' : ""}${tip ? ` title="${esc(tip)}"` : ""}>${label}</th>`;
-// A small uppercased status/category pill (the .lt-tag family).
-const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
 
 // ---- Cargo / Plan sub-tabs ---- //
 // Loading+Unloading live under the Cargo tab; Routes+Manifest under the Plan tab,
@@ -703,18 +670,6 @@ async function edCommit(el) {
   EDIT_BUSY = false;
   refresh();
 }
-async function postJSON(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json().catch(() => ({}));
-  if (!j.ok) throw new Error(j.error || r.status);
-  return j;
-}
-// POST returning a raw JSON body (no {ok} envelope) — the replay snapshot/edit responses.
-async function postRaw(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify(body), cache: "no-store" });
-  return r.json();
-}
 // Archive edit: send one edit op to the ephemeral overlay, swap in the recomputed snapshot
 // + updated overlay (nothing is persisted), and repaint. The single path every editor uses
 // in replay mode in place of its live /api/* write.
@@ -726,11 +681,6 @@ async function replayEdit(op) {
     REPLAY_EDITS = j.overlay; REPLAY_SNAPSHOT = j.snapshot;
     EDIT = null; renderAll(curData());
   } catch (e) { alert("Edit failed: " + e); }
-}
-// GET + parse JSON for the live dashboard's no-cache reads (state/sessions/replay/ships).
-// Mining catalog lookups use their own plain fetch (cacheable, no `ok` envelope).
-async function getJSON(url) {
-  return (await fetch(url, { cache: "no-store" })).json();
 }
 // Re-render only the edit-bearing containers from the current snapshot (used when
 // opening/cancelling an inline editor, without a network round-trip).
