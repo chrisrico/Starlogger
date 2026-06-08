@@ -1947,10 +1947,10 @@ Object.assign(window, {
   // header / ship selector
   setMode, pickShip, openShipMenu, filterShipMenu, shipKeydown, onShipBlur,
   // cargo / plan tabs + route reorder
-  cargoSub, setRouteSort, resetRouteOrder, rowHover, boxHover,
+  cargoSub, setRouteSort, resetRouteOrder, rowHover, boxHover, markDelivered,
   routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,
-  // archive / replay
-  toggleArch, scrubTo, scrubStep, exitReplay,
+  // archive / replay  (enterReplay / markTradeLost use single-quoted onclick — still bridged)
+  toggleArch, scrubTo, scrubStep, exitReplay, enterReplay, markTradeLost,
   // update banner
   applyUpdate, dismissUpdate,
   // mining (Identify / Find / Plan)

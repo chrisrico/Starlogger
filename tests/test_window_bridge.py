@@ -38,8 +38,12 @@ def _all_js() -> str:
 
 
 def _referenced_names(js: str) -> set[str]:
-    # 1. directly-invoked handler names:  onclick="editMission(...)"
-    direct = set(re.findall(r'\son[a-z]+="([A-Za-z_$][\w$]*)\(', js))
+    # 1. directly-invoked handler names, EITHER quote style:
+    #      onclick="editMission(…)"   ·   onclick='markTradeLost(…)'
+    #    Single-quoted handlers carry JSON args (enterReplay/markDelivered/markTradeLost);
+    #    they resolve against window at runtime exactly like double-quoted ones, so they
+    #    must be matched too — missing them is how unbridged handlers slipped through.
+    direct = set(re.findall(r"""\son[a-z]+=["']([A-Za-z_$][\w$]*)\(""", js))
     # 2. interpolated handler names passed to tabBar(items, active, "fnName", ...)
     tabbar = set(re.findall(r'tabBar\([^,]*,[^,]*,\s*"([A-Za-z_$][\w$]*)"', js))
     return (direct | tabbar) - _NOT_OURS
