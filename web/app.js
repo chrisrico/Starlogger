@@ -8,25 +8,15 @@ import {
 } from "./mining.js";
 import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState } from "./jukebox.js";
 import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
+// Shared hot state (TAB / LAST / ROUTE_ORDER / REPLAY_*) + the snapshot accessor live on the
+// `S` object so the archive/stream/editor modules all mutate the same state. See state.js.
+import { S, REPLAY_UNAVAILABLE, curData } from "./state.js";
 
-let TAB = "contracts";   // Contracts is the first/default tab
-let LAST = null;      // latest snapshot
 let _lastRenderSig = null;  // serialized snapshot last rendered by the poll (skip identical re-renders)
 let EDIT = null;      // mission_id whose editor is open (Contracts tab)
 let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
 let ASSET_VER = null; // frontend asset hash from the SSE `meta` frame; reload if it changes
 let SESSIONS = null;  // archived sessions
-
-// ---- session replay ---- //
-// When a session is replayed, the WHOLE dashboard renders a reconstructed past
-// snapshot instead of live data: curData() returns REPLAY_SNAPSHOT and the poll pauses.
-// REPLAY_POINTS is the scrub timeline (index/ts/label); REPLAY_I the current checkpoint.
-// Archive editing is fully interactive but EPHEMERAL: every edit goes to an in-memory
-// overlay (REPLAY_EDITS) via /api/replay/edit — which recomputes the snapshot exactly
-// like live but writes nothing to disk. null until the first edit (disk state shown).
-let REPLAY_MODE = false, REPLAY_KEY = null, REPLAY_POINTS = [], REPLAY_I = 0, REPLAY_SNAPSHOT = null;
-let REPLAY_EDITS = null, REPLAY_SAVED_ORDER = null;
-let REPLAY_UNAVAILABLE = new Set();  // session keys whose source log is gone
 let _scrubTimer = null;
 
 // Which Archive section is expanded (accordion — only one at a time). Empty = all
@@ -51,7 +41,7 @@ function archDefaultSection() {
     }
     for (const t of s.trades || []) if ((t.ts || "") > tT) tT = t.ts || "";
   }
-  for (const t of (LAST && LAST.trades) || []) if ((t.ts || "") > tT) tT = t.ts || "";
+  for (const t of (S.LAST && S.LAST.trades) || []) if ((t.ts || "") > tT) tT = t.ts || "";
   return tT > cT ? "trades" : "contracts";
 }
 // How the Trade Routes recommendations are ranked: total aUEC, % return, or aUEC/SCU.
@@ -78,7 +68,7 @@ let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "p
 const TABS = ["cargo", "plan", "contracts", "archive", "mining"];
 function activateTab(name) {
   if (!TABS.includes(name)) return;
-  TAB = name;
+  S.TAB = name;
   document.querySelectorAll("#nav button").forEach(b => {
     b.classList.toggle("active", b.dataset.tab === name);
   });
@@ -169,7 +159,7 @@ function applyTabLayout(mining) {
     if (i >= 0) b.style.order = i;   // flex order: keep the visible slots contiguous
   });
   // If the active tab just got hidden, fall back to a sensible visible one.
-  if (!order.includes(TAB)) activateTab(mining ? "mining" : "contracts");
+  if (!order.includes(S.TAB)) activateTab(mining ? "mining" : "contracts");
 }
 
 // Close the Contract Log's Type-filter dropdown on any click outside it (the toggle
@@ -193,7 +183,7 @@ async function loadShipList() {
   try {
     const db = await getJSON("/api/ships");
     SHIP_DB = db.ships || {};
-    if (LAST) renderAll(curData());  // repaint now that we have the catalog
+    if (S.LAST) renderAll(curData());  // repaint now that we have the catalog
   } catch (e) { /* leave null; the box still shows the current ship */ }
 }
 
@@ -259,7 +249,7 @@ function onShipBlur() {
   const menu = $("shipMenu"); if (menu) menu.classList.remove("open");
   const inp = $("shipSel");
   if (inp) { inp.setAttribute("aria-expanded", "false"); inp.setAttribute("aria-activedescendant", ""); }
-  if (inp && LAST) inp.value = LAST.ship || "";  // drop unselected typing
+  if (inp && S.LAST) inp.value = S.LAST.ship || "";  // drop unselected typing
 }
 // Arrow Up/Down move the highlight, Enter selects it (else the first match),
 // Escape closes. Mirrors how a native <select>/combobox behaves.
@@ -294,7 +284,7 @@ function pickShip(ev, name) {
 }
 
 async function selectShip(name) {
-  if (REPLAY_MODE) return replayEdit({ kind: "select_ship", ship: name || null });
+  if (S.REPLAY_MODE) return replayEdit({ kind: "select_ship", ship: name || null });
   try { await postJSON("/api/select-ship", { ship: name || null }); }
   catch (e) { alert("Couldn't set ship: " + e); return; }
   refresh();
@@ -491,7 +481,7 @@ async function edCommit(el) {
   if (EDIT_CELL !== cellTok(f)) return;   // already cancelled/committed
   const raw = (el.value || "").trim();
   EDIT_BUSY = true; EDIT_CELL = null;
-  if (REPLAY_MODE) {
+  if (S.REPLAY_MODE) {
     const op = f.k === "station" ? { kind: "station_name", zone: f.zone, name: raw }
       : f.k === "origin" ? { kind: "override", mission_id: f.mid, override: { ...rawOverride(f.mid), origin: raw || null } }
         : { kind: "leg_field", mission_id: f.mid, oid: f.oid, field: f.k, value: raw };
@@ -513,16 +503,16 @@ async function edCommit(el) {
 async function replayEdit(op) {
   try {
     const j = await postRaw("/api/replay/edit",
-      { key: REPLAY_KEY, at: REPLAY_I, overlay: REPLAY_EDITS, op });
+      { key: S.REPLAY_KEY, at: S.REPLAY_I, overlay: S.REPLAY_EDITS, op });
     if (!j || !j.snapshot) throw new Error((j && j.error) || "edit failed");
-    REPLAY_EDITS = j.overlay; REPLAY_SNAPSHOT = j.snapshot;
+    S.REPLAY_EDITS = j.overlay; S.REPLAY_SNAPSHOT = j.snapshot;
     EDIT = null; renderAll(curData());
   } catch (e) { alert("Edit failed: " + e); }
 }
 // Re-render only the edit-bearing containers from the current snapshot (used when
 // opening/cancelling an inline editor, without a network round-trip).
 function rerenderEdits() {
-  if (!LAST) return;
+  if (!S.LAST) return;
   const d = curData(); if (!d) return;
   setHTML("cargo", cargoView(d));
   setHTML("plan", planView(d));
@@ -555,7 +545,7 @@ function cargoView(d) {
 }
 
 // ---- Plan tab: ONE section — the ordered itinerary IS the load order, with the 3D
-// hold below it. Dragging a stop sets the visit & load order (ROUTE_ORDER) that both
+// hold below it. Dragging a stop sets the visit & load order (S.ROUTE_ORDER) that both
 // the list and the hold packing follow. (Was two sub-tabs, Routes ⇄ Manifest, keyed on
 // different units — a stop vs. a packed elevator — which never agreed; now one unit:
 // the destination stop = one list row = one hold band.) See planView below.
@@ -596,7 +586,7 @@ function legCheck(mid, oid, done, legsJson) {
 
 async function markDelivered(legs, done) {
   if (typeof legs === "string") legs = JSON.parse(legs);
-  if (REPLAY_MODE) return replayEdit({ kind: "leg_state", legs, done });
+  if (S.REPLAY_MODE) return replayEdit({ kind: "leg_state", legs, done });
   try { await postJSON("/api/leg-state", { legs, done }); }
   catch (e) { alert("Update failed: " + e); return; }
   refresh();
@@ -648,7 +638,7 @@ function planHead(d, stops, jumps, hasGrid, access, packed, cap, placed, totalSc
     ? "no cargo staged — accept hauling contracts and your route &amp; load plan appear here"
     : (hasGrid ? `${accessLabel(access)} · ${strategyCopy(packed)}${free}`
                : "drag a stop to set your visit &amp; load order");
-  const reset = ROUTE_ORDER
+  const reset = S.ROUTE_ORDER
     ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
   return `<header class="plan-head"><span class="arch-title">${title}</span>
     <span class="sub">${sub}</span>${reset}</header>`;
@@ -789,7 +779,7 @@ function routeDrop(ev) {
   if (dropDest === DRAG_DEST) return routeDragEnd();
   order = order.filter(x => x !== DRAG_DEST);
   order.splice(order.indexOf(dropDest), 0, DRAG_DEST);
-  ROUTE_ORDER = order;
+  S.ROUTE_ORDER = order;
   persistRouteOrder();
   routeDragEnd();
   renderAll(curData());
@@ -797,12 +787,12 @@ function routeDrop(ev) {
 // Persist the manual route order to localStorage — but only when live. In archive replay
 // the order is ephemeral (restored on exit), so it must not bleed into the live view.
 function persistRouteOrder() {
-  if (REPLAY_MODE) return;
-  if (ROUTE_ORDER) localStorage.setItem("routeOrder", JSON.stringify(ROUTE_ORDER));
+  if (S.REPLAY_MODE) return;
+  if (S.ROUTE_ORDER) localStorage.setItem("routeOrder", JSON.stringify(S.ROUTE_ORDER));
   else localStorage.removeItem("routeOrder");
 }
 function resetRouteOrder() {
-  ROUTE_ORDER = null;
+  S.ROUTE_ORDER = null;
   persistRouteOrder();
   renderAll(curData());
 }
@@ -813,7 +803,7 @@ function moveRoute(dest, dir) {
   const i = order.indexOf(dest), j = i + dir;
   if (i < 0 || j < 0 || j >= order.length) return;
   order.splice(i, 1); order.splice(j, 0, dest);
-  ROUTE_ORDER = order;
+  S.ROUTE_ORDER = order;
   persistRouteOrder();
   renderAll(curData());
   setTimeout(() => {   // restore focus to the grip in its new position
@@ -977,8 +967,7 @@ function renderMissions() { const d = curData(); if (d) setHTML("contracts", mis
 const destHue = (i) => Math.round((i * 137.508) % 360);
 
 // ---- cargo groups, elevator staging + load-order packing ---- //
-// The snapshot every tab renders from (live session only).
-const curData = () => (REPLAY_MODE ? REPLAY_SNAPSHOT : LAST);
+// (curData — the snapshot every tab renders from — lives in state.js.)
 
 // Render every tab from one snapshot `d` (the live snapshot).
 function renderAll(d) {
@@ -996,20 +985,16 @@ function renderAll(d) {
 
 const loadOrder = (gs) => [...gs].sort((a, b) => b.routeIdx - a.routeIdx);
 
-// Manual delivery order: a persisted list of destination stations the user dragged
-// into their preferred visit sequence. When set it overrides the planner's order
-// everywhere (route cards, trip plan, and the load order via deliveryIndex). Unknown
+// Manual delivery order (S.ROUTE_ORDER, persisted — see state.js) overrides the planner's
+// order everywhere (route cards, trip plan, and the load order via deliveryIndex). Unknown
 // destinations (new contracts) fall through to the server order until next reordered.
-let ROUTE_ORDER = (() => {
-  try { return JSON.parse(localStorage.getItem("routeOrder") || "null"); } catch (e) { return null; }
-})();
 const routeRank = (dest) => {
-  const i = ROUTE_ORDER ? ROUTE_ORDER.indexOf(dest) : -1;
+  const i = S.ROUTE_ORDER ? S.ROUTE_ORDER.indexOf(dest) : -1;
   return i >= 0 ? i : Infinity;
 };
 // Stable-sort items by the manual order, keeping the server order for ties/unknowns.
 function byRouteOrder(arr, destOf) {
-  if (!ROUTE_ORDER || !arr) return arr || [];
+  if (!S.ROUTE_ORDER || !arr) return arr || [];
   return arr.map((x, i) => [x, i])
     .sort((a, b) => (routeRank(destOf(a[0])) - routeRank(destOf(b[0]))) || (a[1] - b[1]))
     .map(p => p[0]);
@@ -1017,8 +1002,8 @@ function byRouteOrder(arr, destOf) {
 
 // delivery position of a destination from the plotted route (0 = delivered first).
 function deliveryIndex(d, dest) {
-  if (ROUTE_ORDER) {           // user's manual drag order wins when set
-    const r = ROUTE_ORDER.indexOf(dest);
+  if (S.ROUTE_ORDER) {           // user's manual drag order wins when set
+    const r = S.ROUTE_ORDER.indexOf(dest);
     if (r >= 0) return r;
   }
   const stops = (d.plan && d.plan.stops) || [];
@@ -1155,7 +1140,7 @@ function holdHtml(d, packed, access) {
 }
 
 // ---- editor actions ---- //
-// current override for a mission, from whatever data is displayed (live LAST or the
+// current override for a mission, from whatever data is displayed (live S.LAST or the
 // replayed snapshot) so archive edits merge onto the overlay's existing override.
 const rawOverride = (mid) => {
   const d = curData();
@@ -1222,7 +1207,7 @@ function buildOverride() {
 }
 
 async function postOverride(mid, override) {
-  if (REPLAY_MODE) return replayEdit({ kind: "override", mission_id: mid, override });
+  if (S.REPLAY_MODE) return replayEdit({ kind: "override", mission_id: mid, override });
   try { await postJSON("/api/override", { mission_id: mid, override }); }
   catch (e) { alert("Save failed: " + e); }
   EDIT = null;
@@ -1284,7 +1269,7 @@ function pooledTrades(sessions) {
     if (!seen.has(k)) { seen.add(k); out.push(t); }
   };
   for (const s of sessions || []) for (const t of s.trades || []) add(t);
-  for (const t of (LAST && LAST.trades) || []) add(t);
+  for (const t of (S.LAST && S.LAST.trades) || []) add(t);
   return out;
 }
 function fuelShort(n) {
@@ -1301,7 +1286,7 @@ function travelLogView(sessions) {
   };
   for (const s of sessions || [])
     for (const t of s.travels || []) add(t);
-  for (const t of (LAST && LAST.travels) || []) add(t);  // live session
+  for (const t of (S.LAST && S.LAST.travels) || []) add(t);  // live session
   rows.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
   let totalSecs = 0;
   const body = rows.map(t => {
@@ -1478,7 +1463,7 @@ function tradeLogView(sessions) {
   // shows immediately (not only after logout); pooledTrades dedups both feeds.
   const trades = pooledTrades(sessions);
   const loads = buildLoads(trades).sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
-  const LOST = new Set((LAST && LAST.lost_trades) || []);
+  const LOST = new Set((S.LAST && S.LAST.lost_trades) || []);
   const routesBlock = tradeRoutesBlock(loads, LOST);
   let totalProfit = 0;
   const body = loads.map(L => {
@@ -1605,11 +1590,11 @@ async function loadSessions() {
 // Flag/unflag a trade load as lost (cargo destroyed/stolen). Optimistically updates
 // the live snapshot's lost set so the row re-renders immediately, then persists.
 async function markTradeLost(id, lost) {
-  if (REPLAY_MODE) return replayEdit({ kind: "trade_lost", trade_id: id, lost });
-  if (LAST) {
-    const set = new Set(LAST.lost_trades || []);
+  if (S.REPLAY_MODE) return replayEdit({ kind: "trade_lost", trade_id: id, lost });
+  if (S.LAST) {
+    const set = new Set(S.LAST.lost_trades || []);
     lost ? set.add(id) : set.delete(id);
-    LAST.lost_trades = [...set];
+    S.LAST.lost_trades = [...set];
   }
   _archRepaint();
   try { await postJSON("/api/trade-lost", { trade_id: id, lost }); }
@@ -1626,7 +1611,7 @@ function sessionListView(sessions) {
     const c = s.counts || {};
     const ships = (s.ships || []).join(", ");
     const trades = (s.trades || []).length;
-    const replaying = REPLAY_MODE && REPLAY_KEY === s.key;
+    const replaying = S.REPLAY_MODE && S.REPLAY_KEY === s.key;
     const act = replaying
       ? `<button class="lt-act on" onclick="exitReplay()" title="Stop replaying this session">■ exit replay</button>`
       : REPLAY_UNAVAILABLE.has(s.key)
@@ -1659,17 +1644,17 @@ async function enterReplay(key) {
       _archRepaint();
       return;
     }
-    REPLAY_KEY = key; REPLAY_POINTS = tl.points; REPLAY_MODE = true;
-    REPLAY_EDITS = null;                  // fresh sandbox; the server seeds it on first edit
-    REPLAY_SAVED_ORDER = ROUTE_ORDER;     // archive reordering is ephemeral — restore on exit
+    S.REPLAY_KEY = key; S.REPLAY_POINTS = tl.points; S.REPLAY_MODE = true;
+    S.REPLAY_EDITS = null;                  // fresh sandbox; the server seeds it on first edit
+    S.REPLAY_SAVED_ORDER = S.ROUTE_ORDER;     // archive reordering is ephemeral — restore on exit
     // Land on the session's busiest checkpoint (most contracts/cargo on the dashboard)
     // rather than the last one — session-end usually has empty holds and finished
     // contracts, so defaulting there makes replay look like it did nothing. Falls back
     // to the last checkpoint when the session had no cargo activity (e.g. combat-only).
     let best = tl.count - 1, bestFill = 0;
     for (const p of tl.points) { const f = p.fill || 0; if (f >= bestFill) { bestFill = f; best = p.i; } }
-    REPLAY_I = bestFill > 0 ? best : tl.count - 1;
-    await loadReplayState();                       // sets REPLAY_SNAPSHOT + renders all tabs
+    S.REPLAY_I = bestFill > 0 ? best : tl.count - 1;
+    await loadReplayState();                       // sets S.REPLAY_SNAPSHOT + renders all tabs
     renderReplayBar();
     _archRepaint();     // reflect the active-replay row state
   } catch (e) {
@@ -1682,11 +1667,11 @@ async function enterReplay(key) {
 async function loadReplayState() {
   const bar = $("replaybar"); if (bar) bar.classList.add("rb-busy");
   try {
-    // POST so any ephemeral edits (REPLAY_EDITS) stay applied while scrubbing; null overlay
+    // POST so any ephemeral edits (S.REPLAY_EDITS) stay applied while scrubbing; null overlay
     // returns the cached disk-state snapshot for this checkpoint (unchanged behaviour).
     const snap = await postRaw("/api/replay/state",
-      { key: REPLAY_KEY, at: REPLAY_I, overlay: REPLAY_EDITS });
-    if (snap && snap.available !== false) { REPLAY_SNAPSHOT = snap; renderAll(curData()); }
+      { key: S.REPLAY_KEY, at: S.REPLAY_I, overlay: S.REPLAY_EDITS });
+    if (snap && snap.available !== false) { S.REPLAY_SNAPSHOT = snap; renderAll(curData()); }
   } catch (e) { /* leave the prior frame up */ }
   if (bar) bar.classList.remove("rb-busy");
 }
@@ -1694,19 +1679,19 @@ async function loadReplayState() {
 // Scrub: move to checkpoint i. Update the bar text immediately (so dragging feels live);
 // debounce the snapshot fetch so a fast drag doesn't fire a request per pixel.
 function scrubTo(i) {
-  REPLAY_I = Math.max(0, Math.min(+i, REPLAY_POINTS.length - 1));
+  S.REPLAY_I = Math.max(0, Math.min(+i, S.REPLAY_POINTS.length - 1));
   updateReplayBar();
   clearTimeout(_scrubTimer);
   _scrubTimer = setTimeout(loadReplayState, 110);
 }
-function scrubStep(d) { scrubTo(REPLAY_I + d); }
+function scrubStep(d) { scrubTo(S.REPLAY_I + d); }
 
 function exitReplay() {
-  REPLAY_MODE = false; REPLAY_KEY = null; REPLAY_SNAPSHOT = null; REPLAY_POINTS = []; REPLAY_I = 0;
-  REPLAY_EDITS = null;                          // discard the ephemeral edits
-  ROUTE_ORDER = REPLAY_SAVED_ORDER; REPLAY_SAVED_ORDER = null;   // restore the live route order
+  S.REPLAY_MODE = false; S.REPLAY_KEY = null; S.REPLAY_SNAPSHOT = null; S.REPLAY_POINTS = []; S.REPLAY_I = 0;
+  S.REPLAY_EDITS = null;                          // discard the ephemeral edits
+  S.ROUTE_ORDER = S.REPLAY_SAVED_ORDER; S.REPLAY_SAVED_ORDER = null;   // restore the live route order
   renderReplayBar();
-  if (LAST) renderAll(curData());                 // back to the live snapshot
+  if (S.LAST) renderAll(curData());                 // back to the live snapshot
   _archRepaint();
   refresh();                                       // resume live polling now
 }
@@ -1716,8 +1701,8 @@ function exitReplay() {
 function renderReplayBar() {
   const bar = $("replaybar"); if (!bar) return;
   const root = document.documentElement.style;
-  if (!REPLAY_MODE) { bar.classList.add("hide"); bar.innerHTML = ""; root.setProperty("--replay-h", "0px"); return; }
-  const n = REPLAY_POINTS.length, sess = (REPLAY_KEY || "").split("|")[0];
+  if (!S.REPLAY_MODE) { bar.classList.add("hide"); bar.innerHTML = ""; root.setProperty("--replay-h", "0px"); return; }
+  const n = S.REPLAY_POINTS.length, sess = (S.REPLAY_KEY || "").split("|")[0];
   bar.classList.remove("hide");
   // Two rows: the fixed-width slider controls on top, the variable-length checkpoint
   // time + event label on their own line below (left-aligned under the session time) so
@@ -1729,7 +1714,7 @@ function renderReplayBar() {
         <span class="rb-sess">${esc(fmtWhen(sess))}</span>
         <button class="rb-step" onclick="scrubStep(-1)" title="previous checkpoint">◀</button>
         <input id="rb-scrub" class="rb-scrub" type="range" min="0" max="${Math.max(0, n - 1)}"
-          value="${REPLAY_I}" oninput="scrubTo(this.value)">
+          value="${S.REPLAY_I}" oninput="scrubTo(this.value)">
         <button class="rb-step" onclick="scrubStep(1)" title="next checkpoint">▶</button>
         <span id="rb-pos" class="rb-pos"></span>
       </span>
@@ -1742,12 +1727,12 @@ function renderReplayBar() {
   updateReplayBar();
 }
 function updateReplayBar() {
-  const n = REPLAY_POINTS.length, p = REPLAY_POINTS[REPLAY_I] || {};
+  const n = S.REPLAY_POINTS.length, p = S.REPLAY_POINTS[S.REPLAY_I] || {};
   const pos = $("rb-pos"), when = $("rb-when"), label = $("rb-label"), scrub = $("rb-scrub");
-  if (pos) pos.textContent = `${REPLAY_I + 1}/${n}`;
+  if (pos) pos.textContent = `${S.REPLAY_I + 1}/${n}`;
   if (when) when.textContent = p.ts ? fmtWhen(p.ts) : "";
   if (label) label.textContent = p.label || "";
-  if (scrub && +scrub.value !== REPLAY_I) scrub.value = REPLAY_I;  // keep slider synced for ◀/▶
+  if (scrub && +scrub.value !== S.REPLAY_I) scrub.value = S.REPLAY_I;  // keep slider synced for ◀/▶
 }
 
 // ---- live stream ---- //
@@ -1827,11 +1812,11 @@ function notifyIfUpdated(v) {
 }
 
 function applySnapshot(d) {
-  LAST = d;
+  S.LAST = d;
   renderUpdateBar(d.update);   // update banner is global — show it even in replay mode
   if (d.music) jukeApplyMusicState(d.music);   // push extraction progress to the jukebox (no polling)
   notifyIfUpdated(d.app_version);   // toast once when the running build changed under us
-  if (REPLAY_MODE) return;   // keep LAST fresh underneath; the replay view owns the screen
+  if (S.REPLAY_MODE) return;   // keep S.LAST fresh underneath; the replay view owns the screen
   // Skip the whole render pass when the snapshot is byte-identical to the last one
   // rendered: setHTML already no-ops the DOM, this also skips building the HTML strings +
   // cargo packing. User interactions call renderAll() directly (unguarded), so an open
@@ -1841,7 +1826,7 @@ function applySnapshot(d) {
     _lastRenderSig = sig;
     renderAll(curData());                  // render every tab from the live snapshot
   }
-  if (TAB === "archive") loadSessions();  // keep archive fresh while viewing
+  if (S.TAB === "archive") loadSessions();  // keep archive fresh while viewing
   const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
   // App build: the short git hash of the running code (logged-in state already
   // lives in the header status pill, so the footer shows the version instead).
