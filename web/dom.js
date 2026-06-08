@@ -41,3 +41,16 @@ export const th = (label, num, tip) =>
   `<th${num ? ' class="lt-num"' : ""}${tip ? ` title="${esc(tip)}"` : ""}>${label}</th>`;
 // A small uppercased status/category pill (the .lt-tag family).
 export const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
+
+// Build an .arch-tabs segmented control: `items` is [[key,label],...]; `active` the
+// selected key; `fn` the handler NAME invoked with the key (resolved off window — must be
+// in the bridge). opts.attr(key) adds per-button attributes (e.g. data-sub); opts.tail is
+// extra HTML appended inside the bar. Shared by every secondary-nav strip (cargo/plan/
+// archive/mining).
+export function tabBar(items, active, fn, opts = {}) {
+  const btns = items.map(([k, t]) => {
+    const attr = opts.attr ? " " + opts.attr(k) : "";
+    return `<button class="arch-tab${k === active ? " active" : ""}"${attr} onclick="${fn}('${k}')">${t}</button>`;
+  }).join("");
+  return `<div class="arch-tabs">${btns}${opts.tail || ""}</div>`;
+}
