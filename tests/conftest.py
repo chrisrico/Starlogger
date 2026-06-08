@@ -95,7 +95,7 @@ def live_server():
 
 @pytest.fixture(autouse=True)
 def _reset_settings():
-    """Keep per-test isolation of the (temp) settings.json — one test toggling music_autoplay
+    """Keep per-test isolation of the (temp) settings.json — a setting changed by one test
     must not leak into the next. Runs for every test; cheap and harmless for non-browser ones."""
     try:
         with open(config.SETTINGS_PATH, "w") as f:

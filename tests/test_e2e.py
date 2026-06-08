@@ -1,7 +1,7 @@
 """End-to-end tests that drive the real dashboard in headless Chromium (Playwright).
 
 These cover behaviors unit tests can't: localStorage persistence across reloads, the HTML5
-<audio> jukebox, modal open/close, the Settings "Advanced" collapse, and auto-play. They use
+<audio> jukebox, modal open/close, the Settings "Advanced" collapse, and Play/Stop autoplay. They use
 the `live_server` fixture (a real Flask server over a throwaway temp data dir — see conftest.py)
 so they NEVER touch the live install or the source tree.
 
@@ -29,12 +29,6 @@ def _fast_timeouts(page):
     page.set_default_navigation_timeout(15000)
 
 
-def _set_autoplay(on: bool) -> None:
-    from starlogger import settings
-    settings.update({"music_autoplay": on})        # writes the (temp) settings.json
-    settings._cache["mtime"] = None                # force a fresh read by the server thread
-
-
 # --- page boots cleanly --------------------------------------------------------------- #
 
 def test_page_loads_without_console_errors(page, live_server):
@@ -46,31 +40,21 @@ def test_page_loads_without_console_errors(page, live_server):
     assert errors == [], errors
 
 
-# --- Settings: Advanced section + auto-play toggle ------------------------------------ #
+# --- Settings: Advanced section ------------------------------------------------------- #
 
 def test_settings_advanced_collapsed_by_default(page, live_server):
     page.goto(live_server)
     page.click("#navsettings")
     page.wait_for_selector("#setAdvToggle")
-    # the four advanced rows are hidden until the section is expanded
+    # the advanced rows are hidden until the section is expanded
     assert page.locator("#set_update_remote").is_hidden()
     assert page.locator("#set_update_branch").is_hidden()
     assert page.locator("#set_idle_timeout").is_hidden()
-    # auto-play lives under General (always visible)
-    assert page.locator("#set_music_autoplay").is_visible()
+    # a General row (always visible) anchors the un-collapsed section
+    assert page.locator("#set_open_browser").is_visible()
     # expanding reveals the advanced rows
     page.click("#setAdvToggle")
     assert page.locator("#set_update_remote").is_visible()
-
-
-def test_settings_autoplay_toggle_persists_cache(page, live_server):
-    page.goto(live_server)
-    page.click("#navsettings")
-    page.wait_for_selector("#set_music_autoplay")
-    page.check("#set_music_autoplay")
-    page.click("#settingsSave")
-    # saveSettings mirrors the choice into the jukebox boot cache
-    page.wait_for_function("() => localStorage.getItem('jukeAutoplay') === '1'")
 
 
 # --- Jukebox: numbering, total time, shuffle ------------------------------------------ #
@@ -132,15 +116,32 @@ def test_playback_restores_same_track_after_reload(page, live_server):
     assert page.evaluate("document.getElementById('jukeAudio').currentSrc") == src
 
 
-def test_autoplay_starts_music_when_enabled(page, live_server):
-    _set_autoplay(True)
+def test_play_turns_on_autoplay_and_resumes_after_reload(page, live_server):
     page.goto(live_server)
-    page.click("#navjukebox")                                   # the click is a user gesture
-    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)         # a track auto-started
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukePlay:not([disabled])")
+    page.click("#jukePlay")                                     # Play (the click is a user gesture)
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)
+    assert page.evaluate("localStorage.getItem('jukeAutoplay')") == "1"
+    page.reload()
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)        # autoplay on → resumes playing
 
 
-def test_no_autoplay_when_disabled(page, live_server):
-    _set_autoplay(False)
+def test_stop_turns_off_autoplay_and_halts_after_reload(page, live_server):
+    page.goto(live_server)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukePlay:not([disabled])")
+    page.click("#jukePlay")
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)
+    page.click("#jukeStop")                                     # Stop: halt + rewind + autoplay off
+    page.wait_for_function("() => { const a = document.getElementById('jukeAudio'); return a.paused && a.currentTime === 0; }")
+    assert page.evaluate("localStorage.getItem('jukeAutoplay')") == "0"
+    page.reload()
+    page.wait_for_selector("#jukeList .juke-row")
+    assert not page.evaluate(_AUDIO_PLAYING)                    # autoplay off → stays paused
+
+
+def test_no_autoplay_for_a_fresh_visitor(page, live_server):
     page.goto(live_server)
     page.click("#navjukebox")
     page.wait_for_selector("#jukeList .juke-row")

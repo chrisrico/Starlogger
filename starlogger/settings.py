@@ -44,14 +44,6 @@ CONFIG_SCHEMA = [
                 "Applies on the next launch.",
     },
     {
-        "key": "music_autoplay", "type": "bool", "default": False,
-        "env": "STARLOGGER_MUSIC_AUTOPLAY",
-        "group": "General", "label": "Auto-play music",
-        "help": "Start the jukebox automatically when the dashboard loads — resuming the "
-                "last track, or starting the playlist. Your browser may keep it silent "
-                "until you click the page.",
-    },
-    {
         "key": "idle_timeout", "type": "number", "default": 30.0, "min": 1.0,
         "env": "STARLOGGER_IDLE_TIMEOUT",
         "group": "Lifecycle", "label": "Idle shutdown (seconds)",

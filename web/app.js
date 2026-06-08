@@ -295,10 +295,6 @@ async function saveSettings() {
   const btn = $("settingsSave"); btn.disabled = true;
   try {
     await postJSON("/api/settings", payload);
-    // keep the jukebox boot cache in sync so the next load honors the new auto-play choice
-    if ("music_autoplay" in payload) {
-      try { localStorage.setItem("jukeAutoplay", payload.music_autoplay ? "1" : "0"); } catch (_) {}
-    }
     closeSettings();
   }
   catch (e) { _settingsErr(String(e)); }
@@ -2084,7 +2080,9 @@ let JUKE_SEEKING = false;     // user is dragging the seek bar (don't fight it w
 let JUKE_SHUFFLE = false;     // shuffle playback order (persisted in localStorage)
 let JUKE_HISTORY = [];        // ids in play order, capped — lets "previous" work under shuffle
 let JUKE_RESTORED = false;    // playback state already restored from localStorage this load?
-let JUKE_AUTOPLAY = false;    // "Auto-play music" setting (from /api/music) — auto-start on load
+// Playback intent: Play turns this on, Stop turns it off (persisted). When on, a reload resumes
+// playing the saved/first track. Initialized from the boot cache so it's known before /api/music.
+let JUKE_AUTOPLAY = (() => { try { return localStorage.getItem("jukeAutoplay") === "1"; } catch (_) { return false; } })();
 let _jukeDragId = null;       // id of the row being dragged
 let _jukeRestoreTime = null;  // pending seek (sec) to apply once the track's metadata loads
 let _jukeSavedAt = 0;         // last currentTime (sec) we persisted, to throttle timeupdate saves
@@ -2096,6 +2094,7 @@ const JUKE_IC = {
   next: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14l10-7z"/><rect x="16.4" y="5" width="2.6" height="14" rx="1"/></svg>`,
   play: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg>`,
   pause: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.2v14H7zM13.8 5H17v14h-3.2z"/></svg>`,
+  stop: `<svg class="juke-ic juke-ic-solid" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>`,
 };
 
 function jukeFmt(sec) {
@@ -2156,6 +2155,7 @@ function initJukebox() {
           <button class="juke-nav juke-shuf" id="jukeShuffle" title="Shuffle" aria-label="Shuffle" aria-pressed="false"><svg class="juke-ic" viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg></button>
           <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">${JUKE_IC.prev}</button>
           <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>${JUKE_IC.play}</button>
+          <button class="juke-nav" id="jukeStop" title="Stop" aria-label="Stop" disabled>${JUKE_IC.stop}</button>
           <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">${JUKE_IC.next}</button>
           <span class="juke-time" id="jukeCur">0:00</span>
           <input class="juke-seek" id="jukeSeek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" disabled>
@@ -2166,6 +2166,7 @@ function initJukebox() {
     $("jukePrev").onclick = () => jukeStep(-1);
     $("jukeNext").onclick = () => jukeStep(1);
     $("jukePlay").onclick = jukeToggle;
+    $("jukeStop").onclick = jukeStop;
     JUKE_SHUFFLE = (() => { try { return localStorage.getItem("jukeShuffle") === "1"; } catch (_) { return false; } })();
     $("jukeShuffle").onclick = jukeToggleShuffle;
     jukeReflectShuffle();
@@ -2266,8 +2267,6 @@ async function jukeLoad() {
     JUKE_TRACKS = (d && d.tracks) || [];
     const c = (d && d.curation) || {};
     JUKE_CURATION = { order: c.order || [], skipped: c.skipped || [], names: c.names || {} };
-    JUKE_AUTOPLAY = !!(d && d.autoplay);
-    try { localStorage.setItem("jukeAutoplay", JUKE_AUTOPLAY ? "1" : "0"); } catch (_) {}   // cache for boot
   } catch (_) {
     JUKE_TRACKS = [];
   }
@@ -2276,9 +2275,9 @@ async function jukeLoad() {
 }
 
 // On first load: restore the saved track at its position, and decide whether to play. With
-// "Auto-play music" on, start playing (the saved track, or the first track if none); with it
-// off, the saved track is restored paused. Autoplay may be blocked until a gesture — then
-// play() rejects and we just stay paused at the restored spot.
+// autoplay on (the user last hit Play, not Stop), start playing (the saved track, or the first
+// track if none); with it off, the saved track is restored paused. Autoplay may be blocked until
+// a gesture — then play() rejects and we just stay paused at the restored spot.
 function jukeRestore() {
   let st;
   try { st = JSON.parse(localStorage.getItem("jukeState") || "null"); } catch (_) { st = null; }
@@ -2333,8 +2332,9 @@ function renderJukeList() {
     r.ondragend = () => { r.classList.remove("dragging"); _jukeDragId = null; jukeCommitOrder(); };
     r.ondragover = (e) => { e.preventDefault(); jukeDragOver(r, e.clientY); };
   });
-  const pb = $("jukePlay");
+  const pb = $("jukePlay"), sb = $("jukeStop");
   if (pb) pb.disabled = !JUKE_TRACKS.length;   // can start playback once there are songs
+  if (sb) sb.disabled = !JUKE_TRACKS.length;
   jukeRenumber();
   if (JUKE_CUR) _jukeHighlight(JUKE_CUR);
 }
@@ -2423,7 +2423,14 @@ function jukeLoadTrack(id, { time = 0, autoplay = true } = {}) {
   jukePersist();
 }
 
-function jukePlay(id) { jukeLoadTrack(id, { time: 0, autoplay: true }); }
+function jukePlay(id) { jukeSetAutoplay(true); jukeLoadTrack(id, { time: 0, autoplay: true }); }
+
+// Playback intent, driven by the Play/Stop buttons (and any explicit play). Persisted so a
+// reload knows whether to resume. See jukeRestore.
+function jukeSetAutoplay(on) {
+  JUKE_AUTOPLAY = on;
+  try { localStorage.setItem("jukeAutoplay", on ? "1" : "0"); } catch (_) {}
+}
 
 // Save the now-playing track, position, and play state so a reload can resume them. While a
 // restore is pending (metadata not loaded, currentTime still 0) use the target seek, so a save
@@ -2450,11 +2457,21 @@ function jukeReflectShuffle() {
   b.setAttribute("aria-pressed", JUKE_SHUFFLE ? "true" : "false");
 }
 
-// Toggle play/pause; with nothing loaded yet, start the first visible track.
+// Toggle play/pause; with nothing loaded yet, start the first visible track. Starting playback
+// (here or via a track click) turns autoplay ON — only Stop turns it off.
 function jukeToggle() {
   const a = $("jukeAudio");
-  if (!JUKE_CUR) { jukeStep(1); return; }
-  if (a.paused) a.play().catch(() => {}); else a.pause();
+  if (!JUKE_CUR) { jukeSetAutoplay(true); jukeStep(1); return; }
+  if (a.paused) { jukeSetAutoplay(true); a.play().catch(() => {}); } else a.pause();
+}
+
+// Stop: halt playback, rewind to the start, and turn autoplay OFF so a reload won't resume.
+function jukeStop() {
+  const a = $("jukeAudio");
+  a.pause();
+  a.currentTime = 0;
+  jukeSetAutoplay(false);
+  jukePersist();
 }
 
 // Reflect playing state onto the play/pause button + the OS media session.
