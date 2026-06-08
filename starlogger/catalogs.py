@@ -100,12 +100,16 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
 
     def _music(p4k, ver, reason):
         # Jukebox best-track set. Builds once on first run, then refreshes on a major version move.
-        # Scan first (no decode, ~seconds): if the keep-set is unchanged, just re-stamp the
-        # manifest's version; only a changed set pays the full re-decode (StarBreaker decodes the
-        # whole bank, niced; we prune to the pinned allowlist + heuristic keepers as it goes).
-        # Decode progress is pushed to the dashboard via music_state when wired.
+        # Scan first (no decode, ~seconds): if the keep-set is unchanged AND the manifest is already
+        # at the current schema, just re-stamp its version. A changed set OR a schema bump (cached
+        # extract_version < this code's) pays the full re-decode -- the schema case so a new row
+        # field reaches existing installs even when the song set didn't change (else the restamp
+        # shortcut would mark the manifest current with stale rows, and the version gate would never
+        # fire again). StarBreaker decodes the whole bank, niced; we prune to the pinned allowlist +
+        # heuristic keepers as it goes. Decode progress is pushed to the dashboard via music_state.
         scanned = scdata.scan_songs(p4k)
-        if scanned and scanned == music.track_ids():
+        schema_current = music.music_extract_version() == music.EXTRACT_VERSION
+        if schema_current and scanned and scanned == music.track_ids():
             music.restamp_version(ver)
             print(f"[music] scan: no new songs ({reason}); marked current for {ver}")
             return

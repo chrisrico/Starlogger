@@ -69,6 +69,40 @@ def test_refresh_once_no_p4k_skips_all(monkeypatch):
     assert calls == []
 
 
+def _music_catalog(path="/fake/ship_cargo.json"):
+    return next(c for c in catalogs._build_catalogs(path) if c.label == "music")
+
+
+def test_music_schema_bump_forces_rebuild_even_when_song_set_unchanged(monkeypatch):
+    # The keep-set is identical but the manifest predates a schema bump (cached < code): the
+    # restamp shortcut MUST NOT fire, else the new row fields never reach the install and the
+    # version gate stays satisfied forever. Falls through to the full re-decode instead.
+    from starlogger import music, scdata
+    monkeypatch.setattr(scdata, "scan_songs", lambda p4k: {"a", "b"})
+    monkeypatch.setattr(music, "track_ids", lambda: {"a", "b"})
+    monkeypatch.setattr(music, "music_extract_version", lambda: music.EXTRACT_VERSION - 1)
+    did = []
+    monkeypatch.setattr(music, "restamp_version", lambda ver: did.append("restamp"))
+    monkeypatch.setattr(scdata, "build_music_from_p4k",
+                        lambda p4k, out, progress=None: did.append("decode") or [])
+    _music_catalog().rebuild("/fake/Data.p4k", "4.8", "extract schema v1 -> v2")
+    assert did == ["decode"]
+
+
+def test_music_no_new_songs_restamps_when_schema_current(monkeypatch):
+    # Schema already current + unchanged keep-set -> the cheap restamp, no decode.
+    from starlogger import music, scdata
+    monkeypatch.setattr(scdata, "scan_songs", lambda p4k: {"a", "b"})
+    monkeypatch.setattr(music, "track_ids", lambda: {"a", "b"})
+    monkeypatch.setattr(music, "music_extract_version", lambda: music.EXTRACT_VERSION)
+    did = []
+    monkeypatch.setattr(music, "restamp_version", lambda ver: did.append("restamp"))
+    monkeypatch.setattr(scdata, "build_music_from_p4k",
+                        lambda p4k, out, progress=None: did.append("decode") or [])
+    _music_catalog().rebuild("/fake/Data.p4k", "4.8", "version 4.7 -> 4.8")
+    assert did == ["restamp"]
+
+
 def test_refresh_once_failure_isolated(monkeypatch):
     monkeypatch.setattr(catalogs.scdata, "find_p4k", lambda lp: "/fake/Data.p4k")
     calls = []
