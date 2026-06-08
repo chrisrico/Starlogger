@@ -3,6 +3,11 @@
 __pycache__/
 *.pyc
 
+# Claude Code local working dir (settings, worktrees, plans) — agent-local, not tracked.
+# Leaving it untracked dirties the tree, which the updater's clean-tree guard refuses to
+# reset over (the in-app "Check for updates" returns "blocked" until the tree is clean).
+.claude/
+
 # downloaded extractor binary (StarBreaker), fetched at runtime
 bin/
 
