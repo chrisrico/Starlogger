@@ -145,10 +145,9 @@
   }
 
   // ---- packed mode: discrete sized cargo boxes placed by a 3D first-fit packer ----
-  // NOTE: the packing invariants below (yaw-only orientations, no-float support, the
-  // per-tier container cap, primary/secondary hold classification) are NOT covered by
-  // automated tests — the repo has no JS test runner. Verify packing changes by eye in
-  // the Cargo tab; if a JS harness is ever added, these are the first rules to lock.
+  // The packing invariants below (yaw-only orientations, no-float support, the per-tier
+  // container cap, primary/secondary hold classification) are locked by
+  // tests/cargogrid.test.js (run via `npm test`).
   // Standard SC container sizes as [width, length, height] in SCU units (height is
   // the vertical extent; the long axis lies flat — long boxes are never stood on
   // end). Each size gets a hue.
@@ -677,4 +676,9 @@
   global.accessFor = accessFor;
   global.synthBoxes = synthBoxes;
   global.CARGO_SIZES = CARGO_SIZES;
-})(window);
+  // Node (test runner) only: also expose the pure packing helpers for unit tests.
+  // The `module` guard is false in a browser <script>, so this is a no-op there.
+  if (typeof module !== "undefined" && module.exports)
+    module.exports = { cargoGridHtml, packCargo, packGroups, accessFor, synthBoxes,
+                       orientations, packBoxes, CARGO_SIZES };
+})(typeof window !== "undefined" ? window : globalThis);

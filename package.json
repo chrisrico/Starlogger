@@ -1,0 +1,10 @@
+{
+  "name": "starlogger-web-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Dev-only: Node's built-in test runner for the web/ cargo-grid packer. No runtime deps; the app itself needs only Flask.",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\""
+  }
+}

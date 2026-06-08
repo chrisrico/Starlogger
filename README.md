@@ -86,6 +86,17 @@ game. The LIVE `Game.log` is auto-detected (Windows:
 - `STARLOGGER_DATA_DIR` — where generated `*.json` + the extractor binary live (default
   `$XDG_DATA_HOME/starlogger` ≈ `~/.local/share/starlogger`; `%LOCALAPPDATA%\starlogger` on Windows)
 
+### Tests
+
+```bash
+.venv/bin/python -m pytest    # Python: parser, state machine, snapshot, catalogs, …
+npm test                      # JS: cargo-grid packer (node --test; needs Node, no deps)
+```
+
+Both are dependency-light — pytest needs only the venv, and the JS suite uses Node's
+built-in test runner (no `node_modules`). The packer's invariants (orientations, no-float
+support, container caps, hold classification) live in `tests/cargogrid.test.js`.
+
 ## Run it with the game
 
 **Linux:** the [installer](#install-linux) wires this up — your Star Citizen
