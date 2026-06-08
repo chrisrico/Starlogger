@@ -436,8 +436,10 @@ def _repo_ready() -> str | None:
     """BASE_DIR if updates may run there: a git clone with a CLEAN tree that is NOT its own
     update source.
 
-    The dirty-tree guard keeps reset --hard from clobbering a dev checkout mid-edit; a managed
-    install stays clean (runtime/p4k data is gitignored), so this returns a path there.
+    The dirty-tree guard keeps reset --hard from clobbering a dev checkout mid-edit. It looks at
+    TRACKED changes only (--untracked-files=no): reset --hard never touches untracked files, so
+    stray runtime artifacts in a managed install (e.g. *.bak backups) must not block updates --
+    only uncommitted edits to tracked files (which a reset would wipe) should.
 
     The self-source guard keeps a tracker run straight from the dev tree -- with update_remote
     pointing back at that same tree (e.g. a managed install and a dev-folder run sharing one
@@ -448,8 +450,8 @@ def _repo_ready() -> str | None:
     repo = BASE_DIR
     if not os.path.isdir(os.path.join(repo, ".git")):
         return None
-    if (_git(repo, "status", "--porcelain", check=False) or "").strip():
-        return None
+    if (_git(repo, "status", "--porcelain", "--untracked-files=no", check=False) or "").strip():
+        return None       # tracked changes a reset would clobber; untracked files are safe
     src = os.path.expanduser(settings.resolve_str("update_remote"))
     if os.path.isdir(src) and os.path.realpath(src) == os.path.realpath(repo):
         return None                       # update source IS this checkout -> never git-op it

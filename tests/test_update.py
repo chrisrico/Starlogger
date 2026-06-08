@@ -156,3 +156,25 @@ def test_repo_ready_refuses_when_source_is_self(monkeypatch, tmp_path):
     monkeypatch.setattr(tracker.settings, "resolve_str",
                         lambda k: str(other) if k == "update_remote" else "main")
     assert tracker._repo_ready() == str(repo)
+
+
+def test_repo_ready_ignores_untracked_files(monkeypatch, tmp_path):
+    """A managed install accumulates untracked runtime files (*.bak, etc.). reset --hard never
+    touches those, so they must NOT block updates — the dirty check is tracked-only (-uno)."""
+    repo = tmp_path / "install"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.setattr(tracker, "BASE_DIR", str(repo))
+
+    seen = {}
+
+    def fake_git(r, *args, **k):
+        if args[:1] == ("status",):
+            seen["status_args"] = args
+            return ""          # tracked tree is clean (untracked files exist but are ignored)
+        return ""
+
+    monkeypatch.setattr(tracker, "_git", fake_git)
+    monkeypatch.setattr(tracker.settings, "resolve_str",
+                        lambda key: "origin" if key == "update_remote" else "main")
+    assert tracker._repo_ready() == str(repo)
+    assert "--untracked-files=no" in seen["status_args"]   # tracked-only, untracked don't block

@@ -221,14 +221,20 @@ async function checkForUpdate() {
   const btn = $("checkUpdateBtn"), msg = $("checkUpdateMsg");
   if (!btn) return;
   btn.disabled = true; msg.textContent = "Checking…"; msg.classList.remove("err");
-  try {
-    const r = await postJSON("/api/update/check");
-    if (r.status === "updating") msg.textContent = `Updating → ${esc(r.latest)}…`;  // server restarts; page reloads
-    else if (r.status === "current") { msg.textContent = "Already up to date."; btn.disabled = false; }
-    else if (r.status === "offline") { msg.textContent = "Couldn't reach the update source."; btn.disabled = false; }
-    else { msg.textContent = "Updates can't run on this install."; btn.disabled = false; }
-  } catch (e) {
-    msg.textContent = "Check failed."; msg.classList.add("err"); btn.disabled = false;
+  const done = (text, err) => { msg.textContent = text; msg.classList.toggle("err", !!err); btn.disabled = false; };
+  // Use postRaw, NOT postJSON: every non-update outcome comes back as {ok:false, status},
+  // and postJSON throws on ok:false — which would collapse them all into one opaque error.
+  let r;
+  try { r = await postRaw("/api/update/check"); }
+  catch (e) { return done("Couldn't reach the tracker — is it still running?", true); }
+  switch (r && r.status) {
+    case "updating": msg.textContent = `Updating → ${esc(r.latest)}…`; break;  // server restarts; tab reloads
+    case "current":  return done(`Already up to date${r.build ? " (" + esc(r.build) + ")" : ""}.`);
+    case "offline":  return done("Couldn't reach the update source — check your network or the configured remote.", true);
+    case "blocked":  return done("Can't update: this checkout has uncommitted changes or isn't a managed git clone.", true);
+    case "unavailable": return done("Updates aren't available on this install.", true);
+    case "error":    return done(`Update check failed: ${esc(r.error || "unknown error")}`, true);
+    default:         return done(`Update check failed${r && r.status ? " (" + esc(r.status) + ")" : ""}.`, true);
   }
 }
 async function openSettings() {
