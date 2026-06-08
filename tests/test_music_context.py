@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from starlogger.scdata._music_context import (
     fnv1_32, parse_atl_names, build_hash_index, parse_decision_tree,
     switch_container_labels, _descendant_media, _index_objects, _build_children,
-    primary_context, _humanize_cue,
+    track_context, _humanize_cue,
     is_quality_song, has_cinematic_cue, has_ui_context, best_song_ids,
     QUALITY_CINEMATIC_MIN_DUR, QUALITY_MIN_DUR,
 )
@@ -97,21 +97,32 @@ def test_descendant_media_collects_sources_under_a_leaf():
     assert _descendant_media({9001}, objs, typ, children) == {"7777"}
 
 
-def test_primary_context_prefers_cinematic_cue_scoped_to_system():
+def test_track_context_prefers_cinematic_cue_scoped_to_system():
     labels = ["SC_Music_Cinematic/MX_SC_DL_Biome_Savana",
               "SC_Music_PU_StarSystem/MUS_PU_StantonSystem",
               "SC_Music_Mood/Normal"]
-    assert primary_context(labels) == "Biome Savana · Stanton"
+    assert track_context(labels) == ("Stanton", "Biome Savana")
 
 
-def test_primary_context_falls_back_to_ambient_region():
+def test_track_context_falls_back_to_ambient_region():
     labels = ["SC_Music_PU_StarSystem/MUS_PU_StantonSystem",
               "SC_Music_Ambient_State_New/Ambient_Default"]
-    assert primary_context(labels) == "Ambient · Stanton"
+    assert track_context(labels) == ("Stanton", "Ambient")
 
 
-def test_primary_context_empty_when_nothing_readable():
-    assert primary_context([]) == ""
+def test_track_context_empty_when_nothing_readable():
+    assert track_context([]) == ("", "")
+
+
+def test_track_context_star_marine_mode_has_no_system():
+    assert track_context(["SC_Music_Master/Star_Marine"]) == ("", "Star Marine")
+
+
+def test_track_context_joins_up_to_two_systems():
+    labels = ["SC_Music_Cinematic/MX_SC_DL_Biome_Savana",
+              "SC_Music_PU_StarSystem/MUS_PU_StantonSystem",
+              "SC_Music_PU_StarSystem/MUS_PU_PyroSystem"]
+    assert track_context(labels) == ("Pyro/Stanton", "Biome Savana")
 
 
 def test_humanize_cue_strips_wwise_plumbing_tokens():

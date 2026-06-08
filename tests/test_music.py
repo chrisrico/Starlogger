@@ -124,20 +124,20 @@ def test_select_full_songs_floor_is_inclusive():
 def test_curation_merge_local_over_default(tmp_path, monkeypatch):
     default = tmp_path / "default.json"
     local = tmp_path / "local.json"
-    default.write_text(json.dumps({"order": ["a", "b", "c"], "hidden": ["c"], "names": {"a": "Default A"}}))
+    default.write_text(json.dumps({"order": ["a", "b", "c"], "skipped": ["c"], "names": {"a": "Default A"}}))
     monkeypatch.setattr(music, "_curation_cache", {"mtime": None, "data": {}})
     monkeypatch.setattr(music, "_default_cache", {"mtime": None, "data": {}})
 
     # no local yet -> shipped default shows through
     eff = music.load_curation(path=str(local), default_path=str(default))
-    assert eff["order"] == ["a", "b", "c"] and eff["hidden"] == ["c"] and eff["names"]["a"] == "Default A"
+    assert eff["order"] == ["a", "b", "c"] and eff["skipped"] == ["c"] and eff["names"]["a"] == "Default A"
 
-    # local rename + reorder + extra hide overlays the default (names merge, hidden unions)
-    music.set_curation(order=["b", "a", "c"], hidden=["b"], names={"a": "My A"}, path=str(local))
+    # local rename + reorder + extra skip overlays the default (names merge, skipped unions)
+    music.set_curation(order=["b", "a", "c"], skipped=["b"], names={"a": "My A"}, path=str(local))
     eff = music.load_curation(path=str(local), default_path=str(default))
     assert eff["order"] == ["b", "a", "c"]
     assert eff["names"]["a"] == "My A"                     # local wins
-    assert set(eff["hidden"]) == {"b", "c"}                # union of default + local
+    assert set(eff["skipped"]) == {"b", "c"}               # union of default + local
 
     # blank name drops it back to the default-or-handle
     music.set_curation(names={"a": ""}, path=str(local))

@@ -19,10 +19,10 @@ We rebuild that mapping with no runtime data, in three pure/testable links:
      recover, per reachable leaf, the ordered state-key path, map each (position->group,
      key->state) to a ``"<group>/<state>"`` label, and propagate it to every descendant media.
 
-``build_context_labels`` returns the full ``{media_id: [labels...]}``; ``primary_context``
+``build_context_labels`` returns the full ``{media_id: [labels...]}``; ``track_context``
 distils one track's many labels (the same bed is reused across dozens of switch leaves) to a
-single short string for display -- preferring the specific cinematic *cue* name, falling back to
-star-system / ambient. The HIRC object/parent model is shared with ``_music`` (we accept an
+``(system, detail)`` pair for display -- the star system / region plus the specific cinematic
+*cue* name, falling back to ambient / game mode. The HIRC object/parent model is shared with ``_music`` (we accept an
 already-dumped ``hirc`` so a build that already called ``dump_music_hirc`` pays for it once).
 """
 
@@ -283,13 +283,14 @@ def _humanize_cue(state: str) -> str:
     return " ".join(toks).strip()
 
 
-def primary_context(labels: list[str]) -> str:
-    """One short, human context for a track, from its many ``"<group>/<state>"`` labels.
+def track_context(labels: list[str]) -> tuple[str, str]:
+    """``(system, detail)`` for a track, from its many ``"<group>/<state>"`` labels.
 
     The same media bed is reused across dozens of switch leaves, so most labels are generic; we
-    surface the most *identifying* one: a cinematic *cue* name (``Hospitals LowTech``,
-    ``Rest Stops``) when present, scoped to its star system; otherwise the game mode / ambient
-    region. Returns ``""`` when nothing readable is reachable."""
+    surface the most *identifying* split: ``system`` is the star system / region (the jukebox
+    sorts and groups by it), ``detail`` is the specific cinematic *cue* name (``Hospitals
+    LowTech``, ``Rest Stops``) when present, else the game mode / ambient marker. Either part may
+    be ``""`` when nothing readable is reachable for it; the UI joins them as ``System · Detail``."""
     cues: list[str] = []
     systems: set[str] = set()
     modes: set[str] = set()
@@ -312,21 +313,23 @@ def primary_context(labels: list[str]) -> str:
         if "ambient" in lab.lower():   # group OR state may carry the ambient marker
             ambient = True
     sysn = sorted({_SYSTEMS.get(s.lower(), s) for s in systems})
+    system = ("/".join(sysn) if len(sysn) <= 2 else "PU") if sysn else ""
     cue = next((c for c in cues if c), None)
     if cue:
-        return f"{cue} · {sysn[0]}" if len(sysn) == 1 else cue
-    if "Star Marine" in modes:
-        return "Star Marine"
-    if sysn:
-        region = "/".join(sysn) if len(sysn) <= 2 else "PU"
-        return f"Ambient · {region}" if ambient else region
-    return next(iter(modes), "")
+        detail = cue
+    elif "Star Marine" in modes:
+        detail = "Star Marine"
+    elif sysn:
+        detail = "Ambient" if ambient else ""
+    else:
+        detail = next(iter(modes), "")
+    return system, detail
 
 
 def context_for_media(p4k: str, sb: str | None = None,
-                      hirc: list | None = None) -> dict[str, str]:
-    """``{media_id: primary_context}`` -- the one-string-per-track view the jukebox shows."""
-    return {m: primary_context(lbls)
+                      hirc: list | None = None) -> dict[str, tuple[str, str]]:
+    """``{media_id: (system, detail)}`` -- the per-track context view the jukebox shows."""
+    return {m: track_context(lbls)
             for m, lbls in build_context_labels(p4k, sb, hirc).items()}
 
 
