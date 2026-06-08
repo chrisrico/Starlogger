@@ -2,12 +2,13 @@
 // Archive tab (Contract Log · Trade Loads · Travel Log · Sessions) + session replay. Pools
 // every archived session with the live one, builds the cross-session logs and the trade-route
 // recommendations, and drives the whole dashboard through a reconstructed past snapshot while
-// replaying. Shares the hot state (S.LAST / S.REPLAY_* / S.ROUTE_ORDER) via state.js and calls
-// back into the core render dispatch (renderAll / refresh / replayEdit).
+// replaying. Shares the hot state (S.LAST / S.REPLAY_* / S.ROUTE_ORDER) via state.js, calls
+// the core render dispatch (renderAll / replayEdit), and pulls live data via stream's refresh.
 import { $, esc, num, setHTML, logTable, th, tag, tabBar } from "./dom.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 import { S, REPLAY_UNAVAILABLE, curData } from "./state.js";
-import { renderAll, refresh, replayEdit } from "./app.js";
+import { renderAll, replayEdit } from "./app.js";
+import { refresh } from "./stream.js";
 
 let SESSIONS = null;     // archived sessions (fetched from /api/sessions)
 let _scrubTimer = null;  // debounce for replay scrubbing
