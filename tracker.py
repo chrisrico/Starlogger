@@ -452,10 +452,24 @@ def _remote_compare_url(repo: str, remote: str, have: str, want: str) -> str | N
     return f"https://github.com/{m.group(1)}/compare/{have}...{want}" if m else None
 
 
+def _is_shallow(repo: str) -> bool:
+    """True if ``repo`` is a shallow clone (a managed install cloned --depth 1)."""
+    return (_git(repo, "rev-parse", "--is-shallow-repository", check=False) or "").strip() == "true"
+
+
 def _fetch_target(repo: str, remote: str, branch: str) -> tuple[str, str] | None:
     """git fetch the remote/branch and return (have, want) = HEAD vs FETCH_HEAD full hashes,
-    or None when offline / the fetch failed. Detection only -- never resets."""
-    if _git(repo, "fetch", "--quiet", "--depth", "1", remote, branch, check=False) is None:
+    or None when offline / the fetch failed. Detection only -- never resets.
+
+    ``--depth 1`` is used ONLY when the repo is ALREADY shallow (a managed install), to keep it
+    small. A shallow fetch against a FULL clone writes .git/shallow and grafts its history short
+    -- which silently turned a dev checkout (the tracker is run straight from its source tree)
+    into a 1-commit-deep shallow repo. So a full clone always gets a normal fetch, which can
+    never introduce shallowness; an already-shallow install stays shallow."""
+    fetch = ["fetch", "--quiet", remote, branch]
+    if _is_shallow(repo):
+        fetch[1:1] = ["--depth", "1"]
+    if _git(repo, *fetch, check=False) is None:
         return None
     have = (_git(repo, "rev-parse", "HEAD") or "").strip()
     want = (_git(repo, "rev-parse", "FETCH_HEAD") or "").strip()

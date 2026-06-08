@@ -74,3 +74,38 @@ def test_manual_check_applies_immediately_on_new_build(monkeypatch):
     assert r["status"] == "updating"
     assert r["current"] == "aaaaaaaaa" and r["latest"] == "ccccccccc"
     assert applied.wait(2)                                     # _apply ran off-thread
+
+
+def _record_git(monkeypatch, shallow: bool):
+    """Stub tracker._git so _fetch_target runs without a real repo; capture the fetch argv.
+    rev-parse --is-shallow-repository answers `shallow`; HEAD/FETCH_HEAD return distinct hashes."""
+    calls = []
+
+    def fake(repo, *args, check=True):
+        calls.append(list(args))
+        if args[:2] == ("rev-parse", "--is-shallow-repository"):
+            return "true\n" if shallow else "false\n"
+        if args == ("rev-parse", "HEAD"):
+            return "a" * 40 + "\n"
+        if args == ("rev-parse", "FETCH_HEAD"):
+            return "b" * 40 + "\n"
+        return ""            # the fetch itself: non-None == success
+    monkeypatch.setattr(tracker, "_git", fake)
+    return calls
+
+
+def test_fetch_target_never_shallows_a_full_clone(monkeypatch):
+    """The bug that shallowed the dev source: a --depth 1 fetch on a FULL clone. A full clone
+    must get a normal fetch (no --depth), which can't write .git/shallow."""
+    calls = _record_git(monkeypatch, shallow=False)
+    assert tracker._fetch_target("/repo", "origin", "main") == ("a" * 40, "b" * 40)
+    fetch = next(c for c in calls if c and c[0] == "fetch")
+    assert "--depth" not in fetch                              # full clone -> no shallow fetch
+
+
+def test_fetch_target_keeps_an_install_shallow(monkeypatch):
+    """An already-shallow managed install still fetches --depth 1, so it stays small."""
+    calls = _record_git(monkeypatch, shallow=True)
+    tracker._fetch_target("/repo", "origin", "main")
+    fetch = next(c for c in calls if c and c[0] == "fetch")
+    assert fetch[:3] == ["fetch", "--depth", "1"]
