@@ -42,6 +42,21 @@ export const th = (label, num, tip) =>
 // A small uppercased status/category pill (the .lt-tag family).
 export const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
 
+// A transient, self-dismissing notification in the corner toaster. `kind` ("ok"/"err")
+// tints it. Shared by the jukebox, the update banner, and any one-off status nudge.
+export function toast(msg, kind) {
+  const host = $("toaster");
+  if (!host) return;
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.textContent = msg;
+  host.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));   // trigger the enter transition
+  const kill = () => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
+  t.onclick = kill;
+  setTimeout(kill, 7000);
+}
+
 // Build an .arch-tabs segmented control: `items` is [[key,label],...]; `active` the
 // selected key; `fn` the handler NAME invoked with the key (resolved off window — must be
 // in the bridge). opts.attr(key) adds per-button attributes (e.g. data-sub); opts.tail is
