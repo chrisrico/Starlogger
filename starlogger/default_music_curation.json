@@ -1,5 +1,4 @@
 {
- "_note": "Shipped jukebox defaults AND the pinned 'best track' allowlist: every WEM id named here is ALWAYS extracted (see scdata._music_context.load_allowlist / best_song_ids); the heuristic adds more. Hand-authored metadata (WEM ids + names), NOT p4k audio -- safe to commit; must never carry the StarBreaker source marker. No baked order or skipped set: users order/skip via the local sidecar (music_curation.json).",
  "order": [],
  "skipped": [],
  "names": {
