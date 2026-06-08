@@ -983,13 +983,18 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .juke-grip{color:var(--ink-3);cursor:grab;text-align:center;user-select:none}
 .juke-num{color:var(--ink-3);text-align:right;font-variant-numeric:tabular-nums;user-select:none}
 .juke-row.playing .juke-num{color:var(--cyan)}
+/* name + context stacked in the 1fr column; min-width:0 keeps the grid cell ellipsis-able */
+.juke-title{min-width:0;display:flex;flex-direction:column;justify-content:center;cursor:pointer}
 .juke-name{color:var(--ink-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.juke-context{font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;line-height:1.25}
 .juke-dur{color:var(--ink);text-align:right}
 .juke-act{color:var(--ink-3);background:transparent;border:0;cursor:pointer;font-size:12px;
   padding:2px;line-height:1;border-radius:2px;opacity:0}
 .juke-row:hover .juke-act{opacity:1}
 .juke-act:hover{color:var(--cyan)}
 .juke-row.playing .juke-name,.juke-row.playing .juke-dur{color:var(--cyan)}
+.juke-row.playing .juke-context{color:rgba(var(--cyan-rgb),.65)}
 .juke-foot{padding:10px 16px;border-top:1px solid var(--line)}   /* the panel's pinned player bar */
 .juke-player{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .juke-now{font-family:var(--display);font-size:12px;letter-spacing:.05em;color:var(--ink);

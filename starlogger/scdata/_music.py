@@ -157,7 +157,8 @@ def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
     off the kept-so-far count against the song total."""
     sb = sb or ensure_binary()
     durations = _durations(p4k, sb)
-    keep = select_full_songs(dump_music_hirc(p4k, sb), durations, min_dur)
+    hirc = dump_music_hirc(p4k, sb)   # dumped once; reused for the context-label pass below
+    keep = select_full_songs(hirc, durations, min_dur)
     total = len(keep)
 
     os.makedirs(out_dir, exist_ok=True)
@@ -198,6 +199,10 @@ def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
         poller.join(timeout=2)
 
     _reap()  # final sweep: drop any non-song ogg the poller didn't catch before the decode ended
+    # The gameplay context each song plays under (region/mood/cue), mined from the switch
+    # hierarchy in the same HIRC dump -- a readable hint where the FNV-hashed ids give none.
+    from ._music_context import context_for_media
+    context = context_for_media(p4k, sb, hirc)
     rows: list[dict] = []
     for f in glob.glob(os.path.join(out_dir, "*.ogg")):
         wid = os.path.basename(f)[:-4]
@@ -205,7 +210,8 @@ def build_music_from_p4k(p4k: str, out_dir: str, sb: str | None = None,
             os.remove(f)
             continue
         rows.append({"id": wid, "file": os.path.basename(f),
-                     "duration": durations.get(wid), "size": os.path.getsize(f)})
+                     "duration": durations.get(wid), "size": os.path.getsize(f),
+                     "context": context.get(wid) or ""})
     rows.sort(key=lambda r: -(r["duration"] or 0))
     progress(len(rows), total)
     return rows

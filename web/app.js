@@ -2232,10 +2232,16 @@ function renderJukeList() {
     .map(id => {
       const t = byId[id]; if (!t) return "";
       const hid = jukeHidden(id);
+      // context: where this cue plays in-game (region/mood/cue), mined from the music switch
+      // hierarchy — a readable hint the FNV-hashed ids otherwise lack. Shown as a subtitle.
+      const ctx = t.context
+        ? `<span class="juke-context" title="${esc(t.context)}">${esc(t.context)}</span>` : "";
       return `<li class="juke-row${hid ? " hidden-row" : ""}" draggable="true" data-id="${esc(id)}" data-dur="${t.duration || 0}" data-file="${esc(t.file)}">` +
         `<span class="juke-grip" title="Drag to reorder" aria-hidden="true">⠿</span>` +
         `<span class="juke-num" aria-hidden="true"></span>` +
-        `<span class="juke-name" title="${esc("#" + id)}">${esc(jukeName(id))}</span>` +
+        `<div class="juke-title" title="${esc("#" + id)}">` +
+          `<span class="juke-name">${esc(jukeName(id))}</span>${ctx}` +
+        `</div>` +
         `<span class="juke-dur">${jukeFmt(t.duration)}</span>` +
         `<button class="juke-act juke-rename" title="Rename" aria-label="Rename track">✎</button>` +
         `<button class="juke-act juke-hide" title="${hid ? "Un-hide" : "Hide from playlist"}" aria-label="${hid ? "Un-hide" : "Hide"} track">${hid ? "↺" : "✕"}</button>` +
@@ -2244,7 +2250,7 @@ function renderJukeList() {
   list.innerHTML = rows;
   list.querySelectorAll(".juke-row").forEach(r => {
     const id = r.dataset.id;
-    r.querySelector(".juke-name").onclick = () => jukePlay(id);
+    r.querySelector(".juke-title").onclick = () => jukePlay(id);
     r.querySelector(".juke-dur").onclick = () => jukePlay(id);
     r.querySelector(".juke-rename").onclick = (e) => { e.stopPropagation(); jukeRename(id); };
     r.querySelector(".juke-hide").onclick = (e) => { e.stopPropagation(); jukeToggleHidden(id); };
