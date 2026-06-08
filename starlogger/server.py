@@ -297,6 +297,7 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         # read time, so a saved value may be shadowed -- the GET reports that.
         payload = request.get_json(force=True, silent=True) or {}
         before = (settings_str("update_remote"), settings_str("update_branch"))
+        before_host = settings_str("bind_host")
         try:
             update_settings(payload)
         except ValueError as e:
@@ -311,6 +312,13 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         after = (settings_str("update_remote"), settings_str("update_branch"))
         if after != before and settings_str("update_mode") != "off":
             fn = app.config.get("ON_APPLY")
+            if fn:
+                fn()
+        # The bind address is only read when the server binds at startup, so a change can't
+        # take effect in-place -> re-exec to rebind. Skip when an update-apply already
+        # triggered a restart above (the re-exec re-reads bind_host anyway).
+        elif settings_str("bind_host") != before_host:
+            fn = app.config.get("ON_RESTART")
             if fn:
                 fn()
         return _ok()

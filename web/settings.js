@@ -3,7 +3,7 @@
 // renders the live schema from /api/settings, persists via /api/settings, and hosts the
 // "Check for updates" / "Shut down tracker" actions and the Advanced collapse. Imported for
 // its side effects — it wires its own nav button + Escape handler at load.
-import { $, esc } from "./dom.js";
+import { $, esc, toast } from "./dom.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 
 // ---- settings overlay (sidebar gear -> dashboard-managed settings.json) ----
@@ -163,6 +163,9 @@ async function saveSettings() {
   try {
     await postJSON("/api/settings", payload);
     closeSettings();
+    // Changing the bind address re-execs the server to rebind; warn that the connection
+    // will blink (and that switching to "This machine only" drops other devices).
+    if ("bind_host" in payload) toast("Restarting to apply the new bind address…");
   }
   catch (e) { _settingsErr(String(e)); }
   finally { btn.disabled = false; }

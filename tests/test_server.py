@@ -306,6 +306,42 @@ def test_update_check_passes_through_status(monkeypatch):
     assert j == {"ok": True, "status": "updating", "latest": "abc1234"}
 
 
+# --- /api/settings (changing the bind address re-execs the server) -------- #
+
+def _settings_app(monkeypatch, tmp_path):
+    """An app whose settings store is a throwaway file with no STARLOGGER_* env
+    knobs leaking in, so /api/settings reads/writes are isolated."""
+    from starlogger import settings
+    monkeypatch.setattr(settings, "SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(settings, "_cache", {"mtime": None, "data": {}})
+    for f in settings.CONFIG_SCHEMA:
+        monkeypatch.delenv(f["env"], raising=False)
+        for e in f.get("legacy_env", {}):
+            monkeypatch.delenv(e, raising=False)
+    monkeypatch.setattr(server, "build_snapshot", lambda st, **kw: {})
+    app = server.create_app(State(), log_path="/fake/Game.log")
+    app.testing = True
+    return app
+
+
+def test_bind_host_change_restarts(monkeypatch, tmp_path):
+    app = _settings_app(monkeypatch, tmp_path)
+    restarted = threading.Event()
+    app.config["ON_RESTART"] = restarted.set    # stand in for the off-thread re-exec
+    j = app.test_client().post("/api/settings", json={"bind_host": "0.0.0.0"}).get_json()
+    assert j["ok"] is True
+    assert restarted.is_set()                    # a changed bind address triggers a restart
+
+
+def test_bind_host_unchanged_no_restart(monkeypatch, tmp_path):
+    # Saving the current value (here the default) is not a change -> no restart.
+    app = _settings_app(monkeypatch, tmp_path)
+    restarted = threading.Event()
+    app.config["ON_RESTART"] = restarted.set
+    app.test_client().post("/api/settings", json={"bind_host": "127.0.0.1"})
+    assert not restarted.is_set()
+
+
 # --- /api/closing (deliberate tab close beacon) --------------------------- #
 
 def test_closing_marks_presence(monkeypatch):

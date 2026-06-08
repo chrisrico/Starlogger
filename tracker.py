@@ -815,6 +815,12 @@ def main() -> None:
     def on_apply() -> None:
         threading.Thread(target=lambda: _apply(ustate, trigger_restart), daemon=True).start()
     app.config["ON_APPLY"] = on_apply
+    # A plain re-exec (no git update): the bind address is only read at startup, so changing
+    # it in the Settings panel re-execs us to rebind. Off-thread for the same reason as
+    # on_apply -- httpd.shutdown() blocks, so let the HTTP response return first.
+    def on_restart() -> None:
+        threading.Thread(target=trigger_restart, daemon=True).start()
+    app.config["ON_RESTART"] = on_restart
     # The 'Check for updates' button: check synchronously + apply immediately if there's a build.
     app.config["ON_CHECK_NOW"] = lambda: _manual_check(ustate, state, trigger_restart)
     threading.Thread(target=shutdown_watchdog,
