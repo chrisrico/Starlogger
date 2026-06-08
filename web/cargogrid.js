@@ -485,28 +485,56 @@
       rem[best] -= (g.scu || 0);
     });
 
-    // within each compartment, band its destinations front-to-back from the hatch
+    // DUAL-END: a single long hold with a hatch at BOTH ends (C2/A2/M2, Hammerhead…)
+    // loads from each end inward — alternate destinations between the two hatches so the
+    // first two deliveries each sit at a hatch and the last-delivered cargo meets in the
+    // middle. Only when ONE primary compartment spans the access axis; multi-compartment
+    // "both" ships (Carrack/Caterpillar L+R) stay SPLIT (each hold is already reachable).
+    const dualEnd = !!access.both && primary.length === 1;
+
+    // Carve a band of `need` SCU off one end of a compartment's axis profile, growing
+    // inward past `frontier` cells already taken at that end and leaving `other` cells
+    // reserved at the opposite end. fromHigh grows from the high end of the axis.
+    const carveBand = (prof, lo, span, fromHigh, frontier, other, need) => {
+      const avail = span - frontier - other;
+      let acc = 0, k = 0;
+      while (k < avail && acc < need) { acc += prof[fromHigh ? span - 1 - (frontier + k) : frontier + k]; k++; }
+      if (k === 0) k = 1;
+      const win = fromHigh
+        ? { axis: wAxis, lo: lo + span - frontier - k, hi: lo + span - frontier }
+        : { axis: wAxis, lo: lo + frontier, hi: lo + frontier + k };
+      return { k, win };
+    };
+
+    // within each compartment, band its destinations from the hatch(es) inward
     const list = [];
+    const emit = (g, gi, comp, win) => boxesOf(g, gi).forEach(b => {
+      b.tries = [{ cells: comp.ids, win }, { cells: comp.ids }];   // its band, then anywhere in its compartment
+      if (spillIds.size) b.tries.push({ cells: spillIds });        // then a secondary hold
+      b.tries.push({});                                            // last resort: anywhere
+      list.push(b);
+    });
     primary.forEach((comp, ci) => {
       const { prof, lo, hi } = compProfile(comp, axis);
       const span = hi - lo;
-      let frontier = 0;
-      assigned[ci].forEach(({ g, gi }) => {
-        const need = (g.scu || 0) * SLACK;
-        let acc = 0, k = 0;
-        while (frontier + k < span && acc < need) { acc += prof[high ? span - 1 - (frontier + k) : frontier + k]; k++; }
-        if (k === 0) k = 1;
-        const win = high
-          ? { axis: wAxis, lo: lo + span - frontier - k, hi: lo + span - frontier }
-          : { axis: wAxis, lo: lo + frontier, hi: lo + frontier + k };
-        frontier += k;
-        boxesOf(g, gi).forEach(b => {
-          b.tries = [{ cells: comp.ids, win }, { cells: comp.ids }];   // its band, then anywhere in its compartment
-          if (spillIds.size) b.tries.push({ cells: spillIds });        // then a secondary hold
-          b.tries.push({});                                            // last resort: anywhere
-          list.push(b);
+      if (dualEnd) {
+        let fNear = 0, fFar = 0;                  // cells consumed from the near / far hatch
+        assigned[ci].forEach(({ g, gi }, idx) => {
+          const nearEnd = idx % 2 === 0;          // alternate hatches: 1st→near, 2nd→far, …
+          const fromHigh = nearEnd ? high : !high;
+          const { k, win } = carveBand(prof, lo, span, fromHigh,
+            nearEnd ? fNear : fFar, nearEnd ? fFar : fNear, (g.scu || 0) * SLACK);
+          if (nearEnd) fNear += k; else fFar += k;
+          emit(g, gi, comp, win);
         });
-      });
+      } else {
+        let frontier = 0;
+        assigned[ci].forEach(({ g, gi }) => {
+          const { k, win } = carveBand(prof, lo, span, high, frontier, 0, (g.scu || 0) * SLACK);
+          frontier += k;
+          emit(g, gi, comp, win);
+        });
+      }
     });
 
     // describe the chosen strategy for the UI: how the primary holds are separated.
@@ -517,7 +545,7 @@
       split = (Math.max(...cx) - Math.min(...cx)) >= (Math.max(...cz) - Math.min(...cz)) ? "width" : "depth";
     }
     const r = packBoxes(grid, list);
-    r.strategy = primary.length > 1 ? "split" : "linear";
+    r.strategy = dualEnd ? "dualend" : (primary.length > 1 ? "split" : "linear");
     r.holds = primary.length;
     r.split = split;
     r.spill = spillIds.size > 0;

@@ -583,6 +583,7 @@ function strategyCopy(packed) {
   const s = packed && packed.strategy;
   if (s === "split") return (packed.split === "width" ? "loaded left/right by stop" : "loaded fore/aft by stop")
     + (packed.spill ? " · spillover hold last" : "");
+  if (s === "dualend") return "loaded from both ends inward" + (packed.spill ? " · spillover hold last" : "");
   if (s === "linear") return "loaded front-to-back" + (packed.spill ? " · spillover hold last" : "");
   return "load order doesn't matter";   // open
 }
@@ -634,6 +635,7 @@ function planView(d) {
   const loadPos = {}; const gByDest = {};
   groups.forEach(g => { gByDest[g.dest] = g; });
   ((hasGrid && banded) ? [...order].reverse() : order).forEach((g, i) => { loadPos[g.dest] = i + 1; });
+  const dualEnd = !!(shipPacked && shipPacked.strategy === "dualend");
 
   if (!hasStops)
     return `<div class="planwrap">${planHead(d, 0, 0, hasGrid, access, shipPacked, cap, placed, totalScu, true)}
@@ -679,7 +681,7 @@ function planView(d) {
         ondrop="routeDrop(event)" ondragend="routeDragEnd(event)">
       <h3><span class="ends"><button type="button" class="route-grip" draggable="true"
           title="Drag, or focus and use ↑/↓, to reorder this stop" aria-label="Reorder this stop — use arrow up or down"
-          ondragstart="routeDragStart(event)" onkeydown="routeGripKey(event)">⠿</button>${hasGrid ? `<span class="ps-sw" style="background:hsl(${hue},64%,52%)"></span>` : ""}${(hasGrid && pos) ? `<span class="ps-pos" title="load #${pos}${banded ? " — loaded deepest-first" : ""}">${pos}</span>` : ""}${stationCell(s.station, s.zone)}${run.partial ? ' <span class="warn">⚠</span>' : ""}${sharedTag}</span>
+          ondragstart="routeDragStart(event)" onkeydown="routeGripKey(event)">⠿</button>${hasGrid ? `<span class="ps-sw" style="background:hsl(${hue},64%,52%)"></span>` : ""}${(hasGrid && pos) ? `<span class="ps-pos" title="load #${pos}${banded ? (dualEnd ? " — loaded from both ends inward" : " — loaded deepest-first") : ""}">${pos}</span>` : ""}${stationCell(s.station, s.zone)}${run.partial ? ' <span class="warn">⚠</span>' : ""}${sharedTag}</span>
         <span class="scu">${SCU(s.scu, run.partial)}</span></h3>
       ${from}<div class="ps-cargo">${chips}</div></li>`;
   }).join("");

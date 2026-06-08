@@ -101,6 +101,33 @@ test("accessFor resolves access + the secondary-hold hint", () => {
   assert.equal(accessFor("C2 Hercules").both, true);             // prefix-tolerant match
 });
 
+// ---- DUAL-END: a hold with a hatch at BOTH ends loads from each end inward ---- //
+test("packGroups loads a both-ends hold from each end inward", () => {
+  // one long fore/aft hold (depth 10, capacity 20); access = C2 (depth/rear/both).
+  const grid = [bay(cell(0, 0, 2, 10, 1, "Main"))];
+  const A = { scu: 4, hue: 0, dest: "A", boxes: [box(2, [2, 1, 1]), box(2, [2, 1, 1])] };
+  const B = { scu: 4, hue: 1, dest: "B", boxes: [box(2, [2, 1, 1]), box(2, [2, 1, 1])] };
+  const r = packGroups(grid, [A, B], accessFor("C2 Hercules Starlifter"));
+  assert.equal(r.strategy, "dualend");
+  assert.equal(r.overflow.length, 0);
+  const ys = gid => r.placed.filter(b => b.gid === gid).map(b => b.y);   // y = depth position
+  assert.ok(Math.max(...ys(0)) < Math.min(...ys(1)), "the two stops sit at opposite ends");
+  assert.ok(Math.min(...ys(1)) >= 6, "the 2nd stop loads from the FAR hatch, not beside the 1st");
+  assert.ok(noFloatHolds(r.placed));
+});
+
+// contrast: a single-hatch ship bands both stops consecutively from the one hatch.
+test("packGroups without both bands both stops from the one hatch", () => {
+  const grid = [bay(cell(0, 0, 2, 10, 1, "Main"))];
+  const A = { scu: 4, hue: 0, dest: "A", boxes: [box(2, [2, 1, 1]), box(2, [2, 1, 1])] };
+  const B = { scu: 4, hue: 1, dest: "B", boxes: [box(2, [2, 1, 1]), box(2, [2, 1, 1])] };
+  const r = packGroups(grid, [A, B], accessFor("Freelancer"));         // depth/rear, single hatch
+  assert.equal(r.strategy, "linear");
+  const ys = gid => r.placed.filter(b => b.gid === gid).map(b => b.y);
+  assert.ok(Math.max(...ys(0)) < Math.min(...ys(1)), "2nd stop sits just behind the 1st");
+  assert.ok(Math.min(...ys(1)) <= 3, "both stops stay near the one hatch, not the far end");
+});
+
 // ---- secondary holds take only spillover: cargo that fits the primary stays there ---- //
 test("packGroups fills the primary hold before the secondary", () => {
   const grid = [
