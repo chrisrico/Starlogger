@@ -2019,12 +2019,24 @@ let JUKE_CUR = null;          // id of the track loaded in the player
 let JUKE_PHASE = null;        // last-seen build phase (to catch the extracting->done edge)
 let JUKE_SEEKING = false;     // user is dragging the seek bar (don't fight it with timeupdate)
 let JUKE_SHOW_HIDDEN = false; // reveal hidden tracks (to un-hide them)
+let JUKE_SHUFFLE = false;     // shuffle playback order (persisted in localStorage)
+let JUKE_HISTORY = [];        // ids in play order, capped — lets "previous" work under shuffle
+let JUKE_RESTORED = false;    // playback state already restored from localStorage this load?
 let _jukeDragId = null;       // id of the row being dragged
+let _jukeRestoreTime = null;  // pending seek (sec) to apply once the track's metadata loads
+let _jukeSavedAt = 0;         // last currentTime (sec) we persisted, to throttle timeupdate saves
 
 function jukeFmt(sec) {
   if (sec == null) return "—";
   const s = Math.round(sec), m = Math.floor(s / 60);
   return m + ":" + String(s % 60).padStart(2, "0");
+}
+
+// Like jukeFmt but for long spans (whole-playlist totals): H:MM:SS, or M:SS under an hour.
+function jukeFmtLong(sec) {
+  const s = Math.round(sec || 0), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
 // A stable per-track handle from the longest-first manifest rank (M-01…), used as the default
@@ -2052,6 +2064,7 @@ function initJukebox() {
     setHTML("jukeboxBody",
       `<div class="juke-bar">
         <span class="juke-status" id="jukeStatus"></span>
+        <span class="juke-total" id="jukeTotal"></span>
         <label class="juke-showhidden hide" id="jukeShowHiddenRow">
           <input type="checkbox" id="jukeShowHidden"> show hidden</label>
       </div>
@@ -2060,36 +2073,48 @@ function initJukebox() {
       `<div class="juke-player">
         <div class="juke-now" id="jukeNow">Nothing playing</div>
         <div class="juke-transport">
+          <button class="juke-nav juke-shuf" id="jukeShuffle" title="Shuffle" aria-label="Shuffle" aria-pressed="false">🔀</button>
           <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">⏮</button>
           <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>▶</button>
           <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">⏭</button>
           <span class="juke-time" id="jukeCur">0:00</span>
           <input class="juke-seek" id="jukeSeek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" disabled>
           <span class="juke-time" id="jukeDur">0:00</span>
-          <audio id="jukeAudio" preload="none"></audio>
+          <audio id="jukeAudio" preload="metadata"></audio>
         </div>
       </div>`);
     $("jukePrev").onclick = () => jukeStep(-1);
     $("jukeNext").onclick = () => jukeStep(1);
     $("jukePlay").onclick = jukeToggle;
+    JUKE_SHUFFLE = (() => { try { return localStorage.getItem("jukeShuffle") === "1"; } catch (_) { return false; } })();
+    $("jukeShuffle").onclick = jukeToggleShuffle;
+    jukeReflectShuffle();
     $("jukeShowHidden").onchange = (e) => { JUKE_SHOW_HIDDEN = e.target.checked; renderJukeList(); };
     const a = $("jukeAudio");
     a.onended = () => jukeStep(1);
-    a.onplay = () => jukeSetPlaying(true);
-    a.onpause = () => jukeSetPlaying(false);
+    a.onplay = () => { jukeSetPlaying(true); jukePersist(); };
+    a.onpause = () => { jukeSetPlaying(false); jukePersist(); };
     a.onloadedmetadata = () => {
       const s = $("jukeSeek");
-      s.max = a.duration || 0; s.value = 0; s.disabled = false;
+      s.max = a.duration || 0; s.disabled = false;
+      if (_jukeRestoreTime != null) {           // resuming a saved position after a reload
+        a.currentTime = Math.min(_jukeRestoreTime, a.duration || _jukeRestoreTime);
+        _jukeRestoreTime = null;
+      }
+      s.value = a.currentTime || 0;
+      $("jukeCur").textContent = jukeFmt(a.currentTime);
       $("jukeDur").textContent = jukeFmt(a.duration);
     };
     a.ontimeupdate = () => {
       if (JUKE_SEEKING) return;                 // don't yank the thumb out from under a drag
       $("jukeSeek").value = a.currentTime || 0;
       $("jukeCur").textContent = jukeFmt(a.currentTime);
+      if (Math.abs((a.currentTime || 0) - _jukeSavedAt) >= 5) jukePersist();  // throttle ~5s
     };
     const seek = $("jukeSeek");
     seek.oninput = () => { JUKE_SEEKING = true; $("jukeCur").textContent = jukeFmt(+seek.value); };
-    seek.onchange = () => { a.currentTime = +seek.value; JUKE_SEEKING = false; };
+    seek.onchange = () => { a.currentTime = +seek.value; JUKE_SEEKING = false; jukePersist(); };
+    window.addEventListener("pagehide", jukePersist);   // last-chance save on navigate/close
     jukeInitMediaSession();
     JUKE_BUILT = true;
     if (LAST && LAST.music) jukeApplyMusicState(LAST.music);  // reflect an in-flight build
@@ -2120,6 +2145,16 @@ async function jukeLoad() {
     JUKE_TRACKS = [];
   }
   renderJukeList();
+  if (!JUKE_RESTORED) { JUKE_RESTORED = true; jukeRestore(); }   // resume saved playback, once
+}
+
+// Restore the track/position/play-state saved before the last reload. Autoplay may be blocked
+// until a user gesture — then play() rejects and we simply stay paused at the restored spot.
+function jukeRestore() {
+  let st;
+  try { st = JSON.parse(localStorage.getItem("jukeState") || "null"); } catch (_) { st = null; }
+  if (!st || !st.id || !JUKE_TRACKS.some(t => t.id === st.id)) return;
+  jukeLoadTrack(st.id, { time: +st.time || 0, autoplay: !!st.playing });
 }
 
 function renderJukeList() {
@@ -2134,13 +2169,17 @@ function renderJukeList() {
     return;
   }
   const byId = Object.fromEntries(JUKE_TRACKS.map(t => [t.id, t]));
-  const rows = jukeOrderedIds()
-    .filter(id => JUKE_SHOW_HIDDEN || !jukeHidden(id))
+  const visible = jukeOrderedIds().filter(id => JUKE_SHOW_HIDDEN || !jukeHidden(id));
+  const total = visible.reduce((s, id) => s + (byId[id]?.duration || 0), 0);
+  const tot = $("jukeTotal");
+  if (tot) tot.textContent = `${visible.length} track${visible.length === 1 ? "" : "s"} · ${jukeFmtLong(total)}`;
+  const rows = visible
     .map(id => {
       const t = byId[id]; if (!t) return "";
       const hid = jukeHidden(id);
       return `<li class="juke-row${hid ? " hidden-row" : ""}" draggable="true" data-id="${esc(id)}" data-dur="${t.duration || 0}" data-file="${esc(t.file)}">` +
         `<span class="juke-grip" title="Drag to reorder" aria-hidden="true">⠿</span>` +
+        `<span class="juke-num" aria-hidden="true"></span>` +
         `<span class="juke-name" title="${esc("#" + id)}">${esc(jukeName(id))}</span>` +
         `<span class="juke-dur">${jukeFmt(t.duration)}</span>` +
         `<button class="juke-act juke-rename" title="Rename" aria-label="Rename track">✎</button>` +
@@ -2160,7 +2199,16 @@ function renderJukeList() {
   });
   const pb = $("jukePlay");
   if (pb) pb.disabled = !JUKE_TRACKS.length;   // can start playback once there are songs
+  jukeRenumber();
   if (JUKE_CUR) _jukeHighlight(JUKE_CUR);
+}
+
+// Stamp 1-based playlist positions into the .juke-num cells from current DOM order. Called after
+// render and live during a drag (rows move without a re-render), so the numbers always match.
+function jukeRenumber() {
+  $("jukeList")?.querySelectorAll(".juke-row").forEach((r, i) => {
+    const n = r.querySelector(".juke-num"); if (n) n.textContent = i + 1;
+  });
 }
 
 // Live-reorder the DOM as a row is dragged over another, so the drop lands where you see it.
@@ -2171,6 +2219,7 @@ function jukeDragOver(target, y) {
   const rect = target.getBoundingClientRect();
   const before = y < rect.top + rect.height / 2;
   list.insertBefore(dragging, before ? target : target.nextSibling);
+  jukeRenumber();
 }
 
 // Persist the current on-screen order. When "show hidden" is off the DOM omits hidden ids, so
@@ -2186,6 +2235,7 @@ function jukeCommitOrder() {
     order = jukeOrderedIds().map(id => vis.has(id) ? visible[k++] : id);
   }
   JUKE_CURATION.order = order;          // optimistic
+  jukeRenumber();
   jukeSave({ order });
 }
 
@@ -2215,8 +2265,8 @@ async function jukeSave(patch) {
 }
 
 function jukeNowPlayingLabel(id) {
-  const row = $("jukeList")?.querySelector(`.juke-row[data-id="${CSS.escape(id)}"]`);
-  const dur = row ? jukeFmt(+row.dataset.dur) : "";
+  const t = JUKE_TRACKS.find(x => x.id === id);
+  const dur = t ? jukeFmt(t.duration) : "";
   const now = $("jukeNow");
   if (now) now.textContent = `${jukeName(id)} · ${dur}`;
   if ("mediaSession" in navigator) {       // OS/lock-screen "now playing" card
@@ -2226,15 +2276,49 @@ function jukeNowPlayingLabel(id) {
   }
 }
 
-function jukePlay(id) {
-  const row = $("jukeList")?.querySelector(`.juke-row[data-id="${CSS.escape(id)}"]`);
-  if (!row) return;
+// Load a track into the player. autoplay=false (with time>0) is used to restore a saved
+// position paused; the seek is applied in onloadedmetadata via _jukeRestoreTime. Looks the file
+// up from the manifest (not the DOM) so it works even for hidden tracks or before the modal opens.
+function jukeLoadTrack(id, { time = 0, autoplay = true } = {}) {
+  const t = JUKE_TRACKS.find(x => x.id === id);
+  if (!t) return;
   const audio = $("jukeAudio");
-  audio.src = "/music/" + encodeURIComponent(row.dataset.file);
-  audio.play().catch(() => {});   // autoplay may be blocked until a gesture; the click counts
+  audio.src = "/music/" + encodeURIComponent(t.file);
+  _jukeRestoreTime = time > 0 ? time : null;
   JUKE_CUR = id;
+  JUKE_HISTORY.push(id);
+  if (JUKE_HISTORY.length > 50) JUKE_HISTORY.shift();
   _jukeHighlight(id);
   jukeNowPlayingLabel(id);
+  if (autoplay) audio.play().catch(() => {});   // autoplay may be blocked until a gesture
+  jukePersist();
+}
+
+function jukePlay(id) { jukeLoadTrack(id, { time: 0, autoplay: true }); }
+
+// Save the now-playing track, position, and play state so a reload can resume them. While a
+// restore is pending (metadata not loaded, currentTime still 0) use the target seek, so a save
+// in that window doesn't clobber the saved position with 0.
+function jukePersist() {
+  try {
+    if (!JUKE_CUR) { localStorage.removeItem("jukeState"); return; }
+    const a = $("jukeAudio");
+    _jukeSavedAt = _jukeRestoreTime != null ? _jukeRestoreTime : (a.currentTime || 0);
+    localStorage.setItem("jukeState", JSON.stringify({ id: JUKE_CUR, time: _jukeSavedAt, playing: !a.paused }));
+  } catch (_) {}
+}
+
+function jukeToggleShuffle() {
+  JUKE_SHUFFLE = !JUKE_SHUFFLE;
+  try { localStorage.setItem("jukeShuffle", JUKE_SHUFFLE ? "1" : "0"); } catch (_) {}
+  jukeReflectShuffle();
+}
+
+function jukeReflectShuffle() {
+  const b = $("jukeShuffle");
+  if (!b) return;
+  b.classList.toggle("on", JUKE_SHUFFLE);
+  b.setAttribute("aria-pressed", JUKE_SHUFFLE ? "true" : "false");
 }
 
 // Toggle play/pause; with nothing loaded yet, start the first visible track.
@@ -2273,10 +2357,23 @@ function _jukeHighlight(id) {
 }
 
 // Step to the previous/next track in the visible playlist order; auto-advance (audio 'ended')
-// reuses this with dir=+1 and simply stops at the end of the list.
+// reuses this with dir=+1 and simply stops at the end of the list. Under shuffle, "next" picks a
+// random other visible track and "previous" walks back through the play history.
 function jukeStep(dir) {
   const rows = [...($("jukeList")?.querySelectorAll(".juke-row") || [])];
   if (!rows.length) return;
+  if (JUKE_SHUFFLE) {
+    if (dir > 0) {
+      const pool = rows.filter(r => r.dataset.id !== JUKE_CUR);
+      const bag = pool.length ? pool : rows;
+      jukePlay(bag[Math.floor(Math.random() * bag.length)].dataset.id);
+      return;
+    }
+    JUKE_HISTORY.pop();                                   // drop current
+    const prev = JUKE_HISTORY.pop();                      // jukePlay re-pushes it
+    if (prev && rows.some(r => r.dataset.id === prev)) { jukePlay(prev); return; }
+    // no history → fall through to sequential previous
+  }
   let i = rows.findIndex(r => r.dataset.id === JUKE_CUR);
   i = i < 0 ? (dir > 0 ? 0 : rows.length - 1) : i + dir;
   if (i < 0 || i >= rows.length) return;   // off either end → stop
@@ -2388,6 +2485,9 @@ window.addEventListener("pageshow", ensureStream);
 
 connectStream();
 loadShipList();
+// Resume jukebox playback from a prior session on first load (not just when the modal opens):
+// build the player skeleton, pull the track list, and restore the saved track/position/state.
+try { if (localStorage.getItem("jukeState")) initJukebox(); } catch (_) {}
 
 // On a deliberate close, tell the tracker it may stop sooner (it still waits a short grace,
 // so a reload -- which also fires pagehide -- reconnects and cancels it). pagehide is the
