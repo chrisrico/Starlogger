@@ -859,9 +859,10 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mscan-rs{font-family:var(--mono);font-size:16px;font-weight:600;color:var(--cyan);
   background:rgba(var(--cyan-rgb),.1);border:1px solid rgba(var(--cyan-rgb),.4);border-radius:3px;
   padding:3px 11px;letter-spacing:.02em}
-/* Identify: recent-readings strip — a grid of uniform fixed-width two-line chips so the
-   readings align into tidy rows (~8 per row, 16 kept) rather than a ragged wrapping blob */
-.mi-hist{display:grid;grid-template-columns:repeat(auto-fill,104px);gap:7px;padding:0 16px}
+/* Identify: recent-readings strip — a fixed 8-column grid of uniform two-line chips so the
+   readings align into tidy rows (8 per row, 16 kept) and stretch to fill the row width
+   rather than leaving trailing dead space */
+.mi-hist{display:grid;grid-template-columns:repeat(8,1fr);gap:7px;padding:0 16px}
 .mi-hist:empty{display:none}
 .mtool .mi-chip{display:flex;flex-direction:column;align-items:flex-start;gap:1px;
   padding:4px 9px;font-family:var(--mono);font-size:11.5px;border-radius:8px;
