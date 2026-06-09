@@ -859,15 +859,17 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mscan-rs{font-family:var(--mono);font-size:16px;font-weight:600;color:var(--cyan);
   background:rgba(var(--cyan-rgb),.1);border:1px solid rgba(var(--cyan-rgb),.4);border-radius:3px;
   padding:3px 11px;letter-spacing:.02em}
-/* Identify: recent-readings strip */
-.mi-hist{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:0 16px}
+/* Identify: recent-readings strip — a grid of uniform fixed-width two-line chips so the
+   readings align into tidy rows (~8 per row, 16 kept) rather than a ragged wrapping blob */
+.mi-hist{display:grid;grid-template-columns:repeat(auto-fill,104px);gap:7px;padding:0 16px}
 .mi-hist:empty{display:none}
-.mi-hist-k{font-size:10px;letter-spacing:.14em;margin-right:1px}
-.mtool .mi-chip{display:inline-flex;align-items:baseline;gap:6px;padding:3px 9px;
-  font-family:var(--mono);font-size:11.5px;border-radius:10px;border:1px solid var(--line);
-  background:var(--panel-2);color:var(--ink-2)}
+.mtool .mi-chip{display:flex;flex-direction:column;align-items:flex-start;gap:1px;
+  padding:4px 9px;font-family:var(--mono);font-size:11.5px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel-2);color:var(--ink-2);
+  text-align:left;overflow:hidden}
 .mtool .mi-chip b{color:var(--cyan);font-weight:600}
-.mtool .mi-chip span{color:var(--ink-3)}
+.mtool .mi-chip span{width:100%;color:var(--ink-3);font-size:10.5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mtool .mi-chip:hover{border-color:var(--cyan);background:rgba(var(--cyan-rgb),.08)}
 /* mining tool-card buttons share the app button base (scoped to .mtool, not bare `button`,
    so the .arch-tab sub-tab strip keeps its own underlined styling) — see the button base above */

@@ -21,7 +21,7 @@ let MINING_MINERALS = null;        // cached mineral names for the autocomplete
 let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the picker
 let MINING_RS = null;              // cached base RS values, seeding Identify's prediction
 let IDENTIFY_HISTORY = [];         // recent valid readings {rs, summary}, newest first
-const IDENTIFY_HIST_MAX = 8;       // how many recent readings to keep on screen
+const IDENTIFY_HIST_MAX = 16;      // how many recent readings to keep (2 rows of 8)
 let MINING_INIT = false;
 
 export async function initMining() {
@@ -121,19 +121,24 @@ function identifyToolHtml() {
       <b>class</b>, not the exact mineral — many classes share a base, so a reading can be ambiguous.</p>
   </div>`;
 }
-// The recent-readings strip; chips re-run their reading when clicked.
+// The recent-readings strip: a grid of uniform two-line chips (RS reading on top, result
+// gist below). Chips re-run their reading when clicked; the title carries the full,
+// untruncated summary since the bottom line is ellipsis-truncated.
 function identifyHistHtml() {
   if (!IDENTIFY_HISTORY.length) return "";
-  return `<span class="mi-hist-k">recent</span>` + IDENTIFY_HISTORY.map(h =>
+  return IDENTIFY_HISTORY.map(h =>
     `<button class="mi-chip" onclick="identifyAgain(${h.rs})"
-       title="Re-run RS ${num(h.rs)}"><b>${num(h.rs)}</b> <span>${esc(h.summary)}</span></button>`).join("");
+       title="RS ${num(h.rs)} — ${esc(h.summary)}"><b>${num(h.rs)}</b><span>${esc(h.summary)}</span></button>`).join("");
 }
 // One-line gist of a reading's result, for the history chip.
 function identifySummary(candidates, combos) {
   if (candidates.length) {
     const c = candidates[0];
     const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
-    return `${c.count}× ${deps[0]}${deps.length > 1 ? " +" + (deps.length - 1) : ""}`;
+    // Drop the redundant material-state suffix ((Ore)/(Raw)) for the compact chip; keep
+    // meaningful ones like (C-Type)/(Pure).
+    const dep = (deps[0] || "").replace(/\s*\((?:ore|raw)\)\s*$/i, "");
+    return `${c.count}× ${dep}${deps.length > 1 ? " +" + (deps.length - 1) : ""}`;
   }
   if (combos.filter(c => c.parts.length > 1).length) return "mixed cluster";
   return "no clean match";
