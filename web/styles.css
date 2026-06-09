@@ -937,7 +937,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 /* collapsible "Advanced" section: a group header that doubles as a toggle button */
 .sp-adv-h{display:flex;align-items:center;gap:7px;width:100%;background:transparent;border:0;
   cursor:pointer;color:var(--cyan);font-family:var(--display);font-size:10.5px;letter-spacing:.16em;
-  text-transform:uppercase;margin:0 0 4px;border-bottom:1px solid var(--line-2);padding:0 0 5px}
+  text-transform:uppercase;margin:0 0 4px;border-bottom:0;padding:0 0 5px}
+/* underline the Advanced heading only when it's expanded — collapsed, it's just a toggle */
+.sp-adv.open .sp-adv-h{border-bottom:1px solid var(--line-2)}
 .sp-adv-h:hover{color:var(--ink)}
 .sp-adv-caret{flex:none;width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;
   stroke-linecap:round;stroke-linejoin:round;transition:transform .15s}

@@ -49,6 +49,7 @@ let _updBusy = false;
 function renderUpdateBar(u) {
   const el = $("updatebar");
   if (!el) return;
+  if (_updBusy) return;   // an apply is in flight: stay dismissed until the restart reloads us
   if (!u || !u.available) { el.classList.add("hide"); el.innerHTML = ""; _updBusy = false; return; }
   const view = u.compare_url
     ? `<button class="sp-btn" onclick="window.open('${esc(u.compare_url)}','_blank','noopener')">View changes</button>`
@@ -56,21 +57,21 @@ function renderUpdateBar(u) {
   el.innerHTML =
     `<span class="ub-msg">⟳ New build available <code>${esc(u.current || "?")}</code> → ` +
     `<code>${esc(u.latest || "?")}</code></span>` +
-    `<span class="ub-actions"><button class="sp-btn primary" onclick="applyUpdate(this)">Update now</button>` +
+    `<span class="ub-actions"><button class="sp-btn primary" onclick="applyUpdate()">Update now</button>` +
     `${view}<button class="sp-btn" onclick="dismissUpdate()">Dismiss</button></span>`;
   el.classList.remove("hide");
 }
-async function applyUpdate(btn) {
+async function applyUpdate() {
   if (_updBusy) return;
   _updBusy = true;
-  if (btn) { btn.disabled = true; btn.textContent = "Updating…"; }
+  const el = $("updatebar");
+  if (el) el.classList.add("hide");   // dismiss immediately; the restart will reload this tab
   try {
     await postJSON("/api/update/apply");
     // The tracker is restarting; its asset-hash bump reloads this tab into the new build.
-    // Leave the button disabled until that happens.
   } catch (e) {
     _updBusy = false;
-    if (btn) { btn.disabled = false; btn.textContent = "Update now"; }
+    if (el) el.classList.remove("hide");   // apply failed — bring the banner back so it can retry
     alert("Update failed: " + e);
   }
 }
