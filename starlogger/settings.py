@@ -256,6 +256,9 @@ def describe() -> list[dict]:
             row["unit"] = f["unit"]         # short unit the UI shows inside the number input
         if "widget" in f:
             row["widget"] = f["widget"]     # UI control override (e.g. "segmented" for an enum)
+        for bound in ("min", "max"):        # numeric bounds the UI enforces (mirror the clamp)
+            if bound in f:
+                row[bound] = f[bound]
         if "options" in f:
             row["options"] = f["options"]   # the UI renders a <select>
         if "option_labels" in f:

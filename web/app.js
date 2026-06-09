@@ -408,7 +408,7 @@ function editable(value, f, opts) {
     const cur = (opts.unknown || value == null) ? "" : value;
     return `<span class="edc editing"><input id="edit_input" class="edc-in"
       data-field='${esc(JSON.stringify(f))}'
-      ${isnum ? 'type="number" min="0" step="1"' : (list ? `list="${list}"` : "")}
+      ${isnum ? 'type="number" min="0" step="1" inputmode="numeric"' : (list ? `list="${list}"` : "")}
       value="${esc(cur)}" placeholder="${esc(opts.ph || editPlaceholder(f.k))}"
       onkeydown="edKey(event)" onblur="edCommit(this)"></span>`;
   }
@@ -799,7 +799,7 @@ function legRowHtml(leg, guessCargo) {
   const hint = (!loc && leg.zone_host_id) ? `Unknown station (zone ${leg.zone_host_id})` : "station";
   return `<tr>
     <td><input class="lc" list="dl_cargo" aria-label="Cargo" placeholder="cargo" value="${esc(cargo)}"></td>
-    <td><span class="numf"><span class="numf-u">SCU</span><input class="lq" type="number" aria-label="Quantity in SCU" placeholder="?" value="${leg.qty == null ? "" : leg.qty}"></span></td>
+    <td><span class="numf"><span class="numf-u">SCU</span><input class="lq" type="number" min="0" step="1" inputmode="numeric" aria-label="Quantity in SCU" placeholder="?" value="${leg.qty == null ? "" : leg.qty}"></span></td>
     <td><input class="ll" list="dl_station" aria-label="Location" placeholder="${esc(hint)}" value="${esc(loc)}"></td>
     <td><button type="button" class="rm" title="remove row" aria-label="Remove row" onclick="this.closest('tr').remove()">✕</button></td>
   </tr>`;
@@ -1144,7 +1144,14 @@ function edFormKey(e, mid) {
   if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); saveMission(mid); }
   else if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
 }
-function saveMission(mid) { postOverride(mid, buildOverride()); }
+function saveMission(mid) {
+  // Reward is free-text shorthand (12k / 1.5m / 2,500); reject a non-empty value that doesn't
+  // parse rather than silently dropping it (parseReward would return null and lose the edit).
+  const reward = ($("ed_reward")?.value || "").trim();
+  if (reward && parseReward(reward) == null)
+    return alert("Reward isn’t a valid amount — use digits or shorthand like 12k or 1.5m.");
+  postOverride(mid, buildOverride());
+}
 function resetMission(mid) { postOverride(mid, null); }       // clear entirely
 function restoreMission(mid) {                                // un-hide, keep edits
   const ov = { ...rawOverride(mid) };

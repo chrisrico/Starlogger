@@ -18,7 +18,9 @@ function _settingsCtl(f) {
   let ctl;
   if (f.type === "bool") ctl = `<input type="checkbox" id="${id}"${f.value ? " checked" : ""}${dis}>`;
   else if (f.type === "int" || f.type === "number") {
-    const input = `<input type="number" id="${id}" step="${f.type === "int" ? "1" : "0.5"}" value="${esc(f.value)}"${dis}>`;
+    const attrs = `step="${f.type === "int" ? "1" : "0.5"}" inputmode="${f.type === "int" ? "numeric" : "decimal"}"` +
+      (f.min != null ? ` min="${esc(f.min)}"` : "") + (f.max != null ? ` max="${esc(f.max)}"` : "");
+    const input = `<input type="number" id="${id}" ${attrs} value="${esc(f.value)}"${dis}>`;
     // A short unit (e.g. "s") rides inside the input on the right; .numf hides the native
     // spinners so it sits cleanly against the edge. No unit -> the bare input.
     ctl = f.unit ? `<span class="numf"><span class="numf-u">${esc(f.unit)}</span>${input}</span>` : input;
@@ -120,8 +122,8 @@ function toggleSetAdvanced() {
   $("setAdvToggle").setAttribute("aria-expanded", open ? "true" : "false");
   try { localStorage.setItem("setAdvOpen", open ? "1" : "0"); } catch (_) {}
 }
-// A "Check for updates" action row appended to the Updates group: fetch + apply on the spot,
-// no prompt (the click is the approval). Distinct from the banner, which is the passive prompt.
+// A "Check for updates" action row appended to the Updates group: persists a pending Updates-mode
+// change, then checks now — applying on the spot in Automatic, or raising the banner in Prompt/Off.
 function _updateCheckRow() {
   return `<div class="sp-row sp-action"><div class="sp-label">` +
     `<span class="t">Check for updates ${hintIcon("Check for a new build now. In <b>Automatic</b> mode it's applied immediately; in <b>Prompt</b> or <b>Off</b> mode you'll be asked to confirm via the banner.")}</span></div>` +
@@ -133,6 +135,16 @@ async function checkForUpdate() {
   if (!btn) return;
   btn.disabled = true; msg.textContent = "Checking…"; msg.classList.remove("err");
   const done = (text, err) => { msg.textContent = text; msg.classList.toggle("err", !!err); btn.disabled = false; };
+  // If the Updates mode was changed in the panel but not yet saved, persist it first so the
+  // server's check honours the current selection — a just-switched Auto→Prompt prompts via the
+  // banner instead of silently auto-applying. ("Save that setting change, then run the update.")
+  const mf = (SETTINGS_SCHEMA || []).find(f => f.key === "update_mode");
+  const um = $("set_update_mode");
+  if (mf && um && !mf.env_override && um.value !== mf.value) {
+    try { await postJSON("/api/settings", { update_mode: um.value }); }
+    catch (e) { return done(`Couldn't save the Updates setting: ${e}`, true); }
+    mf.value = um.value;   // reflect the saved value so a later Save won't resend it
+  }
   // Use postRaw, NOT postJSON: every non-update outcome comes back as {ok:false, status},
   // and postJSON throws on ok:false — which would collapse them all into one opaque error.
   let r;
@@ -196,8 +208,14 @@ async function saveSettings() {
     else if (f.type === "int" || f.type === "number") {
       if (el.value.trim() === "") continue;        // left blank -> leave unchanged
       v = Number(el.value);
-      if (Number.isNaN(v)) return _settingsErr(`“${f.label}” must be a number`);
-    } else v = el.value.trim();
+      if (Number.isNaN(v)) return _settingsErr(`“${f.label}” must be a number.`);
+      if (f.type === "int" && !Number.isInteger(v)) return _settingsErr(`“${f.label}” must be a whole number.`);
+      if (f.min != null && v < f.min) return _settingsErr(`“${f.label}” must be at least ${f.min}.`);
+      if (f.max != null && v > f.max) return _settingsErr(`“${f.label}” must be at most ${f.max}.`);
+    } else {
+      v = el.value.trim();
+      if (v === "" && f.value !== "") return _settingsErr(`“${f.label}” can’t be empty.`);
+    }
     if (v !== f.value) payload[f.key] = v;          // only send genuine changes
   }
   if (!Object.keys(payload).length) return closeSettings();
