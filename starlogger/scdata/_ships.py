@@ -168,6 +168,23 @@ def _parse_loadout_blocks(text: str) -> dict:
     return blocks
 
 
+# A ship's installed mining laser -> its size, by the ``_s<N>`` class suffix
+# (mining_laser_grin_arbor_s2 -> 2). Drives the equipment popup's per-ship head filter.
+_MINING_HEAD_RE = re.compile(r"^mining_laser_.*_s(\d)$")
+
+
+def mining_hardpoints(ship_class: str, loadout_text: str) -> list:
+    """Sizes of a ship's mining-laser hardpoints, from its default loadout (the MOLE's three
+    Arbor S2 -> [2, 2, 2]; the Prospector -> [1]; the Golem -> [1]). Reads only the ship's OWN
+    loadout block so AI/teach/derelict variants don't inflate the count; the laser may sit on a
+    mining-arm sub-assembly, but ``_parse_loadout_blocks`` flattens every descendant into the
+    root's install list, so one block scan catches it. Empty for handheld-only miners (ROC)."""
+    installs = _parse_loadout_blocks(loadout_text or "").get(ship_class.lower(), [])
+    sizes = [int(m.group(1)) for child in installs
+             if (m := _MINING_HEAD_RE.match(child))]
+    return sorted(sizes)
+
+
 def grid_cells_scu(grid_index: dict, cls: str) -> int:
     x, y, z = grid_index[cls]
     return round(x * y * z / SCU_M ** 3)
@@ -647,7 +664,7 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
             if components:
                 entry["components"] = components
             if mining:
-                entry["mining"] = True
+                entry["mining"] = {"hardpoints": mining_hardpoints(cls, loadout_text)}
             entry.update(_NAME_FIXUPS.get(cls, {}))   # hand-fix names that lack localisation
             # On a model+variant name clash keep the larger-capacity one.
             if cls not in ships or scu > ships[cls]["scu"]:

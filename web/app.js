@@ -9,6 +9,7 @@ import {
 } from "./mining.js";
 import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState, claimJukeboxPrimary } from "./jukebox.js";
 import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
+import "./shipequip.js";  // side-effect: wires the ship-equipment popup + self-bridges its handlers
 // Shared hot state (TAB / LAST / ROUTE_ORDER / REPLAY_*) + the snapshot accessor live on the
 // `S` object so the archive/stream/editor modules all mutate the same state. See state.js.
 import { S, REPLAY_UNAVAILABLE, curData } from "./state.js";
@@ -253,15 +254,21 @@ function statusHtml(d) {
   const online = d.logged_in;
   const pill = `<span class="pill ${online ? "online" : "offline"}"><span class="dot"></span>${online ? "In Verse" : "Main Menu"}</span>`;
   const scu = d.ship_scu != null ? ` <span class="cap">${num(d.ship_scu)} SCU</span>` : "";
+  // Generic ship-equipment popup trigger. The popup is equipment-agnostic; today the only
+  // equipment category is mining gear, so the button shows only for a mining ship — extend the
+  // gate (and the popup body) when other equipment types arrive.
+  const equip = d.mining_ship
+    ? ` <button id="shipEquipBtn" class="ship-equip-btn" title="Ship equipment" aria-haspopup="dialog" onclick="openShipEquip()">🔧</button>`
+    : "";
   if (d.boarded) {
     // crewing another player's ship — show it badged as boarded, not "detected"
     const who = d.boarded_owner ? `${esc(d.boarded_owner)}'s ship` : "another ship";
-    return pill + `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${scu}
+    return pill + `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${scu}${equip}
       <span class="ship-auto" title="you're aboard ${who} as crew — the manifest shows the shared haul in this hold">⚑ aboard ${who}</span></span>`;
   }
   if (d.ship_detected) {
     // detected ship overrides the manual pick — show it locked, no searchable box
-    return pill + `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${scu}
+    return pill + `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${scu}${equip}
       <span class="ship-auto" title="detected from the game log">● detected</span></span>`;
   }
   const box = `<span class="shipbox">
@@ -270,7 +277,7 @@ function statusHtml(d) {
       placeholder="search ship…" value="${esc(d.ship || "")}"
       onfocus="openShipMenu()" oninput="filterShipMenu()" onkeydown="shipKeydown(event)" onblur="onShipBlur()">
     <div id="shipMenu" class="shipmenu" role="listbox" aria-label="Ships"></div></span>`;
-  return pill + `<span class="ship">SHIP ${box}${scu}</span>`;
+  return pill + `<span class="ship">SHIP ${box}${scu}${equip}</span>`;
 }
 
 function readoutsHtml(d, mining) {

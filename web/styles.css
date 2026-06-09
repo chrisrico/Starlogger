@@ -890,6 +890,23 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mn-prob{color:var(--amber)}
 .mn-dim{color:var(--ink-3)}
 .mplan-srcs{padding:6px 16px 14px;display:flex;flex-direction:column;gap:10px}
+/* ship-vs-rock feasibility verdict pill + factors (Identify candidate card) */
+.feas{font-family:var(--display);font-size:10.5px;font-weight:600;letter-spacing:.1em;
+  text-transform:uppercase;border-radius:3px;padding:2px 8px;border:1px solid transparent}
+.feas-easy{color:var(--green);background:rgba(var(--green-rgb),.12);border-color:rgba(var(--green-rgb),.4)}
+.feas-ok{color:var(--cyan);background:rgba(var(--cyan-rgb),.12);border-color:rgba(var(--cyan-rgb),.4)}
+.feas-hard{color:var(--amber);background:rgba(var(--amber-rgb),.12);border-color:rgba(var(--amber-rgb),.4)}
+.feas-no{color:var(--red);background:rgba(var(--red-rgb),.12);border-color:rgba(var(--red-rgb),.4)}
+.feas-factors{font-family:var(--mono);font-size:11px}
+.mscan-note{font-size:11px;margin:2px 0 9px}
+.feas-setup{font-family:var(--display);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--cyan);background:rgba(var(--cyan-rgb),.1);border:1px solid rgba(var(--cyan-rgb),.35);
+  border-radius:3px;padding:2px 9px;cursor:pointer}
+.feas-setup:hover{background:rgba(var(--cyan-rgb),.18)}
+/* the generic ship-equipment button beside the ship selector */
+.ship-equip-btn{background:transparent;border:0;color:var(--ink-3);font-size:13px;cursor:pointer;
+  line-height:1;padding:1px 3px;vertical-align:middle}
+.ship-equip-btn:hover{color:var(--cyan)}
 
 /* ---- settings overlay panel ---- */
 .ovl.hide{display:none}  /* outrank .ovl's display:flex so the hidden overlay stays hidden */
@@ -906,6 +923,13 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
   line-height:1;padding:4px}
 .sp-x:hover{color:var(--cyan)}
 .sp-body{padding:4px 18px 10px;overflow-y:auto}
+/* ship-equipment popup (reuses .settings-panel / .sp-* chrome) */
+.se-panel{width:min(500px,100%)}
+.se-cat{font-family:var(--display);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--cyan);margin:12px 0 4px;border-bottom:1px solid var(--line);padding-bottom:5px}
+.se-hp{font-family:var(--mono);font-size:12px;color:var(--ink-2);margin:2px 0 8px}
+.se-hp b{color:var(--ink)}
+.se-note{font-family:var(--mono);font-size:11px;margin-top:6px}
 .sp-group{margin-top:14px}
 .sp-group-h{font-family:var(--display);font-size:10.5px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--cyan);margin:0 0 4px;

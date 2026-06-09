@@ -158,12 +158,15 @@ def all_minerals(path: str = MINEABLES_PATH) -> list:
 
 
 def _source_row(rock: dict, part: dict) -> dict:
-    """One 'rock X yields mineral Y' row: where to find it (rs/name) + how richly."""
+    """One 'rock X yields mineral Y' row: where to find it (rs/name) + how richly. Carries
+    the rock's ``mechanics`` so the Find tab can rank/badge sources by minability with the
+    player's current mining gear (see web/feasibility.js)."""
     return {
         "class": rock["class"], "name": rock["name"], "deposit_name": rock["deposit_name"],
         "rs": rock["rs"], "element": part.get("element"),
         "min_pct": part.get("min_pct"), "max_pct": part.get("max_pct"),
         "probability": part.get("probability"), "score": _yield_score(part),
+        "mechanics": rock.get("mechanics"),
     }
 
 

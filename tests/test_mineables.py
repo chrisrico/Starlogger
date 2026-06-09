@@ -243,6 +243,8 @@ def test_lookup_mineral_ranks_sources_and_lists_signatures(tmp_path):
                                                  "Asteroid (C-Type) — Iron"]
     assert res["signatures"] == [4700, 4720]   # the RS values to hunt for gold
     assert res["rocks"][0]["score"] == 60.0
+    # source rows carry the rock's mechanics so the Find tab can rank by minability
+    assert "mechanics" in res["rocks"][0]
     assert mineables.lookup_mineral("", path=path)["rocks"] == []
 
 

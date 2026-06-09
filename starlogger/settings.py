@@ -127,6 +127,39 @@ def set_setting(key: str, value, path: str | None = None) -> None:
     _cache["mtime"] = None  # force a fresh read on next get_settings()
 
 
+# ---- per-ship mining equipment ------------------------------------------- #
+# The user's chosen mining loadout per ship, kept in one settings.json key as
+# {ship_name: {head: <class|None>, modules: [<class>...]}}. Feeds the Identify tab's
+# rock-feasibility verdict (see mining_gear.py / web/shipequip.js).
+_SHIP_EQUIPMENT_KEY = "ship_equipment"
+
+
+def get_ship_equipment(path: str | None = None) -> dict:
+    """The saved {ship_name: {head, modules}} mining-loadout map (a copy; empty if unset)."""
+    return dict(get_settings(path).get(_SHIP_EQUIPMENT_KEY) or {})
+
+
+def set_ship_equipment(ship: str, equipment: dict | None, path: str | None = None) -> None:
+    """Persist (or clear, when ``equipment`` has no head and no modules) one ship's mining
+    loadout. ``equipment`` is ``{head: <class|None>, modules: [<class>...]}``. Atomic write,
+    like ``set_setting``."""
+    path = path or SETTINGS_PATH
+    data = read_json(path, dict)
+    store = dict(data.get(_SHIP_EQUIPMENT_KEY) or {})
+    head = (equipment or {}).get("head")
+    mods = list((equipment or {}).get("modules") or [])
+    if head or mods:
+        store[ship] = {"head": head, "modules": mods}
+    else:
+        store.pop(ship, None)
+    if store:
+        data[_SHIP_EQUIPMENT_KEY] = store
+    else:
+        data.pop(_SHIP_EQUIPMENT_KEY, None)
+    atomic_write(path, data)
+    _cache["mtime"] = None
+
+
 # ---- config knobs: coercion, resolution, description, update ------------- #
 
 def _coerce(field: dict, value):

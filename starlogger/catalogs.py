@@ -51,7 +51,7 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
     reference/mineables/blueprints modules are imported lazily (only the loop needs them).
     ``state``/``music_state`` (when given) let the music build push decode progress to the
     dashboard via the SSE snapshot -- everything else builds silently."""
-    from . import blueprints, contracts, mineables, music, reference
+    from . import blueprints, contracts, mineables, mining_gear, music, reference
     from .config import MUSIC_DIR
 
     def _ship(p4k, ver, reason):
@@ -85,6 +85,14 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
         if bps:
             blueprints.save_blueprints(bps, game_version=ver)
             print(f"[blueprints] built {len(bps)} blueprints ({reason})")
+
+    def _mining_gear(p4k, ver, reason):
+        print(f"[mining gear] rebuilding from local install ({reason}) -- niced, ~minutes")
+        gear = scdata.build_mining_gear_from_p4k(p4k)
+        if gear["heads"]:
+            mining_gear.save_mining_gear(gear["heads"], gear["modules"], game_version=ver)
+            print(f"[mining gear] built {len(gear['heads'])} heads + "
+                  f"{len(gear['modules'])} modules ({reason})")
 
     def _contracts(p4k, ver, reason):
         print(f"[contracts] rebuilding from local install ({reason}) -- niced, ~minutes")
@@ -155,6 +163,11 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
                  lambda: bool(blueprints.load_blueprints().get("blueprints")),
                  blueprints.blueprints_version, _blueprints,
                  blueprints.EXTRACT_VERSION, blueprints.blueprints_extract_version),
+        # Mining equipment (heads + modules; same full-extract source as mineables).
+        _Catalog("mining gear",
+                 lambda: bool(mining_gear.load_mining_gear().get("heads")),
+                 mining_gear.mining_gear_version, _mining_gear,
+                 mining_gear.EXTRACT_VERSION, mining_gear.mining_gear_extract_version),
         # Contract taxonomy + cargo manifests (same full-extract source as mineables).
         _Catalog("contracts",
                  lambda: bool(contracts.load_contracts().get("templates")),

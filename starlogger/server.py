@@ -18,6 +18,7 @@ from .overrides import set_leg_field, set_leg_states
 from .replay import build_timeline, snapshot_with_overlay, state_at
 from .replay_edit import apply_override_with_siblings, apply_replay_op, seed_overlay
 from .settings import describe as describe_settings, set_setting
+from .settings import get_ship_equipment, set_ship_equipment
 from .settings import resolve_str as settings_str
 from .settings import update as update_settings
 from .blueprints import blueprint_catalog, lookup_blueprint
@@ -25,7 +26,8 @@ from .contracts import load_contracts
 from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
-from .ships import load_ship_cargo
+from .mining_gear import head_by_class, load_mining_gear, modules as gear_modules
+from .ships import load_ship_cargo, mining_hardpoints
 from .tradeflags import set_lost
 from .snapshot import build_snapshot
 from .state import State
@@ -269,6 +271,58 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         if not bp:
             return jsonify({"ok": False, "error": "no such blueprint"}), 404
         return jsonify(bp)
+
+    @app.get("/api/mining-gear")
+    def api_mining_gear():
+        # The mining-equipment catalog (laser heads + consumable modules) + the user's saved
+        # per-ship loadout. With ?ship=<name>, heads are filtered to that ship's mining
+        # hardpoint sizes and the response carries just that ship's saved selection -- this is
+        # what the equipment popup renders. Without it, the full catalog (for browsing).
+        cat = load_mining_gear()
+        all_heads = cat.get("heads") or []
+        all_modules = cat.get("modules") or []
+        saved = get_ship_equipment()
+        ship = request.args.get("ship")
+        if ship:
+            hardpoints = mining_hardpoints(ship, None, load_ship_cargo())
+            sizes = set(hardpoints)
+            heads = [h for h in all_heads if h.get("size") in sizes]
+            return jsonify({"ship": ship, "hardpoints": hardpoints, "heads": heads,
+                            "modules": all_modules, "selected": saved.get(ship)})
+        return jsonify({"heads": all_heads, "modules": all_modules, "selected": saved,
+                        "game_version": cat.get("game_version")})
+
+    @app.post("/api/mining-gear")
+    def api_mining_gear_set():
+        # Persist one ship's mining loadout {ship, head, modules}. Validates the head/module
+        # classes against the catalog and caps modules at the head's slot count. Empty head +
+        # empty modules clears the ship's entry.
+        payload = request.get_json(force=True, silent=True) or {}
+        ship = payload.get("ship")
+        if not isinstance(ship, str) or not ship.strip():
+            return jsonify({"ok": False, "error": "ship is required"}), 400
+        head = payload.get("head") or None
+        mods = payload.get("modules") or []
+        if head is not None and not isinstance(head, str):
+            return jsonify({"ok": False, "error": "head must be a class string or null"}), 400
+        if not isinstance(mods, list) or any(not isinstance(m, str) for m in mods):
+            return jsonify({"ok": False, "error": "modules must be a list of class strings"}), 400
+        known_mods = {m["class"] for m in gear_modules()}
+        head_rec = head_by_class(head) if head else None
+        if head and not head_rec:
+            return jsonify({"ok": False, "error": "unknown head"}), 400
+        if any(m not in known_mods for m in mods):
+            return jsonify({"ok": False, "error": "unknown module"}), 400
+        slots = (head_rec or {}).get("module_slots", 0)
+        if mods and not head:
+            return jsonify({"ok": False, "error": "modules require a head"}), 400
+        if len(mods) > slots:
+            return jsonify({"ok": False, "error": f"head has only {slots} module slot(s)"}), 400
+        try:
+            set_ship_equipment(ship.strip(), {"head": head, "modules": mods})
+        except Exception as e:  # pragma: no cover
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return _ok()
 
     @app.post("/api/select-ship")
     def api_select_ship():

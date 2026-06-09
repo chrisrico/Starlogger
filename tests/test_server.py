@@ -41,6 +41,15 @@ def client(monkeypatch):
         "blueprint_catalog": lambda: [{"name": "BP", "category": "C"}],
         "lookup_blueprint": lambda name: {"name": name} if name == "Known" else None,
         "set_setting": lambda k, v: None,
+        "load_mining_gear": lambda: {"heads": [
+            {"class": "H_S1", "size": 1, "module_slots": 1},
+            {"class": "H_S2", "size": 2, "module_slots": 2}],
+            "modules": [{"class": "M_A"}, {"class": "M_B"}], "game_version": "4.8"},
+        "get_ship_equipment": lambda: {"MOLE": {"head": "H_S2", "modules": ["M_A"]}},
+        "set_ship_equipment": lambda ship, eq: None,
+        "mining_hardpoints": lambda name, internal, db: [2, 2, 2] if name == "MOLE" else [1],
+        "head_by_class": lambda cls: {"class": "H_S2", "module_slots": 2} if cls == "H_S2" else None,
+        "gear_modules": lambda: [{"class": "M_A"}, {"class": "M_B"}],
         "filter_sessions": lambda s, **kw: {"sessions": [], "kw": kw},
         "load_sessions": lambda: [],
         "build_timeline": lambda key, lp: {"checkpoints": []} if key == "good" else None,
@@ -81,6 +90,41 @@ def test_state_passes_trade_flag(client, monkeypatch):
 
 def test_ships(client):
     assert client.get("/api/ships").get_json()["game_version"] == "4.8"
+
+
+# --- mining-gear catalog + per-ship loadout -------------------------------- #
+
+def test_mining_gear_full_catalog(client):
+    j = client.get("/api/mining-gear").get_json()
+    assert len(j["heads"]) == 2 and len(j["modules"]) == 2
+    assert j["selected"] == {"MOLE": {"head": "H_S2", "modules": ["M_A"]}}
+
+
+def test_mining_gear_filtered_by_ship_hardpoints(client):
+    # MOLE has size-2 hardpoints -> only the S2 head; its saved selection is returned.
+    j = client.get("/api/mining-gear?ship=MOLE").get_json()
+    assert j["hardpoints"] == [2, 2, 2]
+    assert [h["class"] for h in j["heads"]] == ["H_S2"]
+    assert j["selected"] == {"head": "H_S2", "modules": ["M_A"]}
+
+
+def test_mining_gear_set_validates(client):
+    assert client.post("/api/mining-gear", json={}).status_code == 400          # no ship
+    assert client.post("/api/mining-gear",
+                       json={"ship": "MOLE", "head": "NOPE"}).status_code == 400  # unknown head
+    assert client.post("/api/mining-gear",
+                       json={"ship": "MOLE", "head": "H_S2",
+                             "modules": ["M_A", "M_B", "M_A"]}).status_code == 400  # > slots
+    assert client.post("/api/mining-gear",
+                       json={"ship": "MOLE", "modules": ["M_A"]}).status_code == 400  # mods w/o head
+
+
+def test_mining_gear_set_ok(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(server, "set_ship_equipment", lambda s, eq: seen.update(ship=s, eq=eq))
+    r = client.post("/api/mining-gear", json={"ship": "MOLE", "head": "H_S2", "modules": ["M_A"]})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert seen == {"ship": "MOLE", "eq": {"head": "H_S2", "modules": ["M_A"]}}
 
 
 # --- mining GETs with arg validation --------------------------------------- #

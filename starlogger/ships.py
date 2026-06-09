@@ -22,7 +22,8 @@ _cache = {"mtime": None, "data": {"ships": {}, "fetched_at": None, "game_version
 # Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
 # dropped fields), so installs rebuild the cache on update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
-EXTRACT_VERSION = 0
+# v1: the ``mining`` flag became a dict carrying mining-laser hardpoint sizes.
+EXTRACT_VERSION = 1
 
 
 def build_ship_cargo(p4k: str, progress=lambda m: None) -> dict:
@@ -117,6 +118,17 @@ def is_mining_ship(name: str | None, internal: str | None = None,
     Drives the dashboard's mining-vs-hauling tab layout."""
     hit = _lookup(name, db) or _lookup(internal, db)
     return bool(hit and (hit.get("mining") or "mining" in (hit.get("role") or "").lower()))
+
+
+def mining_hardpoints(name: str | None, internal: str | None = None,
+                      db: dict | None = None) -> list:
+    """The sizes of a ship's mining-laser hardpoints (e.g. the MOLE -> [2, 2, 2], the
+    Prospector / Golem -> [1]); empty for non-miners or handheld-only miners (ROC). Read
+    from the cargo DB's ``mining`` record, which ``scdata.build_ships`` fills from the
+    ship's default loadout. Drives the equipment popup's per-ship head filter."""
+    hit = _lookup(name, db) or _lookup(internal, db)
+    mining = (hit or {}).get("mining")
+    return list(mining.get("hardpoints") or []) if isinstance(mining, dict) else []
 
 
 def known_ship_names(db: dict | None = None) -> set:

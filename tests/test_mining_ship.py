@@ -11,7 +11,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from starlogger.ships import is_mining_ship
+from starlogger.ships import is_mining_ship, mining_hardpoints
+from starlogger.scdata._ships import mining_hardpoints as parse_hardpoints
 
 
 # A minimal cargo DB shaped like ships.json: only the `mining`/`role`/`class`
@@ -66,6 +67,68 @@ def test_unknown_vehicle_not_mining():
     # With the token fallback gone, a vehicle absent from the catalog is never mining
     # (no more name/class token guessing).
     assert not is_mining_ship("Prospector", "MISC_Prospector", {"ships": {}})
+
+
+# --- the new mining=dict shape + hardpoint lookup --------------------------- #
+_DB_HP = {"ships": {
+    "MOLE":       {"class": "ARGO_MOLE", "role": "Medium Mining",
+                   "mining": {"hardpoints": [2, 2, 2]}},
+    "Prospector": {"class": "MISC_Prospector", "role": "Light Mining",
+                   "mining": {"hardpoints": [1]}},
+    "ROC":        {"class": "GRIN_ROC", "role": "Light Mining",
+                   "mining": {"hardpoints": []}},   # handheld-only miner
+    "Freelancer": {"class": "MISC_Freelancer", "role": "Light Freight"},
+}}
+
+
+def test_mining_dict_shape_still_detects():
+    # The flag is now a dict; a (non-empty) dict is truthy so detection is unchanged,
+    # and even an empty-hardpoints miner (ROC) stays flagged.
+    assert is_mining_ship("MOLE", "ARGO_MOLE", _DB_HP)
+    assert is_mining_ship("ROC", "GRIN_ROC", _DB_HP)
+    assert not is_mining_ship("Freelancer", "MISC_Freelancer", _DB_HP)
+
+
+def test_mining_hardpoints_lookup():
+    assert mining_hardpoints("MOLE", "ARGO_MOLE", _DB_HP) == [2, 2, 2]
+    assert mining_hardpoints("Prospector", "MISC_Prospector", _DB_HP) == [1]
+    assert mining_hardpoints("ROC", "GRIN_ROC", _DB_HP) == []
+    assert mining_hardpoints("Freelancer", "MISC_Freelancer", _DB_HP) == []
+    assert mining_hardpoints("Unknown", None, _DB_HP) == []
+
+
+# --- the loadout-text parser (scdata side) ---------------------------------- #
+# Shaped like real `entity loadout` output: a root block, a nested mining-arm
+# sub-assembly, AI/teach variant roots that must NOT be counted.
+_MOLE_LOADOUT = """\
+EntityClassDefinition.ARGO_MOLE [] geom=x.cga
+    Mining_Laser_GRIN_Arbor_S2 [hardpoint_weapon_mining] geom=a.cga
+    Mining_Laser_GRIN_Arbor_S2 [hardpoint_weapon_mining] geom=a.cga
+    Mining_Laser_GRIN_Arbor_S2 [hardpoint_weapon_mining] geom=a.cga
+EntityClassDefinition.ARGO_MOLE_Teach [] geom=x.cga
+    Mining_Laser_THCN_Helix_S2 [hardpoint_weapon_mining] geom=b.cga
+"""
+
+_PROSPECTOR_LOADOUT = """\
+EntityClassDefinition.MISC_Prospector [] geom=x.cga
+  MISC_Prospector_Mining_Arm [hardpoint_mining_arm] geom=arm.cdf
+    Mining_Laser_GRIN_Arbor_S1 [hardpoint_mining_laser] geom=head.cga
+"""
+
+
+def test_parse_hardpoints_counts_only_own_block():
+    # the three S2 on the base MOLE, not the Teach variant's head
+    assert parse_hardpoints("ARGO_MOLE", _MOLE_LOADOUT) == [2, 2, 2]
+
+
+def test_parse_hardpoints_finds_nested_arm_head():
+    # the laser sits under a mining-arm sub-assembly but is flattened into the root block
+    assert parse_hardpoints("MISC_Prospector", _PROSPECTOR_LOADOUT) == [1]
+
+
+def test_parse_hardpoints_empty_when_no_laser():
+    assert parse_hardpoints("MISC_Freelancer", _MOLE_LOADOUT) == []
+    assert parse_hardpoints("ARGO_MOLE", "") == []
 
 
 if __name__ == "__main__":

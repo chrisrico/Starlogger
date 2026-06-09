@@ -8,6 +8,10 @@
 import { $, esc, num, val, th, tag, setHTML, logTable, tabBar } from "./dom.js";
 import { getJSON } from "./net.js";
 import { S } from "./state.js";
+import { ensureGear, currentLoadout } from "./shipequip.js";
+// feasibility() is a global from the classic /feasibility.js script (loaded before app.js),
+// shared with the Node unit test — same pattern as cargogrid.js's window.* helpers.
+const { feasibility } = window;
 
 // ============================================================================ //
 // Mining tab — RS (radar signature) + composition tools. Self-contained and
@@ -23,6 +27,8 @@ let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the pi
 let MINING_RS = null;              // cached base RS values, seeding Identify's prediction
 let IDENTIFY_HISTORY = [];         // recent valid readings {rs, summary}, newest first
 const IDENTIFY_HIST_MAX = 16;      // how many recent readings to keep (2 rows of 8)
+let IDENTIFY_LAST = null;          // last result {v, candidates, combos} — re-rendered on loadout change
+let FIND_LAST = null;              // last mineral-lookup result — re-ranked on loadout change
 let MINING_INIT = false;
 
 // Recent readings persist in localStorage, scoped to the current play SESSION: they survive
@@ -70,6 +76,15 @@ export async function initMining() {
     [MINING_MINERALS, MINING_BLUEPRINTS, MINING_RS] = await Promise.all([
       grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints"),
       grab("/api/rock-signatures", "signatures")]);
+    ensureGear();   // preload the mining-gear catalog for the feasibility verdict (fire-and-forget)
+    // Re-render the current Identify + Find results when the ship loadout changes (popup save)
+    // — both surface the feasibility/minability of the equipped ship.
+    document.addEventListener("loadout-changed", () => {
+      if (IDENTIFY_LAST) setHTML("mres-identify", identifyResultHtml(
+        IDENTIFY_LAST.v, IDENTIFY_LAST.candidates, IDENTIFY_LAST.combos));
+      if (FIND_LAST) setHTML("mres-find", FIND_LAST.index
+        ? indexResultHtml(FIND_LAST.index) : findResultHtml(FIND_LAST));
+    });
   }
   syncIdentifySession();   // opening the tab after a relog → reconcile the persisted strip
   // Build once, only after the catalogs have loaded; switching subs then just toggles.
@@ -137,6 +152,38 @@ function mechHtml(rocks) {
   if (!bits.length) return "";
   return `<div class="mrow"><span class="mk">cracking</span>
     <div class="mels mn-dim">${esc(bits.join(" · "))}</div></div>`;
+}
+
+// Minability ordering (best first) for ranking source rocks; unknown/unjudged sinks last.
+const _FEAS_ORDER = { easy: 0, ok: 1, hard: 2, no: 3 };
+const feasOrder = (f) => (f ? _FEAS_ORDER[f.tier] : 99);
+// A compact verdict pill (shared by the Identify card + the Find table's Mine column).
+const feasPill = (f) => f
+  ? `<span class="feas feas-${f.tier}" title="${esc(f.factors.join(" · "))}">${esc(f.label)}</span>`
+  : `<span class="mn-dim">—</span>`;
+// The equipped mining loadout, or null when the current ship isn't a miner / has no head.
+function equippedLoadout() {
+  const lo = currentLoadout();
+  return lo && lo.isMiningShip && lo.head ? lo : null;
+}
+
+// The feasibility row for an Identify candidate card: "" when the current ship isn't a miner
+// or has no rock mechanics; a "set up gear" nudge when it's a miner with nothing fitted; else
+// a coloured verdict pill + the contributing factors. Uses the first rock that carries mechanics.
+function feasibilityHtml(rocks) {
+  const lo = currentLoadout();
+  if (!lo || !lo.isMiningShip) return "";          // only meaningful for the equipped mining ship
+  const m = (rocks || []).map(r => r.mechanics).find(Boolean);
+  if (!m) return "";
+  if (!lo.head) {
+    return `<div class="mrow"><span class="mk">your ship</span>
+      <div class="mels"><button class="feas-setup" onclick="openShipEquip()">🔧 set up mining gear</button></div></div>`;
+  }
+  const f = feasibility(m, lo.head, lo.modules);
+  if (!f) return "";
+  return `<div class="mrow"><span class="mk">your ship</span>
+    <div class="mels">${feasPill(f)}
+      <span class="mn-dim feas-factors">${esc(f.factors.join(" · "))}</span></div></div>`;
 }
 
 // ---- Identify: RS reading → rock class(es), cluster size, possible minerals ---- //
@@ -233,6 +280,7 @@ export async function miningIdentify() {
     }
     // Clear + refocus so the next reading can be typed straight away.
     const inp = $("mi-rs"); if (inp) { inp.value = ""; inp.focus(); }
+    IDENTIFY_LAST = { v, candidates, combos };
     setHTML(mres(), identifyResultHtml(v, candidates, combos));
   } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
 }
@@ -255,6 +303,7 @@ function identifyResultHtml(v, candidates, combos) {
           <div class="mrow"><span class="mk">possible minerals</span>
             <div class="mels">${minerals.map(elBadge).join("") || '<span class="mn-dim">—</span>'}</div></div>
           ${mechHtml(c.rocks)}
+          ${feasibilityHtml(c.rocks)}
         </div></div>`;
     }).join("");
   }
@@ -289,20 +338,32 @@ export async function miningFind() {
   setHTML(mres(), `<div class="empty">searching…</div>`);
   try {
     const r = await fetch(`/api/mineral-lookup?name=${encodeURIComponent(name)}`).then(x => x.json());
+    FIND_LAST = r;
     setHTML(mres(), findResultHtml(r));
   } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
 }
 function findResultHtml(r) {
   if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
   const sigs = (r.signatures || []).map(s => `<span class="mscan-rs">${num(s)}</span>`).join("");
-  const rows = r.rocks.map(x => `<tr>
+  // With the current ship's gear, judge each source rock's minability and rank by it (best
+  // first), then by yield score; without gear, fall back to the server's yield ranking.
+  const lo = equippedLoadout();
+  const rocks = r.rocks.map(x => ({ ...x, _f: lo ? feasibility(x.mechanics, lo.head, lo.modules) : null }));
+  if (lo) rocks.sort((a, b) => feasOrder(a._f) - feasOrder(b._f) || (b.score || 0) - (a.score || 0));
+  const rows = rocks.map(x => `<tr>
+    ${lo ? `<td>${feasPill(x._f)}</td>` : ""}
     <td class="lt-num">${num(x.rs)}</td><td>${esc(x.name)}</td>
     <td class="lt-num">${_pct(x.min_pct)}–${_pct(x.max_pct)}%</td>
     <td class="lt-num">${_chance(x.probability)}</td><td class="lt-num">${x.score}</td></tr>`).join("");
+  const note = lo
+    ? `<div class="mscan-note mn-dim">Ranked by minability with <b>${esc(lo.ship)}</b> — ${esc(lo.head.name)}${lo.modules.length ? " + " + lo.modules.map(m => esc(m.name)).join(", ") : ""}</div>`
+    : `<div class="mscan-note mn-dim">Pick a mining ship + gear (🔧) to rank these by minability.</div>`;
   return `<div class="card">
     <div class="mscan"><span class="mscan-k">Scan for</span>
       <div class="mscan-vals">${sigs || '<span class="mn-dim">—</span>'}</div></div>
+    ${note}
     ${logTable(
+      (lo ? th("Mine", false, "Minability with your current ship's mining gear") : "") +
       th("RS", true, "Radar signature a single rock of this type reads") +
       th("Rock", false, "The mineable rock / deposit type") +
       th("Yield %", true, `Percentage of ${esc(r.mineral)} in the rock (min–max)`) +
@@ -315,18 +376,37 @@ export async function miningIndex() {
   setHTML(mres(), `<div class="empty">loading…</div>`);
   try {
     const r = await fetch("/api/mineral-index").then(x => x.json());
+    FIND_LAST = { index: r.minerals || [] };           // re-rank on loadout change
     setHTML(mres(), indexResultHtml(r.minerals || []));
   } catch (e) { setHTML(mres(), `<div class="empty">load failed</div>`); }
 }
+// A mineral's minability = the feasibility of its best (richest) source that carries
+// mechanics. Every source of a given mineral shares the same break difficulty in the data,
+// so the best source is representative.
+function mineralFeas(m, lo) {
+  if (!lo) return null;
+  const mech = (m.rocks || []).map(x => x.mechanics).find(Boolean);
+  return mech ? feasibility(mech, lo.head, lo.modules) : null;
+}
 function indexResultHtml(minerals) {
   if (!minerals.length) return `<div class="empty">No mineral data.</div>`;
-  const rows = minerals.map(m => `<tr>
+  const lo = equippedLoadout();
+  const list = minerals.map(m => ({ ...m, _f: mineralFeas(m, lo) }));
+  // Rank by minability (best first), then mineral name; without gear keep the A–Z order.
+  if (lo) list.sort((a, b) => feasOrder(a._f) - feasOrder(b._f) || a.mineral.localeCompare(b.mineral));
+  const rows = list.map(m => `<tr>
+    ${lo ? `<td>${feasPill(m._f)}</td>` : ""}
     <td><b>${esc(m.mineral)}</b></td>
     <td>${(m.signatures || []).slice(0, 8).map(num).join(", ")}</td>
     <td>${m.rocks.slice(0, 4).map(x => esc(x.name)).join("; ")}${m.rocks.length > 4 ? ` <span class="mn-dim">…+${m.rocks.length - 4}</span>` : ""}</td>
   </tr>`).join("");
+  const note = lo
+    ? `<div class="mscan-note mn-dim">Ranked by minability with <b>${esc(lo.ship)}</b> — ${esc(lo.head.name)}${lo.modules.length ? " + " + lo.modules.map(x => esc(x.name)).join(", ") : ""}</div>`
+    : `<div class="mscan-note mn-dim">Pick a mining ship + gear (🔧) to rank these by minability.</div>`;
   return `<div class="card"><h3><span>All minerals → source rocks</span><span class="scu">${minerals.length}</span></h3>` +
+    note +
     logTable(
+      (lo ? th("Mine", false, "Minability of this mineral's best source with your current gear") : "") +
       th("Mineral", false, "The refined mineral") +
       th("RS to scan", false, "Radar signature value(s) whose rocks can contain it") +
       th("Best sources", false, "The richest source rocks for this mineral"),

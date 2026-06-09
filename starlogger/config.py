@@ -38,6 +38,9 @@ REFERENCE_PATH = os.path.join(DATA_DIR, "reference.json")
 # extract (its own file/trigger, like ships.json -- the data can't be pulled
 # via the cheap query path reference.json uses). See mineables.py.
 MINEABLES_PATH = os.path.join(DATA_DIR, "mineables.json")
+# Mining equipment (laser heads + consumable modules), from the same full DataCore
+# extract as mineables -- the gear side of the rock-feasibility calc. See mining_gear.py.
+MINING_GEAR_PATH = os.path.join(DATA_DIR, "mining_gear.json")
 # Crafting blueprints + their material requirements, from the same full DataCore
 # extract (links a blueprint -> the minerals it needs -> the rocks that yield them).
 # See blueprints.py.

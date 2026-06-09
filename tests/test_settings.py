@@ -142,3 +142,22 @@ def test_describe_shape(store, monkeypatch):
     for row in rows.values():
         assert {"key", "type", "group", "label", "help", "default", "value",
                 "env_override"} <= set(row)
+
+
+# --- per-ship mining equipment --------------------------------------------- #
+
+def test_ship_equipment_round_trip(store):
+    assert settings.get_ship_equipment() == {}
+    settings.set_ship_equipment("MOLE", {"head": "H_S2", "modules": ["M_A", "M_B"]})
+    settings.set_ship_equipment("Prospector", {"head": "H_S1", "modules": []})
+    eq = settings.get_ship_equipment()
+    assert eq["MOLE"] == {"head": "H_S2", "modules": ["M_A", "M_B"]}
+    assert eq["Prospector"] == {"head": "H_S1", "modules": []}
+
+
+def test_ship_equipment_clear_and_coexist_with_other_settings(store):
+    settings.update({"update_branch": "dev"})           # an unrelated knob
+    settings.set_ship_equipment("MOLE", {"head": "H_S2", "modules": []})
+    settings.set_ship_equipment("MOLE", {"head": None, "modules": []})  # clears MOLE
+    assert "MOLE" not in settings.get_ship_equipment()
+    assert settings.resolve_str("update_branch") == "dev"  # unrelated knob survives

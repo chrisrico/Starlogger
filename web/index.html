@@ -87,7 +87,22 @@
     <div id="jukeboxFoot" class="juke-foot"></div>
   </div>
 </div>
+<div id="shipEquipOverlay" class="ovl hide" aria-hidden="true">
+  <div class="settings-panel se-panel" role="dialog" aria-modal="true" aria-labelledby="seTitle">
+    <div class="sp-head">
+      <h2 id="seTitle">Ship equipment</h2>
+      <button class="sp-x" id="seClose" title="Close" aria-label="Close equipment">✕</button>
+    </div>
+    <div id="seBody" class="sp-body"></div>
+    <div class="sp-foot">
+      <span id="seMsg" class="sp-msg"></span>
+      <button class="sp-btn" id="seCancel">Close</button>
+      <button class="sp-btn primary" id="seSave">Save</button>
+    </div>
+  </div>
+</div>
 <script src="/cargogrid.js"></script>
+<script src="/feasibility.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
