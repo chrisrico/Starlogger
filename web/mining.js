@@ -7,6 +7,7 @@
 // open) and the bridged inline handlers (miningSub + the identify/find/plan/bp actions).
 import { $, esc, num, val, th, tag, setHTML, logTable, tabBar } from "./dom.js";
 import { getJSON } from "./net.js";
+import { S } from "./state.js";
 
 // ============================================================================ //
 // Mining tab — RS (radar signature) + composition tools. Self-contained and
@@ -24,6 +25,41 @@ let IDENTIFY_HISTORY = [];         // recent valid readings {rs, summary}, newes
 const IDENTIFY_HIST_MAX = 16;      // how many recent readings to keep (2 rows of 8)
 let MINING_INIT = false;
 
+// Recent readings persist in localStorage, scoped to the current play SESSION: they survive
+// page reloads, and reset when a NEW session begins (a different non-null session start than
+// the one they were saved under). A null session (logged out / not started) never resets —
+// the readings carry over "until the next session". Keyed off the LIVE snapshot (S.LAST),
+// not the replay view, so replaying an archived session can't wipe the live readings.
+const IDENTIFY_HIST_KEY = "miIdentifyHist";
+let IDENTIFY_HIST_SESSION = null;  // the session start the in-memory readings belong to
+const _liveSession = () => { try { return (S.LAST && S.LAST.session_started_at) || null; } catch (_) { return null; } };
+
+function loadIdentifyHistory() {
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem(IDENTIFY_HIST_KEY) || "null"); } catch (_) { /* ignore */ }
+  IDENTIFY_HISTORY = (stored && Array.isArray(stored.readings)) ? stored.readings.slice(0, IDENTIFY_HIST_MAX) : [];
+  IDENTIFY_HIST_SESSION = stored ? (stored.session ?? null) : null;
+  syncIdentifySession();
+}
+function persistIdentifyHistory() {
+  try {
+    localStorage.setItem(IDENTIFY_HIST_KEY, JSON.stringify({ session: IDENTIFY_HIST_SESSION, readings: IDENTIFY_HISTORY }));
+  } catch (_) { /* quota/private-mode — fine, just won't persist */ }
+}
+// Reset the strip when the live session has advanced to a new one; otherwise leave it alone
+// (including while logged out, so readings persist until the next session). Repaints #mi-hist
+// when it's on screen. Cheap (a string compare) — safe to call on every snapshot.
+export function syncIdentifySession() {
+  const cur = _liveSession();
+  if (cur != null && cur !== IDENTIFY_HIST_SESSION) {
+    IDENTIFY_HIST_SESSION = cur;
+    IDENTIFY_HISTORY = [];
+    persistIdentifyHistory();
+    if ($("mi-hist")) setHTML("mi-hist", identifyHistHtml());
+  }
+}
+loadIdentifyHistory();
+
 export async function initMining() {
   if (!MINING_INIT) {
     MINING_INIT = true;
@@ -35,6 +71,7 @@ export async function initMining() {
       grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints"),
       grab("/api/rock-signatures", "signatures")]);
   }
+  syncIdentifySession();   // opening the tab after a relog → reconcile the persisted strip
   // Build once, only after the catalogs have loaded; switching subs then just toggles.
   if (MINING_BLUEPRINTS !== null && !$("msub-identify")) renderMiningShell();
 }
@@ -174,6 +211,7 @@ export function identifyKey(e) {
 export async function miningIdentify() {
   const v = parseFloat(val("mi-rs"));
   if (!(v > 0)) { setHTML(mres(), `<div class="empty">Enter a positive RS reading.</div>`); return; }
+  syncIdentifySession();   // a new session clears the strip first, so this reading opens it
   setHTML(mres(), `<div class="empty">scanning…</div>`);
   try {
     const [look, dec] = await Promise.all([
@@ -190,6 +228,7 @@ export async function miningIdentify() {
       const at = IDENTIFY_HISTORY.findIndex(h => h.rs === v);
       if (at >= 0) IDENTIFY_HISTORY[at] = entry;
       else IDENTIFY_HISTORY = [entry, ...IDENTIFY_HISTORY].slice(0, IDENTIFY_HIST_MAX);
+      persistIdentifyHistory();
       setHTML("mi-hist", identifyHistHtml());
     }
     // Clear + refocus so the next reading can be typed straight away.

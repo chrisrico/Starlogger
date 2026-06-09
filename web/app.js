@@ -5,6 +5,7 @@ import { postJSON, postRaw, getJSON } from "./net.js";
 import {
   initMining, miningSub, miningIdentify, miningFind, miningIndex,
   identifyAgain, identifyPredict, identifyKey, bpOpen, bpFilter, bpPick, bpKey,
+  syncIdentifySession,
 } from "./mining.js";
 import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState, claimJukeboxPrimary } from "./jukebox.js";
 import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
@@ -934,6 +935,7 @@ const destHue = (i) => Math.round((i * 137.508) % 360);
 // Exported: archive.js's replay controls re-render the whole dashboard through this.
 export function renderAll(d) {
   if (!d) return;
+  syncIdentifySession();   // reset the Identify strip the moment the play session changes
   applyTabLayout(effectiveMining(d));   // detected mining ship (or the MODE switch) → Mining tabs
   renderHeader(d);
   setHTML("datalists", datalistsHtml(d.catalog));
