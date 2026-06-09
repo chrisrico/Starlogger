@@ -88,7 +88,7 @@ def test_update_mode_env_primary(store, monkeypatch):
 def test_describe_enum_options(store):
     row = {d["key"]: d for d in settings.describe()}["update_mode"]
     assert row["type"] == "enum"
-    assert row["options"] == ["prompt", "auto", "off"]
+    assert row["options"] == ["off", "prompt", "auto"]
 
 
 def test_numeric_clamp(store):

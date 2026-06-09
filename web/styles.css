@@ -960,6 +960,18 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sp-ctl input:focus,.sp-ctl select:focus{outline:none;border-color:var(--cyan);box-shadow:var(--focus-ring)}
 .sp-ctl input:disabled,.sp-ctl select:disabled{opacity:.5;cursor:not-allowed}
 .sp-ctl input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--cyan)}
+.sp-row[hidden]{display:none}   /* outrank .sp-row's display:flex so a hidden row stays hidden */
+/* numeric input with a short unit pinned inside the right edge (e.g. "s"). Native spinners
+   are hidden so the unit sits flush instead of fighting the step arrows; padding-right keeps
+   the typed value clear of it. Shared by the settings panel + the manifest qty field. */
+.numf{position:relative;display:inline-flex;width:100%}
+/* value right-aligned, sitting just left of the unit (padding-right reserves the unit's room) */
+.numf>input[type=number]{width:100%;padding-right:30px;text-align:right;
+  appearance:textfield;-moz-appearance:textfield}
+.numf>input[type=number]::-webkit-outer-spin-button,
+.numf>input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.numf-u{position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none;
+  font-family:var(--mono);font-size:11px;color:var(--ink-3)}
 .sp-env{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--amber)}
 .sp-foot{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--line)}
 .sp-msg{flex:1;font-family:var(--mono);font-size:11px;color:var(--ink-3)}

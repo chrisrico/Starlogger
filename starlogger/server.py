@@ -352,6 +352,16 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         payload = request.get_json(force=True, silent=True) or {}
         before = (settings_str("update_remote"), settings_str("update_branch"))
         before_host = settings_str("bind_host")
+        # Validate a new update source BEFORE persisting: a typo'd remote or a branch that
+        # doesn't exist upstream would otherwise silently break auto-update. The validator
+        # (wired by the tracker, which owns git) checks the prospective remote+branch pair.
+        if "update_remote" in payload or "update_branch" in payload:
+            validate = app.config.get("ON_VALIDATE_SOURCE")
+            if validate:
+                err = validate(payload.get("update_remote", before[0]),
+                               payload.get("update_branch", before[1]))
+                if err:
+                    return jsonify({"ok": False, "error": err}), 400
         try:
             update_settings(payload)
         except ValueError as e:
@@ -390,9 +400,10 @@ def create_app(state: State, log_path: str | None = None, presence=None,
 
     @app.post("/api/update/check")
     def api_update_check():
-        # Explicit "Check for updates" button: fetch now and apply immediately if there's a
-        # new build (no prompt -- the click is the approval, bypassing the Updates mode). The
-        # status comes straight back; an "updating" result means the server is restarting.
+        # Explicit "Check for updates" button: fetch now and, if a new build exists, honour the
+        # Updates mode -- apply immediately ("updating") only in Automatic; in Prompt/Off raise
+        # the banner instead ("available"). The status comes straight back; "updating" means the
+        # server is restarting.
         fn = app.config.get("ON_CHECK_NOW")
         if fn is None:
             return jsonify({"ok": False, "status": "unavailable"}), 503

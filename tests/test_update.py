@@ -1,8 +1,9 @@
 """Manual update-check logic (tracker._manual_check + UpdateState bookkeeping).
 
-The "Check for updates" button checks synchronously and, when a new build exists, applies
-it immediately (no prompt -- the click is the approval). These pin every branch by stubbing
-the git helpers at the tracker boundary, so no network, clock, or real repo is touched.
+The "Check for updates" button checks synchronously and, when a new build exists, honours the
+Updates mode: apply immediately in Automatic, raise the banner in Prompt/Off. These pin every
+branch by stubbing the git helpers at the tracker boundary, so no network/clock/real repo is
+touched. `_stub_source` defaults the mode to "auto" so the apply-path tests stay terse.
 
 Run: python -m pytest tests/test_update.py
 """
@@ -27,10 +28,16 @@ class _State:
         self.bumps += 1
 
 
-def _stub_source(monkeypatch, repo="/repo", remote="origin", branch="main"):
+def _stub_source(monkeypatch, repo="/repo", remote="origin", branch="main", mode="auto"):
     monkeypatch.setattr(tracker, "_repo_ready", lambda: repo)
-    monkeypatch.setattr(tracker.settings, "resolve_str",
-                        lambda k: remote if k == "update_remote" else branch)
+
+    def _resolve(k):
+        if k == "update_remote":
+            return remote
+        if k == "update_mode":
+            return mode
+        return branch
+    monkeypatch.setattr(tracker.settings, "resolve_str", _resolve)
 
 
 def test_manual_check_blocked_when_not_a_clean_clone(monkeypatch):
@@ -76,6 +83,37 @@ def test_manual_check_applies_immediately_on_new_build(monkeypatch):
     assert applied.wait(2)                                     # _apply ran off-thread
 
 
+def test_manual_check_prompts_when_mode_not_auto(monkeypatch):
+    """Prompt/Off mode: an explicit Check Now must NOT apply silently -- it raises the banner
+    (offer + version bump) and reports 'available' so the panel points the user at it."""
+    _stub_source(monkeypatch, mode="prompt")
+    monkeypatch.setattr(tracker, "_fetch_target", lambda *a: ("a" * 40, "c" * 40))
+    monkeypatch.setattr(tracker, "_is_ancestor", lambda repo, anc, desc: False)  # genuinely ahead
+    monkeypatch.setattr(tracker, "_remote_compare_url", lambda *a: None)
+    applied = threading.Event()
+    monkeypatch.setattr(tracker, "_apply", lambda us, tr: applied.set())
+    us, st = tracker.UpdateState(), _State()
+    r = tracker._manual_check(us, st, lambda: None)
+    assert r["status"] == "available"
+    assert r["current"] == "aaaaaaaaa" and r["latest"] == "ccccccccc"
+    assert us.available is True and st.bumps == 1     # banner offered + pushed
+    assert not applied.wait(0.3)                      # never applied silently
+
+
+def test_manual_check_reoffers_a_dismissed_build(monkeypatch):
+    """The explicit click re-offers a build the user had dismissed (force=True)."""
+    _stub_source(monkeypatch, mode="off")
+    monkeypatch.setattr(tracker, "_fetch_target", lambda *a: ("a" * 40, "c" * 40))
+    monkeypatch.setattr(tracker, "_is_ancestor", lambda repo, anc, desc: False)
+    monkeypatch.setattr(tracker, "_remote_compare_url", lambda *a: None)
+    us = tracker.UpdateState()
+    us.offer("aaaaaaaaa", "ccccccccc", "c" * 40, None)
+    us.dismiss()                                      # user hid this exact build
+    assert us.available is False
+    r = tracker._manual_check(us, _State(), lambda: None)
+    assert r["status"] == "available" and us.available is True   # forced past the dismissal
+
+
 def test_no_update_when_upstream_is_behind(monkeypatch):
     """Running from a checkout that's AHEAD of upstream: have != want, but want is an ancestor of
     have (upstream is behind). Must read as 'current' -- never apply, or reset --hard would delete
@@ -99,6 +137,25 @@ def test_update_when_upstream_is_ahead(monkeypatch):
     monkeypatch.setattr(tracker, "_apply", lambda us, tr: applied.set())
     r = tracker._manual_check(tracker.UpdateState(), _State(), lambda: None)
     assert r["status"] == "updating" and applied.wait(2)
+
+
+def test_validate_update_source(monkeypatch):
+    """ls-remote drives the verdict: refs -> ok (None); empty -> branch missing; None ->
+    remote unreachable."""
+    monkeypatch.setattr(tracker.os.path, "isdir", lambda p: True)        # pretend it's a clone
+    ret = {"v": "deadbeef\trefs/heads/main\n"}
+    monkeypatch.setattr(tracker, "_git", lambda repo, *a, **kw: ret["v"])
+    assert tracker._validate_update_source("origin", "main") is None
+    ret["v"] = ""
+    assert "doesn't exist" in tracker._validate_update_source("origin", "nope")
+    ret["v"] = None
+    assert "reach" in tracker._validate_update_source("bogus-remote", "main")
+
+
+def test_validate_update_source_skipped_off_git(monkeypatch):
+    """Not a git clone -> nothing to validate, so a non-git install can still save."""
+    monkeypatch.setattr(tracker.os.path, "isdir", lambda p: False)
+    assert tracker._validate_update_source("whatever", "x") is None
 
 
 def _record_git(monkeypatch, shallow: bool):

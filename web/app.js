@@ -799,7 +799,7 @@ function legRowHtml(leg, guessCargo) {
   const hint = (!loc && leg.zone_host_id) ? `Unknown station (zone ${leg.zone_host_id})` : "station";
   return `<tr>
     <td><input class="lc" list="dl_cargo" aria-label="Cargo" placeholder="cargo" value="${esc(cargo)}"></td>
-    <td><input class="lq" type="number" aria-label="Quantity in SCU" placeholder="?" value="${leg.qty == null ? "" : leg.qty}"></td>
+    <td><span class="numf"><span class="numf-u">SCU</span><input class="lq" type="number" aria-label="Quantity in SCU" placeholder="?" value="${leg.qty == null ? "" : leg.qty}"></span></td>
     <td><input class="ll" list="dl_station" aria-label="Location" placeholder="${esc(hint)}" value="${esc(loc)}"></td>
     <td><button type="button" class="rm" title="remove row" aria-label="Remove row" onclick="this.closest('tr').remove()">✕</button></td>
   </tr>`;

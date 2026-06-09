@@ -17,8 +17,25 @@ function _settingsCtl(f) {
   const id = "set_" + f.key, dis = f.env_override ? " disabled" : "";
   let ctl;
   if (f.type === "bool") ctl = `<input type="checkbox" id="${id}"${f.value ? " checked" : ""}${dis}>`;
-  else if (f.type === "int" || f.type === "number")
-    ctl = `<input type="number" id="${id}" step="${f.type === "int" ? "1" : "0.5"}" value="${esc(f.value)}"${dis}>`;
+  else if (f.type === "int" || f.type === "number") {
+    const input = `<input type="number" id="${id}" step="${f.type === "int" ? "1" : "0.5"}" value="${esc(f.value)}"${dis}>`;
+    // A short unit (e.g. "s") rides inside the input on the right; .numf hides the native
+    // spinners so it sits cleanly against the edge. No unit -> the bare input.
+    ctl = f.unit ? `<span class="numf"><span class="numf-u">${esc(f.unit)}</span>${input}</span>` : input;
+  }
+  else if (f.widget === "segmented") {
+    // A segmented control (shared .modesw chrome with the header's Auto/Cargo/Mining switch).
+    // The picked value lives in a hidden input so saveSettings reads it like any other knob;
+    // the buttons are wired in renderSettings (no inline handlers / window bridge).
+    const segs = (f.options || []).map(o => {
+      const lbl = (f.option_labels && f.option_labels[o]) || (o[0].toUpperCase() + o.slice(1));
+      const on = o === f.value;
+      return `<button type="button" class="modesw-opt${on ? " active" : ""}" role="radio"
+        aria-checked="${on}" data-val="${esc(o)}"${dis}>${esc(lbl)}</button>`;
+    }).join("");
+    ctl = `<input type="hidden" id="${id}" value="${esc(f.value)}">` +
+      `<div class="modesw" id="${id}_seg" role="radiogroup">${segs}</div>`;
+  }
   else if (f.type === "enum" || f.options)
     ctl = `<select id="${id}"${dis}>` + (f.options || []).map(o => {
       const lbl = (f.option_labels && f.option_labels[o]) || (o[0].toUpperCase() + o.slice(1));
@@ -67,6 +84,31 @@ function renderSettings(schema) {
   if (sd) sd.onclick = shutdownTracker;
   const adv = $("setAdvToggle");
   if (adv) adv.onclick = toggleSetAdvanced;
+  // Wire each segmented control's buttons to update its backing hidden input.
+  $("settingsBody").querySelectorAll(".modesw .modesw-opt[data-val]").forEach(b => {
+    b.onclick = () => setSegmented(b.closest(".modesw").id.replace(/_seg$/, ""), b.dataset.val);
+  });
+  // The check interval is meaningless when updates are off — hide its row to match.
+  _applyUpdateModeDep();
+}
+
+// Apply a segmented control's pick: store it in the backing hidden input + repaint the buttons.
+function setSegmented(id, val) {
+  const hidden = $(id);
+  if (!hidden || hidden.disabled) return;
+  hidden.value = val;
+  $(id + "_seg")?.querySelectorAll(".modesw-opt").forEach(b => {
+    const on = b.dataset.val === val;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+  if (id === "set_update_mode") _applyUpdateModeDep();
+}
+
+// Show/hide the "Update check interval" row to match the current Updates mode.
+function _applyUpdateModeDep() {
+  const um = $("set_update_mode"), row = $("set_live_update_secs")?.closest(".sp-row");
+  if (um && row) row.toggleAttribute("hidden", um.value === "off");
 }
 
 function toggleSetAdvanced() {
@@ -82,7 +124,7 @@ function toggleSetAdvanced() {
 // no prompt (the click is the approval). Distinct from the banner, which is the passive prompt.
 function _updateCheckRow() {
   return `<div class="sp-row sp-action"><div class="sp-label">` +
-    `<span class="t">Check for updates ${hintIcon("Fetch the latest build now and apply it immediately — no prompt.")}</span></div>` +
+    `<span class="t">Check for updates ${hintIcon("Check for a new build now. In <b>Automatic</b> mode it's applied immediately; in <b>Prompt</b> or <b>Off</b> mode you'll be asked to confirm via the banner.")}</span></div>` +
     `<div class="sp-ctl"><button class="sp-btn" id="checkUpdateBtn">Check now</button>` +
     `<span class="sp-note" id="checkUpdateMsg"></span></div></div>`;
 }
@@ -98,6 +140,7 @@ async function checkForUpdate() {
   catch (e) { return done("Couldn't reach the tracker — is it still running?", true); }
   switch (r && r.status) {
     case "updating": msg.textContent = `Updating → ${esc(r.latest)}…`; break;  // server restarts; tab reloads
+    case "available": return done(`Build ${esc(r.latest)} available — apply it from the banner.`);
     case "current":  return done(`Already up to date${r.build ? " (" + esc(r.build) + ")" : ""}.`);
     case "offline":  return done("Couldn't reach the update source — check your network or the configured remote.", true);
     case "blocked":  return done("Can't update: this checkout has uncommitted changes or isn't a managed git clone.", true);

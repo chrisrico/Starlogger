@@ -395,11 +395,14 @@ class UpdateState:
         self.applying = False
 
     def offer(self, current: str, latest: str, latest_full: str,
-              compare_url: str | None) -> bool:
+              compare_url: str | None, force: bool = False) -> bool:
         """Record an available update unless the user already dismissed this exact commit.
-        Returns True when the banner state changed, so the caller bumps the snapshot version."""
+        Returns True when the banner state changed, so the caller bumps the snapshot version.
+        `force` (an explicit "Check now" click) re-offers a build the user had dismissed."""
         with self.lock:
-            if latest_full and latest_full == self.dismissed:
+            if force:
+                self.dismissed = ""                  # explicit request overrides a prior dismissal
+            elif latest_full and latest_full == self.dismissed:
                 return False
             changed = not (self.available and self.latest_full == latest_full)
             self.available = True
@@ -474,6 +477,22 @@ def _repo_ready() -> str | None:
     if os.path.isdir(src) and os.path.realpath(src) == os.path.realpath(repo):
         return None                       # update source IS this checkout -> never git-op it
     return repo
+
+
+def _validate_update_source(remote: str, branch: str) -> str | None:
+    """For a Settings save that changes the update remote/branch: confirm the branch actually
+    exists on that remote (a single `git ls-remote --heads`, which resolves the remote name/path/
+    URL and the branch at once). Returns a human error string for the panel, or None when the
+    source resolves -- or when this isn't a git clone, where there's nothing to check so a
+    non-git install can still save. Independent of working-tree cleanliness, unlike _repo_ready."""
+    if not os.path.isdir(os.path.join(BASE_DIR, ".git")):
+        return None
+    refs = _git(BASE_DIR, "ls-remote", "--heads", remote, branch, check=False)
+    if refs is None:
+        return f"Couldn't reach update remote “{remote}” — check the name or URL."
+    if not refs.strip():
+        return f"Branch “{branch}” doesn't exist on “{remote}”."
+    return None
 
 
 def _remote_compare_url(repo: str, remote: str, have: str, want: str) -> str | None:
@@ -586,8 +605,9 @@ def _check_update(ustate: "UpdateState", state, trigger_restart) -> None:
 
 def _manual_check(ustate: "UpdateState", state, trigger_restart) -> dict:
     """The dashboard's explicit 'Check for updates' button: fetch now and, if a new build
-    exists, apply it immediately -- the click is the approval, so no banner/prompt and the
-    Updates mode is bypassed entirely. Returns a status the panel surfaces inline."""
+    exists, honour the Updates mode -- apply immediately only when mode=auto; in prompt/off
+    mode surface the banner instead of applying silently (the explicit click still re-offers a
+    previously dismissed build). Returns a status the panel surfaces inline."""
     repo = _repo_ready()
     if not repo:
         return {"ok": False, "status": "blocked"}    # dirty tree / not a clone
@@ -602,8 +622,14 @@ def _manual_check(ustate: "UpdateState", state, trigger_restart) -> dict:
             ustate.clear()
             state.bump_version()
         return {"ok": True, "status": "current", "build": have[:9]}
-    # New build -> apply now, off the request thread (httpd.shutdown blocks); the asset-hash
-    # reload swaps this tab into it and the completion toast fires post-reload.
+    if settings.resolve_str("update_mode") != "auto":
+        # Prompt/Off: don't apply silently -- raise the banner so the user confirms.
+        ustate.offer(have[:9], want[:9], want, _remote_compare_url(repo, remote, have, want),
+                     force=True)
+        state.bump_version()
+        return {"ok": True, "status": "available", "current": have[:9], "latest": want[:9]}
+    # Automatic: the click + the mode are both "yes" -> apply now, off the request thread
+    # (httpd.shutdown blocks); the asset-hash reload swaps this tab into the new build.
     threading.Thread(target=lambda: _apply(ustate, trigger_restart), daemon=True).start()
     return {"ok": True, "status": "updating", "current": have[:9], "latest": want[:9]}
 
@@ -849,6 +875,8 @@ def main() -> None:
     app.config["ON_RESTART"] = on_restart
     # The 'Check for updates' button: check synchronously + apply immediately if there's a build.
     app.config["ON_CHECK_NOW"] = lambda: _manual_check(ustate, state, trigger_restart)
+    # Validate a new update remote/branch on save (the branch must exist upstream).
+    app.config["ON_VALIDATE_SOURCE"] = _validate_update_source
     threading.Thread(target=shutdown_watchdog,
                      args=(presence, stop, has_launcher_detection, _idle_timeout(),
                            time.monotonic(), httpd.shutdown, 2.0, _close_timeout()),

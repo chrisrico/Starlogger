@@ -386,6 +386,29 @@ def test_bind_host_unchanged_no_restart(monkeypatch, tmp_path):
     assert not restarted.is_set()
 
 
+def test_update_source_validation_rejects_bad_branch(monkeypatch, tmp_path):
+    # A failing validator (here: branch doesn't exist) blocks the save with a 400 and the
+    # error message, and nothing is persisted.
+    app = _settings_app(monkeypatch, tmp_path)
+    app.config["ON_VALIDATE_SOURCE"] = lambda remote, branch: f"Branch “{branch}” doesn't exist."
+    r = app.test_client().post("/api/settings", json={"update_branch": "nope"})
+    assert r.status_code == 400
+    j = r.get_json()
+    assert j["ok"] is False and "nope" in j["error"]
+    from starlogger import settings
+    assert settings.resolve_str("update_branch") == "main"   # unchanged
+
+
+def test_update_source_validation_passes_good_branch(monkeypatch, tmp_path):
+    app = _settings_app(monkeypatch, tmp_path)
+    seen = {}
+    app.config["ON_VALIDATE_SOURCE"] = lambda remote, branch: seen.update(r=remote, b=branch) or None
+    r = app.test_client().post("/api/settings", json={"update_branch": "dev"})
+    assert r.get_json()["ok"] is True
+    # Validated the prospective pair: the unchanged remote + the new branch.
+    assert seen == {"r": "origin", "b": "dev"}
+
+
 # --- /api/closing (deliberate tab close beacon) --------------------------- #
 
 def test_closing_marks_presence(monkeypatch):

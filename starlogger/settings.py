@@ -61,21 +61,21 @@ CONFIG_SCHEMA = [
     },
     {
         "key": "idle_timeout", "type": "number", "default": 30.0, "min": 1.0,
-        "env": "STARLOGGER_IDLE_TIMEOUT",
-        "group": "Lifecycle", "label": "Idle shutdown (seconds)",
+        "env": "STARLOGGER_IDLE_TIMEOUT", "unit": "s",
+        "group": "Lifecycle", "label": "Idle shutdown",
         "help": "How long the tracker lingers with no dashboard open (and, on Linux, "
                 "the launcher gone) before exiting. Applies on the next launch.",
     },
     {
         "key": "close_timeout", "type": "number", "default": 2.0, "min": 0.5,
-        "env": "STARLOGGER_CLOSE_TIMEOUT",
-        "group": "Lifecycle", "label": "Close grace (seconds)",
+        "env": "STARLOGGER_CLOSE_TIMEOUT", "unit": "s",
+        "group": "Lifecycle", "label": "Close grace",
         "help": "Shorter grace used after a tab is deliberately closed. Applies on the "
                 "next launch.",
     },
     {
         "key": "update_mode", "type": "enum", "default": "prompt",
-        "options": ["prompt", "auto", "off"],
+        "options": ["off", "prompt", "auto"], "widget": "segmented",
         "env": "STARLOGGER_UPDATE_MODE",
         "legacy_env": {"STARLOGGER_NO_UPDATE": "off", "STARLOGGER_AUTO_UPDATE": "auto"},
         "group": "Updates", "label": "Updates",
@@ -84,8 +84,8 @@ CONFIG_SCHEMA = [
     },
     {
         "key": "live_update_secs", "type": "int", "default": 900, "min": 0,
-        "env": "STARLOGGER_LIVE_UPDATE_SECS",
-        "group": "Updates", "label": "Update check interval (seconds)",
+        "env": "STARLOGGER_LIVE_UPDATE_SECS", "unit": "s",
+        "group": "Updates", "label": "Update check interval",
         "help": "How often a running tracker checks for a new build. 0 disables the "
                 "mid-session check. Takes effect immediately.",
     },
@@ -252,6 +252,10 @@ def describe() -> list[dict]:
             "value": resolve(f["key"]), "env_override": env_override(f["key"]),
             "env": f["env"],
         }
+        if "unit" in f:
+            row["unit"] = f["unit"]         # short unit the UI shows inside the number input
+        if "widget" in f:
+            row["widget"] = f["widget"]     # UI control override (e.g. "segmented" for an enum)
         if "options" in f:
             row["options"] = f["options"]   # the UI renders a <select>
         if "option_labels" in f:
