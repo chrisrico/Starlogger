@@ -51,6 +51,14 @@ export const th = (label, num, tip) =>
 // A small uppercased status/category pill (the .lt-tag family).
 export const tag = (text, cls) => `<span class="lt-tag${cls ? " " + cls : ""}">${esc(text)}</span>`;
 
+// An inline help "?" badge for a form field: a tiny icon that reveals `html` in a floating
+// tip on hover/focus, so a field's explanation doesn't spend vertical space being shown all
+// the time. `html` is trusted markup (may include <code>/<b>); it's esc'd into data-tip for
+// safe attribute embedding and round-trips back to live markup when hint.js writes it via
+// innerHTML. The shared #hinttip element + positioning live in hint.js.
+export const hintIcon = (html) =>
+  `<button type="button" class="hint" tabindex="0" aria-label="More info" data-tip="${esc(html)}">?</button>`;
+
 // A transient, self-dismissing notification in the corner toaster. `kind` ("ok"/"err")
 // tints it. Shared by the jukebox, the update banner, and any one-off status nudge.
 export function toast(msg, kind) {

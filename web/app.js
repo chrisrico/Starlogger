@@ -10,6 +10,7 @@ import {
 import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState, claimJukeboxPrimary } from "./jukebox.js";
 import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
 import "./shipequip.js";  // side-effect: wires the ship-equipment popup + self-bridges its handlers
+import "./hint.js";       // side-effect: drives the floating tips for inline "?" help badges
 // Shared hot state (TAB / LAST / ROUTE_ORDER / REPLAY_*) + the snapshot accessor live on the
 // `S` object so the archive/stream/editor modules all mutate the same state. See state.js.
 import { S, REPLAY_UNAVAILABLE, curData } from "./state.js";

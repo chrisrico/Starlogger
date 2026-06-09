@@ -5,7 +5,7 @@
 // owns all MINING_*/IDENTIFY_* state and talks to its own /api/rock-*, /api/mineral-*,
 // /api/blueprint* endpoints. The rest of the dashboard only calls initMining() (on tab
 // open) and the bridged inline handlers (miningSub + the identify/find/plan/bp actions).
-import { $, esc, num, val, th, tag, setHTML, logTable, tabBar } from "./dom.js";
+import { $, esc, num, val, th, tag, setHTML, logTable, tabBar, hintIcon } from "./dom.js";
 import { getJSON } from "./net.js";
 import { S } from "./state.js";
 import { ensureGear, currentLoadout } from "./shipequip.js";
@@ -193,7 +193,9 @@ function feasibilityHtml(rocks) {
 // you type, the box predicts the rest from your recent readings (deposits recur while
 // mining) as a selected suffix — Enter accepts it, keep typing or Esc/Backspace to override.
 function identifyToolHtml() {
-  return `<div class="card mtool"><h3><span>RS reading → rock</span></h3>
+  return `<div class="card mtool"><h3><span>RS reading → rock ${hintIcon(
+      "The radar number is <code>base RS × number of rocks</code>. RS identifies the rock " +
+      "<b>class</b>, not the exact mineral — many classes share a base, so a reading can be ambiguous.")}</span></h3>
     <div class="mform">
       <input id="mi-rs" type="text" inputmode="numeric" autocomplete="off"
         placeholder="e.g. 9400" aria-label="Radar signature reading"
@@ -201,8 +203,6 @@ function identifyToolHtml() {
       <button class="primary" onclick="miningIdentify()">Identify</button>
     </div>
     <div id="mi-hist" class="mi-hist">${identifyHistHtml()}</div>
-    <p class="mhint">The radar number is <code>base RS × number of rocks</code>. RS identifies the rock
-      <b>class</b>, not the exact mineral — many classes share a base, so a reading can be ambiguous.</p>
   </div>`;
 }
 // The recent-readings strip: a grid of uniform two-line chips (RS reading on top, result
@@ -321,15 +321,14 @@ function identifyResultHtml(v, candidates, combos) {
 
 // ---- Find: mineral → RS to scan for + ranked source rocks (+ browse all) ---- //
 function findToolHtml() {
-  return `<div class="card mtool"><h3><span>Mineral → where to mine</span></h3>
+  return `<div class="card mtool"><h3><span>Mineral → where to mine ${hintIcon(
+      "Shows the RS value(s) to scan for and the richest source rocks, ranked by probability × yield.")}</span></h3>
     <div class="mform">
       <input id="mf-name" list="dl_mineral" placeholder="e.g. Bexalite" autocomplete="off"
         aria-label="Mineral name" onkeydown="if(event.key==='Enter')miningFind()">
       <button class="primary" onclick="miningFind()">Find</button>
       <button onclick="miningIndex()">Browse all</button>
     </div>
-    <p class="mhint">Shows the RS value(s) to scan for and the richest source rocks, ranked by
-      probability × yield.</p>
   </div>`;
 }
 export async function miningFind() {
@@ -453,7 +452,9 @@ function blueprintMenuHtml() {
   }).join("");
 }
 function planToolHtml() {
-  return `<div class="card mtool"><h3><span>Blueprint mining plan</span></h3>
+  return `<div class="card mtool"><h3><span>Blueprint mining plan ${hintIcon(
+      "Pick a blueprint — grouped by type and size — to pull its required minerals straight from " +
+      "the game files. Deposits are ranked by how many of the ingredients each can yield.")}</span></h3>
     <div class="mform">
       <div class="bp-dd">
         <input id="mp-bp" autocomplete="off" aria-label="Search blueprints"
@@ -463,8 +464,6 @@ function planToolHtml() {
         <div id="bp-dd-list" class="bp-dd-list" onmousedown="event.preventDefault()">${blueprintMenuHtml()}</div>
       </div>
     </div>
-    <p class="mhint">Pick a blueprint — grouped by type and size — to pull its required minerals straight
-      from the game files. Deposits are ranked by how many of the ingredients each can yield.</p>
   </div>`;
 }
 export function bpOpen(show) {

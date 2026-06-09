@@ -3,7 +3,7 @@
 // renders the live schema from /api/settings, persists via /api/settings, and hosts the
 // "Check for updates" / "Shut down tracker" actions and the Advanced collapse. Imported for
 // its side effects — it wires its own nav button + Escape handler at load.
-import { $, esc, toast } from "./dom.js";
+import { $, esc, toast, hintIcon } from "./dom.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 
 // ---- settings overlay (sidebar gear -> dashboard-managed settings.json) ----
@@ -33,8 +33,9 @@ function _settingsCtl(f) {
 const SET_ADVANCED = new Set(["bind_host", "idle_timeout", "close_timeout", "update_remote", "update_branch"]);
 
 function _settingsRow(f) {
-  return `<div class="sp-row"><div class="sp-label"><span class="t">${esc(f.label)}</span>` +
-    `<span class="h">${esc(f.help)}</span></div>${_settingsCtl(f)}</div>`;
+  const help = f.help ? " " + hintIcon(f.help) : "";
+  return `<div class="sp-row"><div class="sp-label"><span class="t">${esc(f.label)}${help}</span>` +
+    `</div>${_settingsCtl(f)}</div>`;
 }
 
 function renderSettings(schema) {
@@ -81,8 +82,7 @@ function toggleSetAdvanced() {
 // no prompt (the click is the approval). Distinct from the banner, which is the passive prompt.
 function _updateCheckRow() {
   return `<div class="sp-row sp-action"><div class="sp-label">` +
-    `<span class="t">Check for updates</span>` +
-    `<span class="h">Fetch the latest build now and apply it immediately — no prompt.</span></div>` +
+    `<span class="t">Check for updates ${hintIcon("Fetch the latest build now and apply it immediately — no prompt.")}</span></div>` +
     `<div class="sp-ctl"><button class="sp-btn" id="checkUpdateBtn">Check now</button>` +
     `<span class="sp-note" id="checkUpdateMsg"></span></div></div>`;
 }
@@ -110,8 +110,7 @@ async function checkForUpdate() {
 // so it's confirmed; the dashboard goes dead afterwards (no auto-relaunch until the next SC launch).
 function _shutdownRow() {
   return `<div class="sp-row sp-action"><div class="sp-label">` +
-    `<span class="t">Shut down tracker</span>` +
-    `<span class="h">Stop the tracker process. The dashboard will go offline until it's launched again.</span></div>` +
+    `<span class="t">Shut down tracker ${hintIcon("Stop the tracker process. The dashboard will go offline until it's launched again.")}</span></div>` +
     `<div class="sp-ctl"><button class="sp-btn danger" id="shutdownBtn">Shut down</button>` +
     `<span class="sp-note" id="shutdownMsg"></span></div></div>`;
 }

@@ -4,7 +4,7 @@
 // per ship via /api/mining-gear and feeds the Identify tab's rock-feasibility verdict.
 // Self-contained: owns the gear catalog cache + the saved-selection map, renders its own
 // overlay, and bridges its own inline handlers. Imported for side effects (wires close/Esc).
-import { $, esc, num, toast } from "./dom.js";
+import { $, esc, num, toast, hintIcon } from "./dom.js";
 import { getJSON, postJSON } from "./net.js";
 import { curData } from "./state.js";
 
@@ -112,13 +112,11 @@ function renderEquip() {
   // One equipment category for now (Mining); the popup is generic so others can follow.
   let html = `<h3 class="se-cat">Mining</h3>`;
   html += `<div class="se-hp">Mining hardpoints: <b>${_hardpointSummary(EDIT.hardpoints)}</b></div>`;
-  html += `<div class="sp-row"><div class="sp-label"><span class="t">Mining laser</span>
-      <span class="h">The head fitted to your mining turret.</span></div>
+  html += `<div class="sp-row"><div class="sp-label"><span class="t">Mining laser ${hintIcon("The head fitted to your mining turret.")}</span></div>
     <div class="sp-ctl"><select id="se-head" onchange="seHeadChange()">
       <option value="">— none —</option>${EDIT.heads.map(_headOption).join("")}</select></div></div>`;
   for (let i = 0; i < slots; i++) {
-    html += `<div class="sp-row"><div class="sp-label"><span class="t">Module ${i + 1}</span>
-        <span class="h">A consumable gadget slotted into the head.</span></div>
+    html += `<div class="sp-row"><div class="sp-label"><span class="t">Module ${i + 1} ${hintIcon("A consumable gadget slotted into the head.")}</span></div>
       <div class="sp-ctl"><select id="se-mod-${i}" onchange="seModuleChange()">
         ${_moduleOptions(EDIT.modules[i] || "")}</select></div></div>`;
   }
