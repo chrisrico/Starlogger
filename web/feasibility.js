@@ -18,6 +18,16 @@
 // The `power` modifier is the module's beam-power delta (Rieger +25%, Rime −15%): it's a real
 // crack lever, so a power booster can lift an "Impossible" rock to crackable, and a resistance
 // module that costs power (Rime) is judged on its net effect, not its headline resistance cut.
+//
+// The OPTIMAL WINDOW is the second difficulty axis: the rock's window_thinness (Iron −0.9 …
+// Savrilium 2.28; thinner = higher) sets how narrow the green charge zone is, and gear
+// window_size modifiers scale it (Hofstede +60%, Helix −40% — the Helix's famous tradeoff).
+// Effective width = (1 − thinness/THIN_FULL) × (1 + window-modifiers%). A tight window can't
+// stop a beam that overpowers the rock — it makes the hold finicky — so it never creates
+// "Impossible"; below TIGHT_BELOW the verdict grades one step harder (Easy→Workable→Hard).
+// This re-validates the Helix-I ground truth: Torite's "very difficult" is the +99 margin AND
+// a ~0.10 window; Aluminum (thinness −0.4) keeps a 0.70 window even on the Helix and stays
+// Easy. Rocks with no thinness data are neutral on this axis.
 // `mech` is a rock's `mechanics` (laser_power, resistance, instability, window_thinness…);
 // `head`/`modules` are gear records (each a `power` and/or `modifiers` map). Returns
 //   { tier: 'easy'|'ok'|'hard'|'no', label, margin, factors:[string…] }
@@ -25,6 +35,9 @@
 (function (global) {
   // Fractions of the rock's required power that the margin must clear for each tier.
   const HARD_AT = 0.30, EASY_AT = 0.55;
+  // Window leg: thinness at which the green zone has fully closed (catalog max is 2.28),
+  // and the effective width below which the crack grades one step harder.
+  const THIN_FULL = 2.5, TIGHT_BELOW = 0.45;
 
   function feasibility(mech, head, modules) {
     if (!mech || !head) return null;
@@ -48,7 +61,18 @@
     if (mech.resistance != null) {
       factors.push(`resistance ${mech.resistance}${resPct ? ` → ${effRes} (${resPct > 0 ? "+" : ""}${resPct}%)` : ""}`);
     }
-    if (winPct) factors.push(`window ${winPct > 0 ? "+" : ""}${winPct}%`);
+    // Effective optimal-window width (1 = a normal rock on neutral gear); null = no data.
+    const width = mech.window_thinness != null
+      ? +(Math.max(0, 1 - mech.window_thinness / THIN_FULL) * (1 + winPct / 100)).toFixed(3)
+      : null;
+    const tight = width != null && width < TIGHT_BELOW;
+    if (width != null) {
+      factors.push(`window ${width.toFixed(2)}× (thinness ${mech.window_thinness}`
+        + `${winPct ? `, gear ${winPct > 0 ? "+" : ""}${winPct}%` : ""})`
+        + (tight ? " → tight: one grade harder" : ""));
+    } else if (winPct) {
+      factors.push(`window ${winPct > 0 ? "+" : ""}${winPct}%`);
+    }
     if (instPct) factors.push(`instability ${instPct > 0 ? "+" : ""}${instPct}%`);
 
     let tier, label;
@@ -56,7 +80,11 @@
     else if (margin < HARD_AT * required) { tier = "hard"; label = "Hard"; }
     else if (margin < EASY_AT * required) { tier = "ok"; label = "Workable"; }
     else { tier = "easy"; label = "Easy"; }
-    return { tier, label, margin: +margin.toFixed(1), factors };
+    // A tight window makes the hold finicky, not the rock unbreakable: one grade harder,
+    // never Impossible (that stays power-only).
+    if (tight && tier === "easy") { tier = "ok"; label = "Workable"; }
+    else if (tight && tier === "ok") { tier = "hard"; label = "Hard"; }
+    return { tier, label, margin: +margin.toFixed(1), width, factors };
   }
 
   const TIER_ORDER = { easy: 0, ok: 1, hard: 2, no: 3 };
@@ -66,7 +94,9 @@
   // matching one). Two crack levers — cut resistance (Rime/Lifeline) or boost power (Rieger) —
   // so for each head we rank every module by how much it actually moves *this* rock's margin and
   // stack the best, fewest first. (A window/yield-only module like Focus moves margin 0 → never
-  // suggested; a resistance cut that costs net power is judged on its real margin gain.) Returns:
+  // suggested: a window can soften the grade of a crackable rock but can't escape "Impossible",
+  // which is power-only. A resistance cut that costs net power is judged on its real margin
+  // gain.) Returns:
   //   { combo: { head, modules, result } }  a fittable laser+modules that cracks it (minimal), or
   //   { needSize: <n> }                     when only a bigger hardpoint can (suggest that ship), or
   //   null                                  when nothing in the catalog cracks it.
