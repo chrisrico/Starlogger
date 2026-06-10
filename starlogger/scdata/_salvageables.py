@@ -23,10 +23,10 @@ import glob
 import os
 import re
 import shutil
-import tempfile
 
 from ._p4k import (
     _component, _load_json, ensure_binary, extract_records, load_localization,
+    scratch_dir,
 )
 
 # Keep only real salvage *targets*: whole-ship debris hulls and ship-debris panels.
@@ -137,7 +137,7 @@ def build_salvageables_from_p4k(p4k: str, sb: str | None = None,
     salvageable-wreck list. Heavy (a full ``dcb extract``), so gated on a major game-version
     bump like the mineable rocks -- see ``catalogs.refresh_loop``."""
     sb = sb or ensure_binary()
-    workdir = tempfile.mkdtemp(prefix="starlogger-salvageables-")
+    workdir = scratch_dir("starlogger-salvageables-")
     try:
         progress("extracting DataCore for salvageables")
         recs = extract_records(workdir, p4k, sb)

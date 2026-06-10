@@ -33,11 +33,10 @@ import glob
 import os
 import re
 import shutil
-import tempfile
 
 from ._p4k import (
     _component, _load_json, _loc_text, ensure_binary, extract_records,
-    load_localization,
+    load_localization, scratch_dir,
 )
 
 # Placeholder / dev / out-of-scope entities (handheld + ROC arm handled separately by size).
@@ -242,7 +241,7 @@ def build_mining_gear_from_p4k(p4k: str, sb: str | None = None,
     install and build the mining-gear catalog. Heavy (a full ``dcb extract``), so gated on
     a major game-version bump like ship cargo -- see ``catalogs.refresh_loop``."""
     sb = sb or ensure_binary()
-    workdir = tempfile.mkdtemp(prefix="starlogger-mininggear-")
+    workdir = scratch_dir("starlogger-mininggear-")
     try:
         progress("extracting DataCore for mining gear")
         recs = extract_records(workdir, p4k, sb)

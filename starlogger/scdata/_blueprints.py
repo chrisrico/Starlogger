@@ -6,12 +6,11 @@ import glob
 import os
 import re
 import shutil
-import tempfile
 
 from ._p4k import (
     _GRADE_LETTER, _deep_find, _deep_search, _index_by_basename,
     _load_json, _loc_text, ensure_binary, extract_records,
-    load_localization,
+    load_localization, scratch_dir,
 )
 
 
@@ -139,7 +138,7 @@ def build_blueprints_from_p4k(p4k: str, sb: str | None = None,
                               progress=lambda m: None) -> list:
     """Full-extract orchestrator for the blueprint catalog (gated like mineables)."""
     sb = sb or ensure_binary()
-    workdir = tempfile.mkdtemp(prefix="starlogger-blueprints-")
+    workdir = scratch_dir("starlogger-blueprints-")
     try:
         progress("extracting DataCore for blueprints")
         recs = extract_records(workdir, p4k, sb)

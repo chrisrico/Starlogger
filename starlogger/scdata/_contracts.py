@@ -6,11 +6,11 @@ import glob
 import os
 import re
 import shutil
-import tempfile
 
 from ..patterns import camel_split
 from ._p4k import (
     _deep_walk, _load_json, _run, ensure_binary, extract_records, load_localization,
+    scratch_dir,
 )
 
 
@@ -277,7 +277,7 @@ def build_contracts_from_p4k(p4k: str, sb: str | None = None,
     ``{templates, generators, cargo_manifests, icons}`` -- ``icons`` is ``{slug: svg_text}``
     for the caller to persist (gitignored)."""
     sb = sb or ensure_binary()
-    workdir = tempfile.mkdtemp(prefix="starlogger-contracts-")
+    workdir = scratch_dir("starlogger-contracts-")
     try:
         progress("extracting DataCore for contracts")
         recs = extract_records(workdir, p4k, sb)

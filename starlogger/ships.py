@@ -10,11 +10,23 @@ unchanged); each entry also carries its ``class`` (the DataCore entity class, e.
 
 from __future__ import annotations
 
+import json
 import time
 
 from .config import SHIP_CARGO_PATH
 from .jsonstore import atomic_write, load_cached
 from . import scdata
+
+
+class PartialCatalogError(RuntimeError):
+    """Raised when a rebuild would replace the on-disk ship catalog with a drastically
+    smaller one -- the signature of a degraded/partial extract. Refusing to write keeps the
+    good cache (and stops the version gate from marking the decimated file 'current')."""
+
+
+# Smallest fraction of the existing catalog a rebuild may shrink to before it's rejected as
+# a partial extract. A real game patch never removes half the ships; a wedged extract does.
+RETAIN_FRACTION = 0.5
 
 _cache = {"mtime": None, "data": {"ships": {}, "fetched_at": None, "game_version": None},
           "by_class": {}, "by_name": {}}
@@ -38,8 +50,23 @@ def build_ship_cargo(p4k: str, progress=lambda m: None) -> dict:
     return ships
 
 
+def _ondisk_ship_count(path: str) -> int:
+    """How many ships the current ``ships.json`` holds (0 if absent/unreadable). Read fresh
+    off disk, bypassing the mtime cache, so the shrink guard sees the real prior catalog."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return len(json.load(f).get("ships") or {})
+    except (OSError, ValueError):
+        return 0
+
+
 def save_ship_cargo(ships: dict, game_version: str | None = None,
                     path: str = SHIP_CARGO_PATH) -> None:
+    prev = _ondisk_ship_count(path)
+    if prev and len(ships) < prev * RETAIN_FRACTION:
+        raise PartialCatalogError(
+            f"refusing to overwrite a {prev}-ship catalog with {len(ships)} ships ({path}) "
+            f"-- likely a partial extract; keeping the existing cache")
     atomic_write(path, {
         "source": f"Star Citizen Data.p4k via StarBreaker {scdata.SB_VERSION}",
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

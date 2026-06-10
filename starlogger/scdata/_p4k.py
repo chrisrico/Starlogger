@@ -143,6 +143,21 @@ def find_p4k(log_path: str | None) -> str | None:
     return None
 
 
+# Every catalog extract lands in a fresh subdir of this, NOT the system ``/tmp``. On this
+# host (and many Linux setups) ``/tmp`` is ``tmpfs`` -- RAM-backed -- so a multi-GB DataCore
+# extract there competes with the game for memory, races the OOM killer, and can leave a
+# half-written record tree that silently yields a decimated catalog (the 2026-06-09 one-ship
+# ``ships.json``). ``DATA_DIR`` is real disk, so extracts are bounded by disk, not RAM.
+EXTRACT_TMP_DIR = os.path.join(DATA_DIR, "scratch")
+
+
+def scratch_dir(prefix: str) -> str:
+    """A fresh extraction work directory under ``DATA_DIR`` (never the system tmpfs ``/tmp``).
+    The caller owns cleanup (``shutil.rmtree`` in a ``finally``), as with ``mkdtemp``."""
+    os.makedirs(EXTRACT_TMP_DIR, exist_ok=True)
+    return tempfile.mkdtemp(prefix=prefix, dir=EXTRACT_TMP_DIR)
+
+
 def _run(sb: str, p4k: str, args: list[str], timeout: int = 1200) -> str:
     """Run StarBreaker at background priority so it yields to the game during a patch.
     Linux: `nice`/`ionice` prefix. Windows: IDLE_PRIORITY_CLASS (≈ nice -n19) plus

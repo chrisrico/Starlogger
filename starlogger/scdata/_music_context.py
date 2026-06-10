@@ -35,7 +35,7 @@ import struct
 import tempfile
 from collections import defaultdict
 
-from ._p4k import _run, ensure_binary
+from ._p4k import EXTRACT_TMP_DIR, _run, ensure_binary, scratch_dir
 from ._music import MUSIC_BANK, dump_music_hirc
 
 # The one ATL config that names every switch group + state (CryXmlB inside the p4k).
@@ -246,7 +246,8 @@ def build_context_labels(p4k: str, sb: str | None = None,
     parse its decision tree, turn each leaf path into labels, and propagate to descendant media.
     Pass ``hirc`` to reuse a dump the caller already paid for (else we fetch it)."""
     sb = sb or ensure_binary()
-    with tempfile.TemporaryDirectory() as wd:
+    os.makedirs(EXTRACT_TMP_DIR, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=EXTRACT_TMP_DIR) as wd:
         groups = parse_atl_names(extract_atl_xml(p4k, sb, wd))
     group_hashes, state_hashes = build_hash_index(groups)
 

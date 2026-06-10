@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import re
 import shutil
-import tempfile
 
 from ..patterns import camel_split
 from ._p4k import (
     _loc_text, ensure_binary, extract_localization, query_resource_types,
+    scratch_dir,
 )
 
 
@@ -95,7 +95,7 @@ def build_reference_data(p4k: str, sb: str | None = None) -> dict:
     names (guid->name + a clean trade-commodity list), the commodity category taxonomy
     (guid->category) and station names (code->name + a clean station list)."""
     sb = sb or ensure_binary()
-    workdir = tempfile.mkdtemp(prefix="starlogger-ref-")
+    workdir = scratch_dir("starlogger-ref-")
     try:
         loc = extract_localization(p4k, sb, workdir)
         rec = query_resource_types(p4k, sb)

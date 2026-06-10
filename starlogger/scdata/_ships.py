@@ -8,12 +8,11 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 
 from ._p4k import (
     SCU_M, _GRADE_LETTER, _deep_find, _deep_walk,
     _load_json, _loc_text, _run, ensure_binary,
-    extract_records, load_localization,
+    extract_records, load_localization, scratch_dir,
 )
 
 
@@ -606,12 +605,25 @@ def resolve_ship_groups(cls: str, p4k: str, sb: str, grid_index: dict,
     return scu, [{"x": 0, "z": 0, "grids": cells}], "deck" if deck else "synth"
 
 
+# A healthy run resolves an `entity loadout` for nearly every vehicle; the cargo geometry
+# (and thus whether a ship is kept) hinges on it. If more than this fraction of those
+# per-ship StarBreaker calls FAIL, the run is degraded (StarBreaker/p4k wedged, resource
+# pressure) and would silently drop the unresolved ships -- emitting a decimated catalog
+# that then overwrites a good one. Above the limit we raise instead, so the caller keeps the
+# previous catalog. (Root cause of the 2026-06-09 one-ship ships.json.)
+LOADOUT_FAILURE_LIMIT = 0.2
+
+
 def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                 progress=lambda msg: None) -> dict:
-    """Extract + resolve every cargo-carrying ship into {class: {scu, groups, ...}}."""
+    """Extract + resolve every cargo-carrying ship into {class: {scu, groups, ...}}.
+
+    Raises ``RuntimeError`` if more than ``LOADOUT_FAILURE_LIMIT`` of the per-ship loadout
+    extractions fail -- a degraded run must not return a partial catalog the caller would
+    save over a complete one."""
     sb = sb or ensure_binary()
     own_tmp = workdir is None
-    workdir = workdir or tempfile.mkdtemp(prefix="starlogger-scdata-")
+    workdir = workdir or scratch_dir("starlogger-scdata-")
     try:
         progress("extracting DataCore + localisation")
         recs = extract_records(workdir, p4k, sb)
@@ -622,6 +634,7 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                  f"{len(component_index)} component definitions")
 
         ships: dict[str, dict] = {}
+        loadout_failures = 0
         bases = base_ship_classes(recs)
         # Mining vehicles that live outside entities/spaceships and carry no cargo grid:
         # the ROC / ROC-DS (ground vehicles) and the ATLS GEO (an "actor" exosuit). The
@@ -640,6 +653,7 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                 loadout_text = _run(sb, p4k, ["entity", "loadout", cls], timeout=120)
             except (RuntimeError, subprocess.TimeoutExpired):
                 loadout_text = ""
+                loadout_failures += 1
             scu, groups, layout = resolve_ship_groups(cls, p4k, sb, grid_index, workdir,
                                                       loadout_text)
             # Keep cargo ships; also keep mining vehicles even with no cargo grid so the
@@ -669,6 +683,10 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
             # On a model+variant name clash keep the larger-capacity one.
             if cls not in ships or scu > ships[cls]["scu"]:
                 ships[cls] = entry
+        if vehicles and loadout_failures > LOADOUT_FAILURE_LIMIT * len(vehicles):
+            raise RuntimeError(
+                f"{loadout_failures}/{len(vehicles)} ship loadout extractions failed -- "
+                f"StarBreaker/p4k degraded; refusing to emit a partial ship catalog")
         progress(f"built {len(ships)} cargo ships")
         return ships
     finally:

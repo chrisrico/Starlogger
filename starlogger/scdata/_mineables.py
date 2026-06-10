@@ -6,13 +6,12 @@ import glob
 import os
 import re
 import shutil
-import tempfile
 
 from ..patterns import camel_split
 from ._p4k import (
     _component, _index_by_basename, _load_json, _loc_text,
     _record_token_name, _record_value, _ref_basename, ensure_binary,
-    extract_records, load_localization,
+    extract_records, load_localization, scratch_dir,
 )
 
 
@@ -181,7 +180,7 @@ def build_mineables_from_p4k(p4k: str, sb: str | None = None,
     install and build the mineable-rock list. Heavy (a full ``dcb extract``), so gated on
     a major game-version bump like ship cargo -- see ``catalogs.refresh_loop``."""
     sb = sb or ensure_binary()
-    workdir = tempfile.mkdtemp(prefix="starlogger-mineables-")
+    workdir = scratch_dir("starlogger-mineables-")
     try:
         progress("extracting DataCore for mineables")
         recs = extract_records(workdir, p4k, sb)
