@@ -182,7 +182,7 @@ function feasibilityHtml(rocks) {
   if (!m) return "";
   if (!lo.head) {
     return `<div class="mrow"><span class="mk">your ship</span>
-      <div class="mels"><button class="feas-setup" onclick="openShipEquip()">🔧 set up mining gear</button></div></div>`;
+      <div class="mels"><button class="feas-setup" onclick="openShipEquip()">⚙ set up mining gear</button></div></div>`;
   }
   const f = feasibility(m, lo.head, lo.modules);
   if (!f) return "";
@@ -202,7 +202,7 @@ function suggestHtml(mech, lo) {
   if (!s) return "";
   if (s.needSize) {
     return `<div class="mrow"><span class="mk"></span>
-      <div class="mels feas-suggest">💡 needs an <b>S${s.needSize}</b> mining ship${
+      <div class="mels feas-suggest">✦ needs an <b>S${s.needSize}</b> mining ship${
         s.needSize >= 2 ? " (e.g. MOLE)" : ""} — no S${Math.max(...lo.hardpoints, 0)} laser can crack it</div></div>`;
   }
   const { head, modules, result } = s.combo;
@@ -212,7 +212,7 @@ function suggestHtml(mech, lo) {
   const gear = sameHead ? `your ${head.name}${mods ? " + " + mods : ""}`
                         : [head.name, ...modules.map(x => x.name)].join(" + ");
   return `<div class="mrow"><span class="mk"></span>
-    <div class="mels feas-suggest">💡 try ${esc(gear)}
+    <div class="mels feas-suggest">✦ try ${esc(gear)}
       <span class="mn-dim">→ ${esc(result.label)}</span></div></div>`;
 }
 
@@ -406,7 +406,7 @@ function findResultHtml(r) {
     <td class="lt-num">${_chance(x.probability)}</td><td class="lt-num">${x.score}</td></tr>`).join("");
   const note = lo
     ? `<div class="mscan-note mn-dim">Ranked by minability with <b>${esc(lo.ship)}</b> — ${esc(lo.head.name)}${lo.modules.length ? " + " + lo.modules.map(m => esc(m.name)).join(", ") : ""}</div>`
-    : `<div class="mscan-note mn-dim">Pick a mining ship + gear (🔧) to rank these by minability.</div>`;
+    : `<div class="mscan-note mn-dim">Pick a mining ship + gear (⚙) to rank these by minability.</div>`;
   return `<div class="card">
     <div class="mscan"><span class="mscan-k">Scan for</span>
       <div class="mscan-vals">${sigs || '<span class="mn-dim">—</span>'}</div></div>
@@ -454,7 +454,7 @@ function indexResultHtml(minerals) {
   </tr>`).join("");
   const note = lo
     ? `<div class="mscan-note mn-dim">Ranked by minability with <b>${esc(lo.ship)}</b> — ${esc(lo.head.name)}${lo.modules.length ? " + " + lo.modules.map(x => esc(x.name)).join(", ") : ""}</div>`
-    : `<div class="mscan-note mn-dim">Pick a mining ship + gear (🔧) to rank these by minability.</div>`;
+    : `<div class="mscan-note mn-dim">Pick a mining ship + gear (⚙) to rank these by minability.</div>`;
   return `<div class="card"><h3><span>All minerals → source rocks</span><span class="scu">${minerals.length}</span></h3>` +
     note +
     logTable(
@@ -615,7 +615,7 @@ function recipeHtml(bp) {
   // Which missions reward this blueprint (from the DataCore reward pools), when known.
   const sources = (bp.sources || []).map(s => tag(s)).join(" ");
   const srcRow = sources
-    ? `<div class="mrow bp-source"><span class="mk">🎁 Rewarded by</span><div>${sources}</div></div>`
+    ? `<div class="mrow bp-source"><span class="mk">Rewarded by</span><div>${sources}</div></div>`
     : "";
   return `<div class="card"><h3><span>${esc(bp.name)}</span><span class="scu">${meta}</span></h3>
     ${srcRow}

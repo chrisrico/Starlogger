@@ -1,5 +1,5 @@
 "use strict";
-// Ship mining-equipment popup (the ⛏ button beside the ship selector). Lets the user fit a
+// Ship mining-equipment popup (the ⚙ button beside the ship selector). Lets the user fit a
 // mining laser HEAD + its consumable MODULES to the current mining ship; the choice persists
 // per ship via /api/mining-gear and feeds the Identify tab's rock-feasibility verdict.
 // Self-contained: owns the gear catalog cache + the saved-selection map, renders its own

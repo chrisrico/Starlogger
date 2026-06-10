@@ -305,7 +305,7 @@ function statusHtml(d) {
   // equipment category is mining gear, so the button shows only for a mining ship — extend the
   // gate (and the popup body) when other equipment types arrive.
   const equip = d.mining_ship
-    ? ` <button id="shipEquipBtn" class="ship-equip-btn" title="Ship equipment" aria-haspopup="dialog" onclick="openShipEquip()">🔧</button>`
+    ? ` <button id="shipEquipBtn" class="ship-equip-btn" title="Ship equipment" aria-haspopup="dialog" onclick="openShipEquip()">⚙</button>`
     : "";
   if (d.boarded) {
     // crewing another player's ship — show it badged as boarded, not "detected"
