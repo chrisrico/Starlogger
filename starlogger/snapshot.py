@@ -20,7 +20,7 @@ from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
 from .overrides import apply_override, get_overrides
 from .settings import get_settings
 from .ships import (
-    is_mining_ship, load_ship_cargo, ship_capacity, ship_grid, ship_layout,
+    is_mining_ship, load_ship_cargo, mining_hardpoints, ship_capacity, ship_grid, ship_layout,
 )
 from .tradeflags import lost_trade_ids
 from .state import State
@@ -331,6 +331,10 @@ def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None 
             # True in a mining vehicle (Prospector/MOLE/ROC…): the dashboard then swaps
             # the cargo-ops tabs (loading/manifest/unloading/routes) for the Mining tab.
             "mining_ship": is_mining_ship(effective_ship, state.ship_internal, cargo_db),
+            # The ship's mining-laser hardpoint sizes (Prospector [1], MOLE [2,2,2]); drives the
+            # Identify tab's "can't crack → try this gear" suggester (it can only fit heads that
+            # match a hardpoint, and flags when a rock needs a bigger mining ship entirely).
+            "mining_hardpoints": mining_hardpoints(effective_ship, state.ship_internal, cargo_db),
             "ship_cargo_updated": cargo_db.get("fetched_at"),
             "ship_cargo_version": cargo_db.get("game_version"),
             "game_version": state.game_version,

@@ -6,7 +6,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { feasibility } = require("../web/feasibility.js");
+const { feasibility, suggestCrack } = require("../web/feasibility.js");
 const fz = (...a) => feasibility(...a);
 
 // Real catalog numbers (verified vs Data.p4k): heads carry a `power` + resistance/window
@@ -62,4 +62,42 @@ test("trivial rocks (required power 1) grade Easy", () => {
 test("factors list always leads with the effective-power comparison", () => {
   const f = fz(aluminum, HELIX_S2, []);
   assert.match(f.factors[0], /^power 4080 → \d+ effective \(need 2500, \+\d+\)$/);
+});
+
+// ---- suggestCrack: "can't crack → try this gear" -------------------------- //
+
+const CATALOG = {
+  heads: [
+    { class: "helix_s1", name: "Helix I", size: 1, power: 3150, module_slots: 2, modifiers: { resistance: -30 } },
+    { class: "klein_s1", name: "Klein-S1", size: 1, power: 2520, module_slots: 0, modifiers: { resistance: -45 } },
+    { class: "helix_s2", name: "Helix II", size: 2, power: 4080, module_slots: 3, modifiers: { resistance: -30 } },
+  ],
+  modules: [
+    { class: "rime", name: "Rime", modifiers: { resistance: -24.8 } },
+    { class: "lifeline", name: "Lifeline", modifiers: { resistance: -15.5 } },
+    { class: "surge", name: "Surge", modifiers: { resistance: -15.5 } },
+    { class: "focus3", name: "Focus III", modifiers: { window_size: 40 } },  // no resistance: ignored
+  ],
+};
+
+test("suggestCrack proposes an in-size laser+module combo", () => {
+  // Bexalite (0.58) on an S1 ship: Helix I + Rime + Lifeline drops effRes enough to reach Hard.
+  const s = suggestCrack(bexalite, CATALOG.heads, CATALOG.modules, [1]);
+  assert.ok(s.combo);
+  assert.equal(s.combo.head.name, "Helix I");
+  assert.deepEqual(s.combo.modules.map(m => m.name), ["Rime", "Lifeline"]);
+  assert.equal(s.combo.result.tier, "hard");
+});
+
+test("suggestCrack flags when a rock needs a bigger mining ship", () => {
+  // Lindinium (0.80) can't be cracked by any S1 head even maxed -> needs an S2 hardpoint.
+  const s = suggestCrack(lindinium, CATALOG.heads, CATALOG.modules, [1]);
+  assert.equal(s.combo, undefined);
+  assert.equal(s.needSize, 2);
+});
+
+test("suggestCrack ignores non-resistance modules", () => {
+  // Only Rime/Lifeline/Surge can help; Focus III (window) is never part of a crack suggestion.
+  const s = suggestCrack(bexalite, CATALOG.heads, CATALOG.modules, [1]);
+  assert.ok(!s.combo.modules.some(m => m.name === "Focus III"));
 });

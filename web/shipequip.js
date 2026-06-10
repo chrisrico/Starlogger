@@ -28,6 +28,10 @@ export async function ensureGear() {
 const _headByClass = (cls) => (GEAR?.heads || []).find(h => h.class === cls) || null;
 const _moduleByClass = (cls) => (GEAR?.modules || []).find(m => m.class === cls) || null;
 
+// The full gear catalog (every head + module, both sizes), for the Identify tab's
+// "can't crack → try this gear" suggester. Empty until ensureGear() has run once.
+export function gearCatalog() { return GEAR || { heads: [], modules: [] }; }
+
 // The current mining ship's resolved loadout for the feasibility calc: the head + module
 // RECORDS (not class strings) the user picked. Returns null when there's no current ship.
 // `isMiningShip` lets the caller distinguish "miner, no gear set" from "not a miner".
@@ -38,6 +42,7 @@ export function currentLoadout() {
   return {
     ship: d.ship,
     isMiningShip: !!d.mining_ship,
+    hardpoints: d.mining_hardpoints || [],
     head: sel.head ? _headByClass(sel.head) : null,
     modules: (sel.modules || []).map(_moduleByClass).filter(Boolean),
   };

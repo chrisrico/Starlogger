@@ -8,10 +8,10 @@
 import { $, esc, num, val, th, tag, setHTML, logTable, tabBar, hintIcon } from "./dom.js";
 import { getJSON } from "./net.js";
 import { S } from "./state.js";
-import { ensureGear, currentLoadout } from "./shipequip.js";
-// feasibility() is a global from the classic /feasibility.js script (loaded before app.js),
-// shared with the Node unit test — same pattern as cargogrid.js's window.* helpers.
-const { feasibility } = window;
+import { ensureGear, currentLoadout, gearCatalog } from "./shipequip.js";
+// feasibility()/suggestCrack() are globals from the classic /feasibility.js script (loaded
+// before app.js), shared with the Node unit test — same pattern as cargogrid.js's window.*.
+const { feasibility, suggestCrack } = window;
 
 // ============================================================================ //
 // Mining tab — RS (radar signature) + composition tools. Self-contained and
@@ -183,7 +183,32 @@ function feasibilityHtml(rocks) {
   if (!f) return "";
   return `<div class="mrow"><span class="mk">your ship</span>
     <div class="mels">${feasPill(f)}
-      <span class="mn-dim feas-factors">${esc(f.factors.join(" · "))}</span></div></div>`;
+      <span class="mn-dim feas-factors">${esc(f.factors.join(" · "))}</span></div></div>`
+    + (f.tier === "no" ? suggestHtml(m, lo) : "");
+}
+
+// When the equipped gear can't crack a rock, suggest a laser/module combo that would (within
+// the ship's hardpoint sizes), or flag that it needs a bigger mining ship. "" when the catalog
+// hasn't loaded yet or nothing helps.
+function suggestHtml(mech, lo) {
+  const cat = gearCatalog();
+  if (!cat.heads.length) return "";                // gear catalog not fetched yet
+  const s = suggestCrack(mech, cat.heads, cat.modules, lo.hardpoints);
+  if (!s) return "";
+  if (s.needSize) {
+    return `<div class="mrow"><span class="mk"></span>
+      <div class="mels feas-suggest">💡 needs an <b>S${s.needSize}</b> mining ship${
+        s.needSize >= 2 ? " (e.g. MOLE)" : ""} — no S${Math.max(...lo.hardpoints, 0)} laser can crack it</div></div>`;
+  }
+  const { head, modules, result } = s.combo;
+  const sameHead = lo.head && head.class === lo.head.class;
+  const mods = modules.map(x => x.name).join(" + ");
+  // Same head you have -> point at the modules to swap in; otherwise name the whole combo.
+  const gear = sameHead ? `your ${head.name}${mods ? " + " + mods : ""}`
+                        : [head.name, ...modules.map(x => x.name)].join(" + ");
+  return `<div class="mrow"><span class="mk"></span>
+    <div class="mels feas-suggest">💡 try ${esc(gear)}
+      <span class="mn-dim">→ ${esc(result.label)}</span></div></div>`;
 }
 
 // ---- Identify: RS reading → rock class(es), cluster size, possible minerals ---- //

@@ -902,6 +902,8 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .feas-hard{color:var(--amber);background:rgba(var(--amber-rgb),.12);border-color:rgba(var(--amber-rgb),.4)}
 .feas-no{color:var(--red);background:rgba(var(--red-rgb),.12);border-color:rgba(var(--red-rgb),.4)}
 .feas-factors{font-family:var(--mono);font-size:11px}
+.feas-suggest{font-size:11.5px;color:var(--cyan)}
+.feas-suggest b{color:var(--text)}
 .mscan-note{font-size:11px;margin:2px 0 9px}
 .feas-setup{font-family:var(--display);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
   color:var(--cyan);background:rgba(var(--cyan-rgb),.1);border:1px solid rgba(var(--cyan-rgb),.35);

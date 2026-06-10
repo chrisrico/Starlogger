@@ -53,7 +53,42 @@
     return { tier, label, factors };
   }
 
+  const TIER_ORDER = { easy: 0, ok: 1, hard: 2, no: 3 };
+
+  // Given a rock the current gear can't crack, find gear that would. `heads`/`modules` are the
+  // full catalog; `allowedSizes` are the ship's mining-hardpoint sizes (it can only fit a head
+  // matching one). Resistance is the only crack lever, so we stack the best resistance-reducing
+  // modules — fewest first — onto each head. Returns:
+  //   { combo: { head, modules, result } }  a fittable laser+modules that cracks it (minimal), or
+  //   { needSize: <n> }                     when only a bigger hardpoint can (suggest that ship), or
+  //   null                                  when nothing in the catalog cracks it.
+  function suggestCrack(mech, heads, modules, allowedSizes) {
+    if (!mech || !heads || !heads.length) return null;
+    const allowed = new Set(allowedSizes || []);
+    const resMods = (modules || [])
+      .filter((m) => ((m.modifiers || {}).resistance || 0) < 0)
+      .sort((a, b) => a.modifiers.resistance - b.modifiers.resistance);   // most reduction first
+    // Fewest resistance modules that bring `head` to crackable; null if even maxed it can't.
+    const minimalCrack = (head) => {
+      const slots = head.module_slots || 0;
+      for (let k = 0; k <= slots; k++) {
+        const f = feasibility(mech, head, resMods.slice(0, k));
+        if (f && f.tier !== "no") return { head, modules: resMods.slice(0, k), result: f, count: k };
+      }
+      return null;
+    };
+    const rank = (a, b) =>
+      a.count - b.count                                                   // fewest modules
+      || TIER_ORDER[a.result.tier] - TIER_ORDER[b.result.tier]           // then the better verdict
+      || (b.head.power || 0) - (a.head.power || 0);                       // then the stronger head
+    const inSize = heads.filter((h) => allowed.has(h.size)).map(minimalCrack).filter(Boolean);
+    if (inSize.length) { inSize.sort(rank); return { combo: inSize[0] }; }
+    const sizes = heads.filter((h) => minimalCrack(h)).map((h) => h.size);
+    return sizes.length ? { needSize: Math.min(...sizes) } : null;
+  }
+
   global.feasibility = feasibility;
+  global.suggestCrack = suggestCrack;
   // Node (test runner) only; the `module` guard is false in a browser <script>.
-  if (typeof module !== "undefined" && module.exports) module.exports = { feasibility };
+  if (typeof module !== "undefined" && module.exports) module.exports = { feasibility, suggestCrack };
 })(typeof window !== "undefined" ? window : globalThis);
