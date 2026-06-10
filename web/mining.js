@@ -145,9 +145,9 @@ function mechHtml(rocks) {
   if (!m) return "";
   const bits = [];
   if (m.laser_power != null) bits.push(`laser ≥${num(m.laser_power)}`);
-  if (m.resistance != null) bits.push(`resistance ${m.resistance}`);
-  if (m.instability != null) bits.push(`instability ${m.instability}`);
-  if (m.window_size != null) bits.push(`window ${m.window_size}${m.window_max != null ? "–" + m.window_max : ""}`);
+  if (m.resistance != null) bits.push(`resistance ${m.resistance.toFixed(2)}`);
+  if (m.instability != null) bits.push(`instability ${num(Math.round(m.instability))}`);
+  if (m.window_thinness != null) bits.push(`window thinness ${m.window_thinness.toFixed(2)}`);
   if (m.mass != null) bits.push(`mass ${num(m.mass)}`);
   if (!bits.length) return "";
   return `<div class="mrow"><span class="mk">cracking</span>
@@ -399,13 +399,16 @@ export async function miningIndex() {
     setHTML(mres(), indexResultHtml(r.minerals || []));
   } catch (e) { setHTML(mres(), `<div class="empty">load failed</div>`); }
 }
-// A mineral's minability = the feasibility of its best (richest) source that carries
-// mechanics. Every source of a given mineral shares the same break difficulty in the data,
-// so the best source is representative.
+// A mineral's minability = the feasibility of its EASIEST source. Sources now differ in
+// break difficulty (a mixed asteroid is harder than the pure surface deposit of the same
+// ore), so we take the most-mineable one: if any source is crackable with this gear, the
+// mineral is obtainable.
 function mineralFeas(m, lo) {
   if (!lo) return null;
-  const mech = (m.rocks || []).map(x => x.mechanics).find(Boolean);
-  return mech ? feasibility(mech, lo.head, lo.modules) : null;
+  const fs = (m.rocks || [])
+    .map(x => x.mechanics && feasibility(x.mechanics, lo.head, lo.modules))
+    .filter(Boolean);
+  return fs.length ? fs.reduce((a, b) => (feasOrder(b) < feasOrder(a) ? b : a)) : null;
 }
 function indexResultHtml(minerals) {
   if (!minerals.length) return `<div class="empty">No mineral data.</div>`;

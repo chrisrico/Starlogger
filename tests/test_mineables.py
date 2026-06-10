@@ -124,39 +124,70 @@ def test_build_mineables_extracts_mechanics(tmp_path):
            "EntityClassDefinition.GraniteMineableRock_Titanium",
            _entity_mech(2000.0, "file://../mining/rockcompositionpresets/granite_titanium.json",
                         "file://../mining/miningglobalparamsship.json"))
-    # a rock with no mechanics components -> mechanics is None (rides alongside cleanly)
+    # a rock with no health/global-params components AND no resolvable composition -> mechanics
+    # is None (rides alongside cleanly). Points at a composition that doesn't exist.
     _write(os.path.join(ents, "plainmineablerock.json"),
            "EntityClassDefinition.PlainMineableRock",
-           _entity(2500.0, "file://../mining/rockcompositionpresets/granite_titanium.json"))
+           _entity(2500.0, "file://../mining/rockcompositionpresets/nonexistent.json"))
     _write(os.path.join(presets, "granite_titanium.json"),
            "MineableComposition.Granite_Titanium",
            _preset("@type_granite", 1,
                    [("file://../mineableelements/titanium_ore.json", 30.0, 70.0, 1.0)]))
-    _write(os.path.join(elems, "titanium_ore.json"), "MineableElement.Titanium_Ore", {})
+    # The per-material break difficulty lives HERE (not the shared global-params curve): a
+    # single-element rock blends to exactly its element's values.
+    _write(os.path.join(elems, "titanium_ore.json"), "MineableElement.Titanium_Ore",
+           {"_Type_": "MineableElement", "elementResistance": 0.5,
+            "elementInstability": 42.0, "elementOptimalWindowThinness": 1.5})
     _write(os.path.join(mining, "miningglobalparamsship.json"),
            "MiningGlobalParamsShip.MiningGlobalParamsShip",
+           # resistance/window/instability are NO LONGER read from here (shared across rocks);
+           # only mass + SCU/volume are genuine per-rock balance scalars.
            {"_Type_": "MiningGlobalParamsShip", "resistanceCurveFactor": 0.5,
-            "optimalWindowSize": 2.5, "optimalWindowMaxSize": 4.0,
-            # a struct in the real data; we surface its wave period as `instability`
-            "mineableInstabilityParams": {"_Type_": "MineableInstabilityParams",
-                                          "instabilityWavePeriod": 3.0,
-                                          "instabilityWaveVariance": 1.0},
-            "defaultMass": 100.0, "cSCUPerVolume": 0.08})
+            "optimalWindowSize": 2.5, "defaultMass": 100.0, "cSCUPerVolume": 0.08})
 
     by_cls = {r["class"]: r for r in scdata.build_mineables(root, {"type_granite": "Granite"})}
 
     m = by_cls["GraniteMineableRock_Titanium"]["mechanics"]
     assert m["laser_power"] == 150.0        # per-rock hardness (health component)
     assert "damage_strength" not in m       # Vec4 curve is dropped, not dumped raw
-    assert m["resistance"] == 0.5           # shared balance (global params, via ref)
-    assert m["window_size"] == 2.5
-    assert m["window_max"] == 4.0
-    assert m["instability"] == 3.0          # the instability struct's wave period
-    assert m["mass"] == 100.0
+    assert m["resistance"] == 0.5           # per-material blend (the element, via composition)
+    assert m["instability"] == 42.0         # element instability, abundance-weighted
+    assert m["window_thinness"] == 1.5      # element optimal-window thinness, blended
+    assert "window_size" not in m           # shared global-params curve no longer surfaced
+    assert m["mass"] == 100.0               # mass still a real per-rock balance scalar
     assert m["scu_per_volume"] == 0.08
     assert m["filled_factor"] == 0.85
 
     assert by_cls["PlainMineableRock"]["mechanics"] is None
+
+
+def test_mechanics_resistance_is_abundance_weighted_blend(tmp_path):
+    """The per-rock resistance is the composition's elements blended by mean-abundance x
+    probability -- a brutal namesake ore (lindinium 0.95) dominates a rock even at low %,
+    which is exactly why Lindinium reads 'Can't crack' and Aluminum 'Easy'."""
+    root = str(tmp_path)
+    ents = os.path.join(root, "libs/foundry/records/entities/mineable")
+    presets = os.path.join(root, "libs/foundry/records/mining/rockcompositionpresets")
+    elems = os.path.join(root, "libs/foundry/records/mining/mineableelements")
+
+    _write(os.path.join(ents, "asteroidmineablerock_lindinium.json"),
+           "EntityClassDefinition.AsteroidMineableRock_Lindinium",
+           _entity_mech(3000.0, "file://../mining/rockcompositionpresets/epic_lindinium.json",
+                        "file://../mining/miningglobalparamsship.json"))
+    # 75% lindinium (0.95) + 5% tungsten (-0.4): weighted = (75*0.95 + 5*-0.4)/80 = 0.866.
+    _write(os.path.join(presets, "epic_lindinium.json"),
+           "MineableComposition.Epic_Lindinium",
+           _preset("@lindinium", 2,
+                   [("file://../mineableelements/lindinium_ore.json", 50.0, 100.0, 1.0),
+                    ("file://../mineableelements/tungsten_ore.json", 0.0, 10.0, 1.0)]))
+    _write(os.path.join(elems, "lindinium_ore.json"), "MineableElement.Lindinium_Ore",
+           {"_Type_": "MineableElement", "elementResistance": 0.95})
+    _write(os.path.join(elems, "tungsten_ore.json"), "MineableElement.Tungsten_Ore",
+           {"_Type_": "MineableElement", "elementResistance": -0.4})
+
+    rock = {r["class"]: r for r in scdata.build_mineables(root, {})}[
+        "AsteroidMineableRock_Lindinium"]
+    assert rock["mechanics"]["resistance"] == 0.8656   # (75*0.95 + 5*-0.4) / 80, rounded
 
 
 def test_lookup_rs_carries_mechanics(tmp_path):

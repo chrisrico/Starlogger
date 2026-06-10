@@ -3,29 +3,43 @@
 // cargogrid.js: loaded via <script src> so it exposes `window.feasibility`, and also
 // module.exports'd so tests/feasibility.test.js can require() it in Node. No DOM, no deps.
 //
-// SC mining is a charge-window minigame, not a power>threshold gate, so this grades rather
-// than returns a boolean: the laser's extraction power must REACH the rock's required power
-// to crack it at all; then the EFFECTIVE resistance (the rock's resistance after the head +
-// modules' percentage modifiers, which stack additively in-game) and the combined optimal-
-// window adjustment grade how fiddly the crack is. `mech` is a rock's `mechanics`
-// (laser_power, resistance, window_size, instability…); `head`/`modules` are gear records
-// (each with a `power` and/or `modifiers` map). Returns
+// The model (validated against in-game results — Lindinium/Bexalite impossible, Torite
+// "very difficult", Aluminum easy, on a Helix I): a rock resists the laser, so the laser's
+// EFFECTIVE breaking power is its raw power scaled down by the rock's effective resistance:
+//
+//   effRes   = rock.resistance × (1 + Σ resistance-modifiers%)   (head + modules, additive)
+//   effPower = head.power × (1 − effRes)                         (resistance saps the beam)
+//   margin   = effPower − rock.required-power                    (required ≈ 2500; 1 = trivial)
+//
+// margin < 0 means the beam can't overcome the rock at all → "Can't crack". Above that, how
+// far the margin clears the requirement grades the crack from Hard → Workable → Easy. This is
+// why a negative-resistance rock (quartz −0.7) is trivially easy and Lindinium (0.8) is a wall.
+// `mech` is a rock's `mechanics` (laser_power, resistance, instability, window_thinness…);
+// `head`/`modules` are gear records (each a `power` and/or `modifiers` map). Returns
 //   { tier: 'easy'|'ok'|'hard'|'no', label, factors:[string…] }
 // or null when there's no mechanics or no head to judge.
 (function (global) {
+  // Fractions of the rock's required power that the margin must clear for each tier.
+  const HARD_AT = 0.30, EASY_AT = 0.55;
+
   function feasibility(mech, head, modules) {
     if (!mech || !head) return null;
     const round = (x) => Math.round(x);
     const gear = [head, ...(modules || [])];
     const sumPct = (key) => gear.reduce((a, g) => a + ((g.modifiers || {})[key] || 0), 0);
     const resPct = sumPct("resistance"), winPct = sumPct("window_size"), instPct = sumPct("instability");
-    const required = mech.laser_power || 0;          // 1 (trivial) or 2500 (hard) in the data
-    const margin = (head.power || 0) - required;
-    const factors = [`power ${round(head.power || 0)} vs ${round(required)} (${margin >= 0 ? "+" : ""}${round(margin)})`];
 
-    let effRes = null;
+    const power = head.power || 0;
+    const required = mech.laser_power || 2500;       // rock's full-charge power; default the std rock
+    const baseRes = mech.resistance != null ? mech.resistance : 0;
+    const effRes = +(baseRes * (1 + resPct / 100)).toFixed(3);
+    const effPower = power * (1 - effRes);
+    const margin = effPower - required;
+
+    const factors = [
+      `power ${round(power)} → ${round(effPower)} effective (need ${round(required)}, ${margin >= 0 ? "+" : ""}${round(margin)})`,
+    ];
     if (mech.resistance != null) {
-      effRes = +(mech.resistance * (1 + resPct / 100)).toFixed(3);
       factors.push(`resistance ${mech.resistance}${resPct ? ` → ${effRes} (${resPct > 0 ? "+" : ""}${resPct}%)` : ""}`);
     }
     if (winPct) factors.push(`window ${winPct > 0 ? "+" : ""}${winPct}%`);
@@ -33,10 +47,9 @@
 
     let tier, label;
     if (margin < 0) { tier = "no"; label = "Can't crack"; }
-    else if (effRes == null) { tier = margin >= 400 ? "easy" : "ok"; label = margin >= 400 ? "Easy" : "Workable"; }
-    else if (effRes >= 0.52 || winPct <= -50) { tier = "hard"; label = "Hard"; }     // hard rock / narrowed window
-    else if (effRes <= 0.38 && margin >= 400) { tier = "easy"; label = "Easy"; }
-    else { tier = "ok"; label = "Workable"; }
+    else if (margin < HARD_AT * required) { tier = "hard"; label = "Hard"; }
+    else if (margin < EASY_AT * required) { tier = "ok"; label = "Workable"; }
+    else { tier = "easy"; label = "Easy"; }
     return { tier, label, factors };
   }
 

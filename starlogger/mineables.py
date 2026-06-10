@@ -29,7 +29,7 @@ _cache = {"mtime": None, "data": {"rocks": [], "fetched_at": None, "game_version
 # Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
 # dropped fields), so installs rebuild the cache on update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
-EXTRACT_VERSION = 0
+EXTRACT_VERSION = 1   # v1: mechanics.resistance/instability/window now per-material, not the shared curve
 
 
 def save_mineables(rocks: list, game_version: str | None = None,
