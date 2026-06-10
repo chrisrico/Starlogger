@@ -5,25 +5,22 @@ Run: .venv/bin/python -m pytest tests/test_salvageables.py  (or plain `python te
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from starlogger import salvageables, scdata
+from scdata_helpers import write_record
 
 
 # --- tiny fixture mirroring the real DataCore record layout ----------------- #
 def _write(path: str, record_name: str, rs: float) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    value = {"Components": [
+    write_record(path, record_name, {"Components": [
         {"_Type_": "SSCSignatureSystemParams",
          "radarProperties": {"baseSignatureParams": {
              "signatures": [0.0, 0.0, 0.0, 0.0, rs, 0.0, 0.0, 0.0]}}},
-    ]}
-    with open(path, "w") as f:
-        json.dump({"_RecordName_": record_name, "_RecordValue_": value}, f)
+    ]})
 
 
 def _fixture_records(root: str) -> None:

@@ -10,7 +10,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from starlogger import patterns
 from starlogger.archive import build_session_trades
 from starlogger.state import State
 
@@ -52,11 +51,6 @@ def test_idempotent_refeed():
     st.feed(BUY)
     st.feed(BUY)  # log replay (restart / rotation) must not duplicate
     assert len(st.trades) == 1
-
-
-def test_friendly_shop_label():
-    assert patterns.friendly_shop("SCShop_ht_delta_shubin_m_store") == "Shubin"
-    assert patterns.friendly_shop("SCShop_Admin_lt_base_g") == "Admin"
 
 
 def test_build_session_trades_totals():

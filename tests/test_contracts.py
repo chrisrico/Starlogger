@@ -10,22 +10,16 @@ Run: .venv/bin/python -m pytest tests/test_contracts.py
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from starlogger import contracts, scdata
+from scdata_helpers import write_record
 
 
 # --- tiny fixture mirroring the real DataCore record layout ----------------- #
-def _write(path: str, record_name: str, value: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"_RecordName_": record_name, "_RecordValue_": value}, f)
-
-
 def _prop(token: str) -> dict:
     """One MissionProperty, named by its (string) extendedTextToken. The value struct is
     runtime-bound in the real records, so the parser ignores it."""
@@ -44,7 +38,7 @@ def _template(tokens: list, illegal: bool = False, type_ref: str | None = None) 
 def _missiontype(root: str, basename: str, loc_token: str, svg: str) -> None:
     """A MissionType record, as contractDisplayInfo.type points at (carries the localised
     type name + the in-p4k icon path)."""
-    _write(os.path.join(root, "libs/foundry/records/missiontype/pu", f"{basename}.json"),
+    write_record(os.path.join(root, "libs/foundry/records/missiontype/pu", f"{basename}.json"),
            f"MissionType.{basename}",
            {"_Type_": "MissionType", "LocalisedTypeName": loc_token, "svgIconPath": svg})
 
@@ -67,23 +61,23 @@ def _fixture_contracts(root: str) -> None:
     _missiontype(root, "hauling_solar", "@x", "UI/.../PU_mobiapp_icon_mission_delivery.svg")
     _missiontype(root, "local", "@x", "UI/.../PU_mobiapp_icon_mission_job.svg")
 
-    _write(os.path.join(tmpl, "haulcargo_atob.json"),
+    write_record(os.path.join(tmpl, "haulcargo_atob.json"),
            "ContractTemplate.HaulCargo_AtoB",
            _template(["Contractor", "CargoRouteToken", "CargoGradeToken",
                       "MissionMaxSCUSize", "ReputationRank"], type_ref="hauling_solar"))
-    _write(os.path.join(tmpl, "haulcargo_singletomulti4_waste.json"),
+    write_record(os.path.join(tmpl, "haulcargo_singletomulti4_waste.json"),
            "ContractTemplate.HaulCargo_SingleToMulti4_Waste",
            _template(["CargoGradeToken", "MissionMaxSCUSize", "SingleToMultiToken"],
                      illegal=True, type_ref="local"))
     # a non-cargo template with NO type ref — still parses; type/icon come back None
-    _write(os.path.join(tmpl, "assistshipincombat.json"),
+    write_record(os.path.join(tmpl, "assistshipincombat.json"),
            "ContractTemplate.AssistShipInCombat", _template(["TargetName"]))
 
-    _write(os.path.join(cm, "mixedcargo_generic.json"),
+    write_record(os.path.join(cm, "mixedcargo_generic.json"),
            "CargoManifest.MixedCargo_Generic",
            _manifest([("ResourceType.Nitrogen", 0.25),
                       ("ResourceType.Processed_Food", 0.6)]))
-    _write(os.path.join(cm, "illegalcargo_generic.json"),
+    write_record(os.path.join(cm, "illegalcargo_generic.json"),
            "CargoManifest.IllegalCargo_Generic",
            _manifest([("ResourceType.Slam_Unprocessed", 1.0)]))
 
@@ -122,7 +116,7 @@ def test_unmapped_mission_type_localises_and_slugs(tmp_path):
     a slug of its basename, so it still classifies + gets an icon path."""
     root = str(tmp_path)
     _missiontype(root, "escort", "@mt_escort", "UI/.../PU_mobiapp_icon_mission_escort.svg")
-    _write(os.path.join(root, "libs/foundry/records/contracts/contracttemplates/escort_x.json"),
+    write_record(os.path.join(root, "libs/foundry/records/contracts/contracttemplates/escort_x.json"),
            "ContractTemplate.Escort_X", _template(["TargetName"], type_ref="escort"))
     row = scdata.build_contract_taxonomy(root, {"mt_escort": "Escort"})[0]
     assert row["type"] == "Escort"        # from LocalisedTypeName via loc
@@ -144,7 +138,7 @@ def _contract_node(debug_name: str, template_base: str | None = None,
 
 def _generator(root: str, fname: str, record_name: str, contracts_list: list,
                intro: list | None = None) -> None:
-    _write(os.path.join(root, "libs/foundry/records/contracts/contractgenerator", fname),
+    write_record(os.path.join(root, "libs/foundry/records/contracts/contractgenerator", fname),
            record_name,
            {"_Type_": "ContractGenerator",
             "generators": [{"_Type_": "ContractGeneratorEntry",

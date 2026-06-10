@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from starlogger import ships
 from starlogger.state import State
 
-KNOWN = {"Hermes", "Ironclad", "Freelancer MAX"}   # all named as officially marketed
+KNOWN = {"Hermes", "Ironclad", "C1 Spirit", "Freelancer MAX"}   # all named as officially marketed
 
 
 def _chan(verb, ship, owner):
@@ -48,19 +48,7 @@ def test_board_other_players_ship(monkeypatch):
     st.feed(_chan("joined channel", "Drake Ironclad", "caged-danimal"))
     assert st.boarded_ship == "Ironclad"
     assert st.boarded_owner == "caged-danimal"
-
-
-def test_boarding_spirit_uses_official_name(monkeypatch):
-    # The comms channel carries the marketing name "Crusader C1 Spirit"; resolve_ship_name
-    # must strip the manufacturer and match the official "C1 Spirit" entry. This is pure
-    # state.py resolution logic, so the known-name set is seeded here. We deliberately do
-    # NOT read the on-disk ships.json master: tests must never touch the dev tree (or the
-    # live install). The "is the Spirit still named 'C1 Spirit' in the shipped master?"
-    # data-integrity question is a separate concern and not a job for the test suite.
-    monkeypatch.setattr(ships, "known_ship_names", lambda db=None: {"C1 Spirit", "Hermes"})
-    monkeypatch.setattr(ships, "ship_display_name", lambda ent, db=None: None)  # mfr-split fallback
-    st = State()
-    st.player = "WonkoTheSane1"
+    # marketing name with a multi-word model: strip "Crusader", match the official "C1 Spirit"
     st.feed(_chan("joined channel", "Crusader C1 Spirit", "caged-danimal"))
     assert st.boarded_ship == "C1 Spirit"
 

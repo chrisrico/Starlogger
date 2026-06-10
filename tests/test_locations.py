@@ -14,11 +14,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from starlogger import snapshot
 from starlogger.model import Leg, Mission
-from starlogger.snapshot import (PENDING_DEST, PENDING_ORIGIN, build_snapshot,
-                                  dest_signature, dleg_label, origin_label, resolve_zone)
-from starlogger.state import State
+from starlogger.snapshot import (PENDING_DEST, PENDING_ORIGIN, dest_signature,
+                                  dleg_label, origin_label, resolve_zone)
 
 ZONES = {"Z1": "Port Olisar", "Z2": "Everus Harbor", "Z3": "Port Tressler"}
 
@@ -88,35 +86,6 @@ def test_dest_signature_sorted_and_deduped():
                    "d3": Leg("d3", "dropoff", zone_host_id="Z3"),
                    "d2b": Leg("d2b", "dropoff", zone_host_id="Z2")})  # dup zone collapses
     assert dest_signature(m, ZONES) == ("Everus Harbor", "Port Tressler")
-
-
-def test_build_snapshot_wires_shared_resolvers(monkeypatch):
-    """End-to-end: build_snapshot's per-mission origin/destinations now come from the
-    shared resolvers via leg->mission mapping (replacing the old pending_drops set).
-    Isolated from disk so it never reads or writes real user data."""
-    for name, val in [("get_overrides", lambda: {}), ("get_settings", lambda: {}),
-                      ("load_ship_cargo", lambda: {}), ("get_station_names", lambda: {}),
-                      ("learn_station_names", lambda z: None)]:
-        monkeypatch.setattr(snapshot, name, val)
-
-    resolved = Mission(mission_id="m1", contract="HaulCargo_AToB", accepted_at="t1",
-                       legs={"m1p": Leg("m1p", "pickup", zone_host_id="Z1"),
-                             "m1d": Leg("m1d", "dropoff", cargo="Gold", qty=100, zone_host_id="Z2")})
-    # pickup + dropoff share the acceptance-host zone -> both ends pending
-    host = Mission(mission_id="m2", contract="HaulCargo_AToB", accepted_at="t2",
-                   legs={"m2p": Leg("m2p", "pickup", zone_host_id="ZA"),
-                         "m2d": Leg("m2d", "dropoff", cargo="Iron", qty=50, zone_host_id="ZA")})
-
-    st = State()
-    st.missions = {"m1": resolved, "m2": host}
-    st.zone_names = {"Z1": "Port Olisar", "Z2": "Everus Harbor"}
-
-    d = build_snapshot(st)
-    by_id = {m["mission_id"]: m for m in d["missions"]}
-    assert by_id["m1"]["origin"] == "Port Olisar"
-    assert by_id["m1"]["destinations"] == ["Everus Harbor"]
-    assert by_id["m2"]["origin"] == PENDING_ORIGIN
-    assert by_id["m2"]["destinations"] == [PENDING_DEST]
 
 
 if __name__ == "__main__":

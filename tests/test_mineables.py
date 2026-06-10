@@ -5,22 +5,16 @@ Run: .venv/bin/python -m pytest tests/test_mineables.py  (or plain `python tests
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from starlogger import mineables, scdata
+from scdata_helpers import write_record
 
 
 # --- tiny fixture mirroring the real DataCore record layout ----------------- #
-def _write(path: str, record_name: str, value: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"_RecordName_": record_name, "_RecordValue_": value}, f)
-
-
 def _entity(rs: float, comp_ref: str) -> dict:
     """An EntityClassDefinition value with the two components build_mineables reads."""
     return {"Components": [
@@ -46,29 +40,29 @@ def _fixture_records(root: str) -> None:
     presets_sub = os.path.join(presets, "asteroidshipmining")
     elems = os.path.join(root, "libs/foundry/records/mining/mineableelements")
 
-    _write(os.path.join(ents, "felsicmineablerock_titanium.json"),
+    write_record(os.path.join(ents, "felsicmineablerock_titanium.json"),
            "EntityClassDefinition.FelsicMineableRock_Titanium",
            _entity(4000.0, "file://../mining/rockcompositionpresets/felsicdeposit_titanium.json"))
-    _write(os.path.join(ents, "asteroidctypemineablerock_iron.json"),
+    write_record(os.path.join(ents, "asteroidctypemineablerock_iron.json"),
            "EntityClassDefinition.AsteroidCTypeMineableRock_Iron",
            _entity(4700.0, "file://../rockcompositionpresets/asteroidshipmining/ctype_iron.json"))
     # a placeholder rock with no RS -> must be skipped
-    _write(os.path.join(ents, "testmineablerock.json"),
+    write_record(os.path.join(ents, "testmineablerock.json"),
            "EntityClassDefinition.TestMineableRock",
            _entity(0.0, "file://nope.json"))
 
-    _write(os.path.join(presets, "felsicdeposit_titanium.json"),
+    write_record(os.path.join(presets, "felsicdeposit_titanium.json"),
            "MineableComposition.FelsicDeposit_Titanium",
            _preset("@type_felsic", 2, [
                ("file://../mineableelements/titanium_ore.json", 30.0, 70.0, 1.0),
                ("file://../mineableelements/beryl_raw.json", 30.0, 60.0, 0.9)]))
-    _write(os.path.join(presets_sub, "ctype_iron.json"),
+    write_record(os.path.join(presets_sub, "ctype_iron.json"),
            "MineableComposition.CType_Iron",
            _preset("@type_ctype", 2, [
                ("file://../../mineableelements/iron_ore.json", 30.0, 70.0, 1.0)]))
 
     for ore in ("titanium_ore", "beryl_raw", "iron_ore"):
-        _write(os.path.join(elems, ore + ".json"),
+        write_record(os.path.join(elems, ore + ".json"),
                "MineableElement." + "".join(w.capitalize() for w in ore.split("_")), {})
 
 
@@ -116,14 +110,14 @@ def test_skips_fps_and_groundvehicle_mineables(tmp_path):
     }
     els = set()
     for cls, (preset, parts) in rocks.items():
-        _write(os.path.join(ents, cls.lower() + ".json"), "EntityClassDefinition." + cls,
+        write_record(os.path.join(ents, cls.lower() + ".json"), "EntityClassDefinition." + cls,
                _entity(3000.0, f"file://../mining/rockcompositionpresets/{preset}.json"))
-        _write(os.path.join(presets, preset + ".json"), "MineableComposition." + preset.title(),
+        write_record(os.path.join(presets, preset + ".json"), "MineableComposition." + preset.title(),
                _preset("@" + preset, 1,
                        [(f"file://../mineableelements/{e}.json", lo, hi, 1.0) for e, lo, hi in parts]))
         els.update(e for e, _, _ in parts)
     for el in els:
-        _write(os.path.join(elems, el + ".json"),
+        write_record(os.path.join(elems, el + ".json"),
                "MineableElement." + "".join(w.capitalize() for w in el.split("_")), {})
 
     surviving = {r["class"] for r in scdata.build_mineables(root, {})}
@@ -154,25 +148,25 @@ def test_build_mineables_extracts_mechanics(tmp_path):
     mining = os.path.join(root, "libs/foundry/records/mining")
     elems = os.path.join(root, "libs/foundry/records/mining/mineableelements")
 
-    _write(os.path.join(ents, "granitemineablerock_titanium.json"),
+    write_record(os.path.join(ents, "granitemineablerock_titanium.json"),
            "EntityClassDefinition.GraniteMineableRock_Titanium",
            _entity_mech(2000.0, "file://../mining/rockcompositionpresets/granite_titanium.json",
                         "file://../mining/miningglobalparamsship.json"))
     # a rock with no health/global-params components AND no resolvable composition -> mechanics
     # is None (rides alongside cleanly). Points at a composition that doesn't exist.
-    _write(os.path.join(ents, "plainmineablerock.json"),
+    write_record(os.path.join(ents, "plainmineablerock.json"),
            "EntityClassDefinition.PlainMineableRock",
            _entity(2500.0, "file://../mining/rockcompositionpresets/nonexistent.json"))
-    _write(os.path.join(presets, "granite_titanium.json"),
+    write_record(os.path.join(presets, "granite_titanium.json"),
            "MineableComposition.Granite_Titanium",
            _preset("@type_granite", 1,
                    [("file://../mineableelements/titanium_ore.json", 30.0, 70.0, 1.0)]))
     # The per-material break difficulty lives HERE (not the shared global-params curve): a
     # single-element rock blends to exactly its element's values.
-    _write(os.path.join(elems, "titanium_ore.json"), "MineableElement.Titanium_Ore",
+    write_record(os.path.join(elems, "titanium_ore.json"), "MineableElement.Titanium_Ore",
            {"_Type_": "MineableElement", "elementResistance": 0.5,
             "elementInstability": 42.0, "elementOptimalWindowThinness": 1.5})
-    _write(os.path.join(mining, "miningglobalparamsship.json"),
+    write_record(os.path.join(mining, "miningglobalparamsship.json"),
            "MiningGlobalParamsShip.MiningGlobalParamsShip",
            # resistance/window/instability are NO LONGER read from here (shared across rocks);
            # only mass + SCU/volume are genuine per-rock balance scalars.
@@ -204,19 +198,19 @@ def test_mechanics_resistance_is_abundance_weighted_blend(tmp_path):
     presets = os.path.join(root, "libs/foundry/records/mining/rockcompositionpresets")
     elems = os.path.join(root, "libs/foundry/records/mining/mineableelements")
 
-    _write(os.path.join(ents, "asteroidmineablerock_lindinium.json"),
+    write_record(os.path.join(ents, "asteroidmineablerock_lindinium.json"),
            "EntityClassDefinition.AsteroidMineableRock_Lindinium",
            _entity_mech(3000.0, "file://../mining/rockcompositionpresets/epic_lindinium.json",
                         "file://../mining/miningglobalparamsship.json"))
     # 75% lindinium (0.95) + 5% tungsten (-0.4): weighted = (75*0.95 + 5*-0.4)/80 = 0.866.
-    _write(os.path.join(presets, "epic_lindinium.json"),
+    write_record(os.path.join(presets, "epic_lindinium.json"),
            "MineableComposition.Epic_Lindinium",
            _preset("@lindinium", 2,
                    [("file://../mineableelements/lindinium_ore.json", 50.0, 100.0, 1.0),
                     ("file://../mineableelements/tungsten_ore.json", 0.0, 10.0, 1.0)]))
-    _write(os.path.join(elems, "lindinium_ore.json"), "MineableElement.Lindinium_Ore",
+    write_record(os.path.join(elems, "lindinium_ore.json"), "MineableElement.Lindinium_Ore",
            {"_Type_": "MineableElement", "elementResistance": 0.95})
-    _write(os.path.join(elems, "tungsten_ore.json"), "MineableElement.Tungsten_Ore",
+    write_record(os.path.join(elems, "tungsten_ore.json"), "MineableElement.Tungsten_Ore",
            {"_Type_": "MineableElement", "elementResistance": -0.4})
 
     rock = {r["class"]: r for r in scdata.build_mineables(root, {})}[

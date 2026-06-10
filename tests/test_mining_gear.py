@@ -8,23 +8,17 @@ Fixtures are tiny synthetic DataCore records mirroring the real layout + field n
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from starlogger import mining_gear, scdata
+from scdata_helpers import write_record
 from starlogger.scdata._p4k import load_localization
 
 
 # --- fixture helpers -------------------------------------------------------- #
-def _write(path: str, record_name: str, value: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"_RecordName_": record_name, "_RecordValue_": value}, f)
-
-
 def _mod(value: float) -> dict:
     return {"_Type_": "FloatModifierMultiplicative", "showInUI": True, "value": value}
 
@@ -78,49 +72,49 @@ def _fixture_records(root: str) -> None:
     modules = os.path.join(root, "libs/foundry/records/entities/scitem/ships/utility/mining/miningarm")
 
     # A real S1 ship head (Arbor: power 1890, +25% resistance, +40% window, -35% instab, 1 slot).
-    _write(os.path.join(heads, "mining_laser_grin_arbor_s1.json"),
+    write_record(os.path.join(heads, "mining_laser_grin_arbor_s1.json"),
            "EntityClassDefinition.Mining_Laser_GRIN_Arbor_S1",
            _head_value(1, "@item_arbor_s1", 1890.0,
                        {"resistanceModifier": 25.0, "optimalChargeWindowSizeModifier": 40.0,
                         "laserInstability": -35.0}, slots=1, secondary=1850.0))
     # A S2 head with 3 module slots.
-    _write(os.path.join(heads, "mining_laser_thcn_helix_s2.json"),
+    write_record(os.path.join(heads, "mining_laser_thcn_helix_s2.json"),
            "EntityClassDefinition.Mining_Laser_THCN_Helix_S2",
            _head_value(2, "@item_helix_s2", 4080.0,
                        {"resistanceModifier": -30.0, "optimalChargeWindowSizeModifier": -40.0},
                        slots=3))
     # Out of scope: size-0 handheld head (excluded).
-    _write(os.path.join(heads, "mining_laser_shin_klein_s0.json"),
+    write_record(os.path.join(heads, "mining_laser_shin_klein_s0.json"),
            "EntityClassDefinition.Mining_Laser_SHIN_Klein_S0",
            _head_value(0, "@item_klein_s0", 0.8, {"laserInstability": 30.0}, slots=2))
     # Out of scope: the MPUV/ROC arm (size 1 but excluded by class name).
-    _write(os.path.join(heads, "mining_laser_mpuv_arm.json"),
+    write_record(os.path.join(heads, "mining_laser_mpuv_arm.json"),
            "EntityClassDefinition.Mining_Laser_MPUV_arm",
            _head_value(1, "@item_mpuv", 1850.0, {}, slots=1))
     # Out of scope: a test entity (excluded by the skip regex).
-    _write(os.path.join(heads, "mining_laser_grin_arbor_s1_test_active_1.json"),
+    write_record(os.path.join(heads, "mining_laser_grin_arbor_s1_test_active_1.json"),
            "EntityClassDefinition.Mining_Laser_GRIN_Arbor_S1_TEST_active_1",
            _head_value(1, "@item_test", 1890.0, {}, slots=1))
 
     # Modules: a tiered passive (Focus III), a yield-only passive (FLTR, no cracking mods),
     # an active consumable (Brandt), and a vehicle built-in that must be skipped.
-    _write(os.path.join(modules, "mining_modules_passive_focus_mk3.json"),
+    write_record(os.path.join(modules, "mining_modules_passive_focus_mk3.json"),
            "EntityClassDefinition.Mining_Modules_Passive_Focus_MK3", _module_value(
                "@item_focus_mk3", "thcn", {"optimalChargeWindowSizeModifier": 40.0}, charges=1))
-    _write(os.path.join(modules, "mining_modules_passive_fltr_mk1.json"),
+    write_record(os.path.join(modules, "mining_modules_passive_fltr_mk1.json"),
            "EntityClassDefinition.Mining_Modules_Passive_FLTR_MK1",
            _module_value("@item_fltr_mk1", "grin", {}, charges=1))
-    _write(os.path.join(modules, "mining_modules_active_brandt.json"),
+    write_record(os.path.join(modules, "mining_modules_active_brandt.json"),
            "EntityClassDefinition.Mining_Modules_Active_Brandt", _module_value(
                "@item_brandt", "scitemmanufacturer.misc",
                {"resistanceModifier": 15.5, "shatterdamageModifier": -30.0}, charges=5,
                power_mult=1.35))
     # A power-booster passive (Rieger C3: ×1.25 beam power = +25%, -1% window).
-    _write(os.path.join(modules, "mining_modules_passive_rieger_mk3.json"),
+    write_record(os.path.join(modules, "mining_modules_passive_rieger_mk3.json"),
            "EntityClassDefinition.Mining_Modules_Passive_Rieger_MK3", _module_value(
                "@item_rieger_mk3", "grin", {"optimalChargeWindowSizeModifier": -1.0},
                charges=1, power_mult=1.25))
-    _write(os.path.join(modules, "mining_modules_vehiclemod_rocds.json"),
+    write_record(os.path.join(modules, "mining_modules_vehiclemod_rocds.json"),
            "EntityClassDefinition.Mining_Modules_VehicleMod_ROCDS",
            _module_value("@item_rocds", "thcn", {}, charges=0))
 

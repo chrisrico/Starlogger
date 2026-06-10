@@ -82,6 +82,7 @@ const CATALOG = {
 
 test("suggestCrack proposes an in-size laser+module combo", () => {
   // Bexalite (0.58) on an S1 ship: Helix I + Rime + Lifeline drops effRes enough to reach Hard.
+  // The exact module set also pins that Focus III (window-only, margin 0) is never picked.
   const s = suggestCrack(bexalite, CATALOG.heads, CATALOG.modules, [1]);
   assert.ok(s.combo);
   assert.equal(s.combo.head.name, "Helix I");
@@ -94,12 +95,6 @@ test("suggestCrack flags when a rock needs a bigger mining ship", () => {
   const s = suggestCrack(lindinium, CATALOG.heads, CATALOG.modules, [1]);
   assert.equal(s.combo, undefined);
   assert.equal(s.needSize, 2);
-});
-
-test("suggestCrack ignores modules that don't move the margin", () => {
-  // Resistance cuts and power boosts can help; Focus III (window-only, margin 0) never can.
-  const s = suggestCrack(bexalite, CATALOG.heads, CATALOG.modules, [1]);
-  assert.ok(!s.combo.modules.some(m => m.name === "Focus III"));
 });
 
 test("a power booster is a valid crack lever, not just resistance", () => {

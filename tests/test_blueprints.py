@@ -5,20 +5,14 @@ Run: python3 -m pytest tests/test_blueprints.py
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from starlogger import blueprints, patterns, scdata
+from starlogger import blueprints, scdata
+from scdata_helpers import write_record
 from starlogger.mineables import _mineral_matches
-
-
-def _write(path: str, record_name: str, value: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"_RecordName_": record_name, "_RecordValue_": value}, f)
 
 
 def _resource_cost(resource: str, scu: float, min_q: int, slot: str) -> dict:
@@ -30,11 +24,11 @@ def _resource_cost(resource: str, scu: float, min_q: int, slot: str) -> dict:
 
 def _fixture(root: str) -> None:
     # the crafted item's entity, carrying the localised name
-    _write(os.path.join(root, "libs/foundry/records/entities/scitem/foo_scitem.json"),
+    write_record(os.path.join(root, "libs/foundry/records/entities/scitem/foo_scitem.json"),
            "EntityClassDefinition.Foo_SCItem",
            {"Components": [{"AttachDef": {"Localization": {"Name": "@item_Name_Foo"}}}]})
     # the blueprint that crafts it
-    _write(os.path.join(root, "libs/foundry/records/crafting/blueprints/crafting/weapons/bp_foo.json"),
+    write_record(os.path.join(root, "libs/foundry/records/crafting/blueprints/crafting/weapons/bp_foo.json"),
            "CraftingBlueprintRecord.BP_Foo",
            {"blueprint": {
                "_Type_": "CraftingBlueprint",
@@ -55,17 +49,17 @@ def _fixture(root: str) -> None:
         return {"_Type_": "BlueprintPoolRecord", "blueprintRewards": [
             {"_Type_": "BlueprintReward", "weight": 1.0,
              "blueprintRecord": f"file://./../../{bp_ref}"}]}
-    _write(os.path.join(root, "libs/foundry/records/crafting/blueprintrewards/blueprintmissionpools/bp_missionreward_test.json"),
+    write_record(os.path.join(root, "libs/foundry/records/crafting/blueprintrewards/blueprintmissionpools/bp_missionreward_test.json"),
            "BlueprintPoolRecord.BP_MissionReward_Test", _pool("x", "weapons/bp_foo.json"))
-    _write(os.path.join(root, "libs/foundry/records/crafting/blueprintrewards/xenothreat2rewards/bp_rewards_xenothreat2_test.json"),
+    write_record(os.path.join(root, "libs/foundry/records/crafting/blueprintrewards/xenothreat2rewards/bp_rewards_xenothreat2_test.json"),
            "BlueprintPoolRecord.BP_Rewards_XenoThreat2_Test", _pool("x", "weapons/bp_foo.json"))
     # a generator under the foxwellenforcement org dir that points at the first pool.
-    _write(os.path.join(root, "libs/foundry/records/contracts/contractgenerator/mercenary_guild/foxwellenforcement/foxwell_test.json"),
+    write_record(os.path.join(root, "libs/foundry/records/contracts/contractgenerator/mercenary_guild/foxwellenforcement/foxwell_test.json"),
            "ContractGenerator.Foxwell_Test",
            {"_Type_": "ContractGenerator", "blueprintPool":
             "file://./../../../../crafting/blueprintrewards/blueprintmissionpools/bp_missionreward_test.json"})
     # a placeholder-named blueprint that must be dropped
-    _write(os.path.join(root, "libs/foundry/records/crafting/blueprints/crafting/weapons/bp_ph.json"),
+    write_record(os.path.join(root, "libs/foundry/records/crafting/blueprints/crafting/weapons/bp_ph.json"),
            "CraftingBlueprintRecord.BP_PH",
            {"blueprint": {"_Type_": "CraftingBlueprint",
                           "category": {"_RecordName_": "BlueprintCategoryRecord.MissionItem"},
@@ -132,16 +126,6 @@ def test_blueprint_section_derivation():
     assert blueprints._keep_component({}) is True
     assert blueprints._keep_component({"grade": "A"}) is True
     assert blueprints._keep_component({"grade": "B"}) is False
-
-
-def test_camel_split():
-    # the simple lowercase->uppercase splitter shared by patterns + scdata name decoders;
-    # acronym runs are left intact by design (the category decoder has its own stricter split)
-    assert patterns.camel_split("PortOlisar") == "Port Olisar"
-    assert patterns.camel_split("ShubinMining") == "Shubin Mining"
-    assert patterns.camel_split("FPSWeapons") == "FPSWeapons"   # acronym run untouched
-    assert patterns.camel_split("plain") == "plain"
-    assert patterns.camel_split("") == ""
 
 
 def test_mineral_name_reconciliation():

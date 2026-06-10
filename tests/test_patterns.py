@@ -170,9 +170,12 @@ def test_ship_channel_and_vehicle_ctrl():
 # --------------------------------------------------------------------------- #
 
 def test_camel_split():
+    # acronym runs are left intact by design (the category decoder has its own stricter split)
     assert patterns.camel_split("PortOlisar") == "Port Olisar"
+    assert patterns.camel_split("ShubinMining") == "Shubin Mining"
     assert patterns.camel_split("FPSWeapons") == "FPSWeapons"  # acronym run left intact
     assert patterns.camel_split("already spaced") == "already spaced"
+    assert patterns.camel_split("") == ""
 
 
 def test_qt_system():
@@ -240,6 +243,7 @@ def test_major_version_and_clean_title():
 
 def test_friendly_shop_and_kiosk():
     assert patterns.friendly_shop("SCShop_ht_delta_shubin_m_store") == "Shubin"
+    assert patterns.friendly_shop("SCShop_Admin_lt_base_g") == "Admin"
     assert patterns.friendly_kiosk("kiosk_cordys_2_a-015") == "Cordys"
     assert patterns.friendly_shop("") == "Trade terminal"          # nothing meaningful -> fallback
 
