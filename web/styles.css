@@ -889,6 +889,10 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mn-pct{color:var(--ink-2)}
 .mn-prob{color:var(--amber)}
 .mn-dim{color:var(--ink-3)}
+/* Salvage targets share the Identify RS readout but carry no composition — an amber accent
+   (vs the rocks' cyan) marks them as a different kind of contact. */
+.mcand.salv{border-left:2px solid var(--amber)}
+.mcand.salv h3 .scu{color:var(--amber)}
 .mplan-srcs{padding:6px 16px 14px;display:flex;flex-direction:column;gap:10px}
 /* ship-vs-rock feasibility verdict pill + factors (Identify candidate card) */
 .feas{font-family:var(--display);font-size:10.5px;font-weight:600;letter-spacing:.1em;

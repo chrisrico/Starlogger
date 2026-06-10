@@ -31,6 +31,7 @@ def client(monkeypatch):
         "load_ship_cargo": lambda: {"ships": {}, "game_version": "4.8"},
         "load_mineables": lambda: {"count": 2, "game_version": "4.8", "rocks": [1, 2]},
         "lookup_rs": lambda rs: [{"class": "x"}],
+        "salvage_lookup": lambda rs: [{"kind": "ship", "label": "z"}],
         "decompose_rs": lambda rs: [{"combo": "y"}],
         "rock_signatures": lambda: [100.0, 200.0],
         "all_minerals": lambda: ["Quartz", "Titanium"],
@@ -139,6 +140,8 @@ def test_rock_lookup_validates_rs(client):
     assert client.get("/api/rock-lookup?rs=-5").status_code == 400
     j = client.get("/api/rock-lookup?rs=42").get_json()
     assert j["rs"] == 42 and j["candidates"] == [{"class": "x"}]
+    # salvage targets ride the same reading as a separate section
+    assert j["salvage"] == [{"kind": "ship", "label": "z"}]
 
 
 def test_rock_decompose_validates_rs(client):

@@ -81,7 +81,7 @@ export async function initMining() {
     // — both surface the feasibility/minability of the equipped ship.
     document.addEventListener("loadout-changed", () => {
       if (IDENTIFY_LAST) setHTML("mres-identify", identifyResultHtml(
-        IDENTIFY_LAST.v, IDENTIFY_LAST.candidates, IDENTIFY_LAST.combos));
+        IDENTIFY_LAST.v, IDENTIFY_LAST.candidates, IDENTIFY_LAST.combos, IDENTIFY_LAST.salvage));
       if (FIND_LAST) setHTML("mres-find", FIND_LAST.index
         ? indexResultHtml(FIND_LAST.index) : findResultHtml(FIND_LAST));
     });
@@ -215,7 +215,7 @@ function identifyHistHtml() {
        title="RS ${num(h.rs)} — ${esc(h.summary)}"><b>${num(h.rs)}</b><span>${esc(h.summary)}</span></button>`).join("");
 }
 // One-line gist of a reading's result, for the history chip.
-function identifySummary(candidates, combos) {
+function identifySummary(candidates, combos, salvage = []) {
   if (candidates.length) {
     const c = candidates[0];
     const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
@@ -225,6 +225,7 @@ function identifySummary(candidates, combos) {
     return `${c.count}× ${dep}${deps.length > 1 ? " +" + (deps.length - 1) : ""}`;
   }
   if (combos.filter(c => c.parts.length > 1).length) return "mixed cluster";
+  if (salvage.length) return salvage[0].label;
   return "no clean match";
 }
 export function identifyAgain(rs) {
@@ -265,13 +266,13 @@ export async function miningIdentify() {
       fetch(`/api/rock-lookup?rs=${v}`).then(r => r.json()),
       fetch(`/api/rock-decompose?rs=${v}`).then(r => r.json()),
     ]);
-    const candidates = look.candidates || [], combos = dec.combos || [];
-    // Only a valid reading (matches one or more rocks) is kept in the strip — a miss isn't
-    // recorded. A reading already in the history updates in place (re-running a chip mustn't
-    // reorder it); a new one is prepended (newest first).
-    const ok = candidates.length > 0 || combos.some(c => c.parts.length > 1);
+    const candidates = look.candidates || [], combos = dec.combos || [], salvage = look.salvage || [];
+    // Only a valid reading (matches a rock, a mixed cluster, or a salvage target) is kept in
+    // the strip — a miss isn't recorded. A reading already in the history updates in place
+    // (re-running a chip mustn't reorder it); a new one is prepended (newest first).
+    const ok = candidates.length > 0 || salvage.length > 0 || combos.some(c => c.parts.length > 1);
     if (ok) {
-      const entry = { rs: v, summary: identifySummary(candidates, combos) };
+      const entry = { rs: v, summary: identifySummary(candidates, combos, salvage) };
       const at = IDENTIFY_HISTORY.findIndex(h => h.rs === v);
       if (at >= 0) IDENTIFY_HISTORY[at] = entry;
       else IDENTIFY_HISTORY = [entry, ...IDENTIFY_HISTORY].slice(0, IDENTIFY_HIST_MAX);
@@ -280,12 +281,12 @@ export async function miningIdentify() {
     }
     // Clear + refocus so the next reading can be typed straight away.
     const inp = $("mi-rs"); if (inp) { inp.value = ""; inp.focus(); }
-    IDENTIFY_LAST = { v, candidates, combos };
-    setHTML(mres(), identifyResultHtml(v, candidates, combos));
+    IDENTIFY_LAST = { v, candidates, combos, salvage };
+    setHTML(mres(), identifyResultHtml(v, candidates, combos, salvage));
   } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
 }
-function identifyResultHtml(v, candidates, combos) {
-  if (!candidates.length && !combos.length)
+function identifyResultHtml(v, candidates, combos, salvage = []) {
+  if (!candidates.length && !combos.length && !salvage.length)
     return `<div class="empty">Nothing reads RS ${num(v)} as a clean cluster.</div>`;
   let html = "";
   if (candidates.length) {
@@ -316,7 +317,26 @@ function identifyResultHtml(v, candidates, combos) {
         `<td class="lt-num">${num(c.total)}</td><td class="lt-num">${c.count}</td></tr>`).join(""),
       "") + `</div>`;
   }
+  if (salvage.length) html += salvageSectionHtml(salvage);
   return html;
+}
+// Salvage targets reading at this RS — a wreck has no mineral composition, only an identity
+// (a whole-ship hull, or n flat-2000 debris panels), so it gets its own labelled section.
+function salvageSectionHtml(salvage) {
+  return `<div class="mres-h">Salvage targets</div>` + salvage.map(c => {
+    // For panels the part is noise ("Avenger Nose" vs "Avenger Wing" all read 2000), so list
+    // the distinct donor ships; a whole-ship hull just names itself.
+    const names = [...new Set((c.targets || []).map(t =>
+      c.kind === "ship" ? t.name : (t.ship || t.name)))];
+    const more = (c.targets || []).length >= 12 ? ' <span class="mn-dim">…</span>' : "";
+    return `<div class="card mcand salv">
+      <h3><span><b>${esc(c.label)}</b></span>
+          <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>
+      <div class="mcand-body"><div class="mrow">
+        <span class="mk">${c.kind === "ship" ? "ship hull" : "any of"}</span>
+        <div class="mels">${names.map(n => tag(n)).join(" ")}${more}</div>
+      </div></div></div>`;
+  }).join("");
 }
 
 // ---- Find: mineral → RS to scan for + ranked source rocks (+ browse all) ---- //

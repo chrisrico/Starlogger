@@ -27,6 +27,7 @@ from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .mining_gear import head_by_class, load_mining_gear, modules as gear_modules
+from .salvageables import salvage_lookup
 from .ships import load_ship_cargo, mining_hardpoints
 from .tradeflags import set_lost
 from .snapshot import build_snapshot
@@ -205,7 +206,9 @@ def create_app(state: State, log_path: str | None = None, presence=None,
             return jsonify({"ok": False, "error": "rs must be a number"}), 400
         if rs <= 0:
             return jsonify({"ok": False, "error": "rs must be positive"}), 400
-        return jsonify({"rs": rs, "candidates": lookup_rs(rs)})
+        # Salvage targets share the radar; the same reading can also be a wreck (ship hull
+        # or n debris panels), surfaced as a separate Identify section (no composition).
+        return jsonify({"rs": rs, "candidates": lookup_rs(rs), "salvage": salvage_lookup(rs)})
 
     @app.get("/api/rock-decompose")
     def api_rock_decompose():

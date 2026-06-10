@@ -41,6 +41,11 @@ MINEABLES_PATH = os.path.join(DATA_DIR, "mineables.json")
 # Mining equipment (laser heads + consumable modules), from the same full DataCore
 # extract as mineables -- the gear side of the rock-feasibility calc. See mining_gear.py.
 MINING_GEAR_PATH = os.path.join(DATA_DIR, "mining_gear.json")
+# Salvageable wrecks (ship-debris hulls + panels) and their radar signature, from the same
+# full DataCore extract as mineables. Salvage has no mineral composition -- only a signature
+# that identifies a target (whole-ship hull or n debris panels). Feeds the rock-lookup
+# Identify tab as a separate "salvage targets" section. See salvageables.py.
+SALVAGEABLES_PATH = os.path.join(DATA_DIR, "salvageables.json")
 # Crafting blueprints + their material requirements, from the same full DataCore
 # extract (links a blueprint -> the minerals it needs -> the rocks that yield them).
 # See blueprints.py.

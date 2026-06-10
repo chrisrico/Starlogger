@@ -43,9 +43,16 @@ dist/
 ships.json
 reference.json
 mineables.json
+salvageables.json
 blueprints.json
 contracts.json
 mission_icons/
+# Persistent full DataCore extract (records/*.json + global.ini), checked in nowhere. This is
+# the raw StarBreaker `dcb extract` output every build_* pass reads — kept on disk so the heavy
+# (~146 GB p4k) extraction runs ONCE, not per catalog rebuild. Pure copyrighted game data; the
+# pre-commit hook only inspects committed *.json, so THIS entry is its only guard. See NOTES.md
+# ("Persistent p4k extract"). NEVER commit or upload.
+/p4k/
 # the jukebox's decoded soundtrack: music.json carries the source marker (the pre-commit
 # hook also catches it), but the music/ oggs are non-JSON so THIS entry is their only guard.
 music.json
