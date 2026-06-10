@@ -123,6 +123,23 @@ def _load_or_create_token() -> str:
 # cross-origin (Origin) check below still applies to it.
 _TOKEN_EXEMPT = frozenset({"/api/closing"})
 
+# Loopback Host values a browser would send when the dashboard is reached the normal way.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _host_allowed(host_header: str) -> bool:
+    """Anti DNS-rebinding: accept a request only if its Host is loopback -- UNLESS the server was
+    deliberately bound to a non-loopback address (the user opted into LAN access, where an
+    arbitrary Host is expected and rebinding doesn't apply). A rebinding page at evil.com -> 127.0.0.1
+    sends Host: evil.com, so without this its Origin (evil.com) matches request.host (evil.com),
+    the same-origin gate passes, and a GET of the shell would hand it the embedded api-token. Host
+    is a browser-forbidden header, so the attacker can't forge it to `localhost`."""
+    hostname = (host_header or "").rsplit(":", 1)[0].strip("[]").lower()
+    if hostname in _LOOPBACK_HOSTS:
+        return True
+    bind = (settings_str("bind_host") or "").strip().lower()
+    return bind not in ("", "localhost", "127.0.0.1", "::1")
+
 
 def create_app(state: State, log_path: str | None = None, presence=None,
                update_state=None, music_state=None) -> Flask:
@@ -136,12 +153,19 @@ def create_app(state: State, log_path: str | None = None, presence=None,
     app = Flask(__name__, static_folder=WEB_DIR, static_url_path="")
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     app.config["API_TOKEN"] = _load_or_create_token()
+    # Cap request bodies so a local process / same-origin client can't OOM the server with an
+    # unbounded POST (every mutating route does request.get_json(force=True)). Flask 413s past this.
+    app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 
     @app.before_request
     def _enforce_guard():
-        # Read-only methods are unguarded: the only secret the server emits (the page token)
-        # is same-origin readable, so it can't be lifted cross-origin. State-changing methods
-        # must clear two gates that together kill drive-by CSRF and blind LAN abuse.
+        # DNS-rebinding gate first, and on EVERY method: the token is served on GET /, so a
+        # rebinding page reading it must be blocked before it ever reaches the shell.
+        if not _host_allowed(request.host):
+            return jsonify({"ok": False, "error": "host not allowed"}), 403
+        # Read-only methods are otherwise unguarded: the only secret the server emits (the page
+        # token) is same-origin readable, so it can't be lifted cross-origin. State-changing
+        # methods must clear two more gates that together kill drive-by CSRF and blind LAN abuse.
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return None
         # (1) Same-origin: a browser always stamps Origin on a cross-site write, so a mismatch

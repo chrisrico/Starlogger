@@ -445,6 +445,31 @@ def _git(repo: str, *args: str, check: bool = True) -> str | None:
     return out.stdout
 
 
+def _valid_update_remote(value: str) -> bool:
+    """The update remote is user-settable (Settings API / env) and flows verbatim into a git
+    argv with no `--` guard, so a value like `--upload-pack=<cmd>` or `ext::sh -c <cmd>` would
+    make git run a command. Rather than blocklist dangerous shapes, allow-list exactly what a
+    real update source looks like: the shipped default remote name, an explicit-scheme URL, an
+    scp-style ssh shorthand, or a filesystem path. Nothing else (no bare names, no options)."""
+    v = (value or "").strip()
+    if not v or "\n" in v or "\r" in v:
+        return False
+    if v == "origin":                                       # the repo's own configured remote (default)
+        return True
+    if re.match(r"(?i)^(?:https?|git|ssh|file)://[^\s]+$", v):  # URL with a known scheme
+        return True
+    if re.match(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\s]+$", v):  # scp-style: user@host:path
+        return True
+    return v.startswith(("/", "~", "./", "../"))            # filesystem path (abs / home / explicit-rel)
+
+
+def _valid_update_branch(value: str) -> bool:
+    """A git branch name. Constrained to safe ref characters and forbidden from starting with `-`
+    (option-injection) or containing `..`/`::` — so even via env it can't smuggle a git option."""
+    v = (value or "").strip()
+    return bool(re.match(r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$", v)) and ".." not in v
+
+
 def _update_remote() -> str:
     """The configured update source with a leading ``~`` expanded, so a filesystem-path remote
     (a local mirror, or a dev checkout like ``~/Code/starlogger``) resolves the way the shell
@@ -487,6 +512,10 @@ def _validate_update_source(remote: str, branch: str) -> str | None:
     non-git install can still save. Independent of working-tree cleanliness, unlike _repo_ready."""
     if not os.path.isdir(os.path.join(BASE_DIR, ".git")):
         return None
+    if not _valid_update_remote(remote):
+        return "Update remote must be a URL or a file path."
+    if not _valid_update_branch(branch):
+        return f"Branch “{branch}” isn't a valid branch name."
     refs = _git(BASE_DIR, "ls-remote", "--heads", remote, branch, check=False)
     if refs is None:
         return f"Couldn't reach update remote “{remote}” — check the name or URL."
@@ -532,6 +561,8 @@ def _fetch_target(repo: str, remote: str, branch: str) -> tuple[str, str] | None
     -- which silently turned a dev checkout (the tracker is run straight from its source tree)
     into a 1-commit-deep shallow repo. So a full clone always gets a normal fetch, which can
     never introduce shallowness; an already-shallow install stays shallow."""
+    if not _valid_update_remote(remote) or not _valid_update_branch(branch):
+        return None                           # unsafe configured ref -> never reaches git; updates disabled
     fetch = ["fetch", "--quiet", remote, branch]
     if _is_shallow(repo):
         fetch[1:1] = ["--depth", "1"]

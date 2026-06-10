@@ -262,5 +262,16 @@ def test_fastshutdown_archives_once_not_twice():
     assert archived == [1]
 
 
+def test_oversized_line_is_skipped():
+    """A line larger than the cap is corrupt/hostile -> skipped before any pattern runs, so it
+    can't amplify a regex DoS. A normal line still parses. Locks the audit fix (log-line DoS)."""
+    st = State()
+    huge = "<2026-06-06T00:00:00.000Z> " + "A" * (State._MAX_LINE + 1) + "\n"
+    st.feed(huge)                                    # must not raise / hang / record anything
+    assert st.last_event_ts is None
+    st.feed(_pu("2026-06-06T01:00:00.000Z"))         # an in-bounds line still works
+    assert st.last_event_ts == "2026-06-06T01:00:00.000Z"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

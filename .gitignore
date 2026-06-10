@@ -1,5 +1,6 @@
-# virtualenv + bytecode
-.venv/
+# virtualenv + bytecode (match the dir AND a symlink named the same, e.g. a worktree's linked venv)
+.venv
+.venv-shot
 __pycache__/
 *.pyc
 

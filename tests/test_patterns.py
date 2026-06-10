@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -284,3 +285,14 @@ def test_decode_location(monkeypatch):
     # vaguer orbital code -> body only, not a station
     assert patterns.decode_location("RR_CRU_LEO") == ("Crusader", False)
     assert patterns.decode_location("Garbage") == (None, False)
+
+
+def test_qt_patterns_are_not_quadratic():
+    """The QT ship token is bounded so a long hostile line can't backtrack quadratically.
+    A ~64 KB line that lures the pattern (contains CSCItemNavigation) but never matches must
+    return fast. Pre-fix this took tens of seconds; locks the audit fix (regex DoS)."""
+    line = "x_" * 32000 + "CSCItemNavigation::CalculateRoute|nope"
+    for rx in (patterns.QT_ROUTE, patterns.QT_FUEL, patterns.QT_ARRIVED):
+        t0 = time.perf_counter()
+        assert rx.search(line) is None
+        assert time.perf_counter() - t0 < 1.0, f"{rx.pattern[:30]} too slow"

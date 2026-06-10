@@ -119,7 +119,13 @@ class State:
                 self.logged_in = False
 
     # -- ingest ---------------------------------------------------------- #
+    # Real Game.log lines are a single event, far under this; a longer line is corrupt or
+    # hostile. Skip it so no pattern runs over an attacker-sized string (DoS backstop).
+    _MAX_LINE = 64 * 1024
+
     def feed(self, line: str) -> None:
+        if len(line) > self._MAX_LINE:
+            return
         ts_m = patterns.TS.search(line)
         ts = ts_m.group("ts") if ts_m else None
 

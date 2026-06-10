@@ -80,3 +80,26 @@ def test_closing_beacon_is_exempt_from_token(app):
     # navigator.sendBeacon can't set headers; forging /api/closing only shortens the idle
     # grace, so it's intentionally token-exempt.
     assert app.test_client().post("/api/closing").status_code == 200
+
+
+def test_loopback_host_is_allowed(app):
+    # The normal way in: Host is localhost/127.0.0.1 (with or without a port).
+    for host in ("localhost", "127.0.0.1", "127.0.0.1:7384", "[::1]:7384"):
+        assert app.test_client().get("/", headers={"Host": host}).status_code == 200
+
+
+def test_nonloopback_host_is_rejected_when_bound_loopback(app):
+    # Anti DNS-rebinding: a rebinding page at evil.example -> 127.0.0.1 sends Host: evil.example;
+    # since the server is bound to loopback (default), reject it BEFORE it can read the token
+    # off GET /. Without this, its Origin==Host would have sailed through the same-origin gate.
+    r = app.test_client().get("/", headers={"Host": "evil.example"})
+    assert r.status_code == 403
+    # and it must not be able to read the shell/token
+    assert b"api-token" not in r.data
+
+
+def test_nonloopback_host_allowed_when_bound_to_lan(app, monkeypatch):
+    # If the user deliberately binds to a non-loopback address, an arbitrary Host is expected
+    # (rebinding doesn't apply), so the guard stands down.
+    monkeypatch.setattr(server, "settings_str", lambda key: "0.0.0.0" if key == "bind_host" else "")
+    assert app.test_client().get("/", headers={"Host": "192.168.1.50:7384"}).status_code == 200

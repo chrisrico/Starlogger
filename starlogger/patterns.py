@@ -178,16 +178,20 @@ SHUTDOWN = re.compile(r"CCIGBroker::FastShutdown")
 #   …RSI_Hermes_<eid>[<eid>]|CSCItemNavigation::CalculateRoute|Projected Start Location
 #     is Stanton Gateway for route to destination pyro3 …[QuantumTravel]
 #   …RSI_Hermes_<eid>[…]|CSCItemNavigation::OnQuantumDriveArrived|Quantum Drive has arrived…
+# The ship token is bounded ({0,63}) so the lazy match can't backtrack quadratically: the `_`
+# lives in BOTH the char class and the literal `_\d+[..]` separator, so an unbounded `+?` over a
+# long hostile line is O(n^2). A real ship entity token is short, so the cap is invisible to
+# matching but makes the worst case linear. (Backstopped by a line-length cap in State.feed.)
 QT_ROUTE = re.compile(
-    r"(?P<ship>[A-Za-z][A-Za-z0-9_]+?)_\d+\[\d+\]\|CSCItemNavigation::CalculateRoute\|"
+    r"(?P<ship>[A-Za-z][A-Za-z0-9_]{0,63}?)_\d+\[\d+\]\|CSCItemNavigation::CalculateRoute\|"
     r"Projected Start Location is (?P<frm>.+?) for route to destination (?P<to>\S+)"
 )
 QT_ARRIVED = re.compile(
-    r"(?P<ship>[A-Za-z][A-Za-z0-9_]+?)_\d+\[\d+\]\|CSCItemNavigation::OnQuantumDriveArrived"
+    r"(?P<ship>[A-Za-z][A-Za-z0-9_]{0,63}?)_\d+\[\d+\]\|CSCItemNavigation::OnQuantumDriveArrived"
 )
 # Same CalculateRoute event, second line: the QT fuel estimate for the jump.
 QT_FUEL = re.compile(
-    r"(?P<ship>[A-Za-z][A-Za-z0-9_]+?)_\d+\[\d+\]\|CSCItemNavigation::CalculateRoute\|"
+    r"(?P<ship>[A-Za-z][A-Za-z0-9_]{0,63}?)_\d+\[\d+\]\|CSCItemNavigation::CalculateRoute\|"
     r"Successfully calculated route to (?P<to>\S+) fuel estimate (?P<fuel>[0-9.]+)"
 )
 

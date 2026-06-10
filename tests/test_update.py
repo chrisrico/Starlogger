@@ -149,13 +149,37 @@ def test_validate_update_source(monkeypatch):
     ret["v"] = ""
     assert "doesn't exist" in tracker._validate_update_source("origin", "nope")
     ret["v"] = None
-    assert "reach" in tracker._validate_update_source("bogus-remote", "main")
+    # A well-formed but unreachable remote (a URL) gets as far as ls-remote -> "reach".
+    assert "reach" in tracker._validate_update_source("https://example.com/x.git", "main")
+
+
+def test_validate_update_source_rejects_injection(monkeypatch):
+    """The remote/branch flow into a git argv with no `--`, so the validator must reject
+    option-injection and ext:: transport BEFORE git runs. _git is stubbed to blow up if reached,
+    proving rejection happens pre-git. Locks the audit fix (git option-injection -> RCE)."""
+    monkeypatch.setattr(tracker.os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(tracker, "_git", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("git ran")))
+    for bad in ("--upload-pack=touch /tmp/pwn", "ext::sh -c id", "-oProxyCommand=x", "bogus-remote"):
+        assert "URL or a file path" in tracker._validate_update_source(bad, "main")
+    # A bad branch is also rejected before git, even with a valid remote.
+    assert "valid branch" in tracker._validate_update_source("origin", "--output=/tmp/x")
+    assert "valid branch" in tracker._validate_update_source("origin", "a::b")
+    # Sanity: legitimate shapes pass the validator (then hit the stubbed git, which we don't reach
+    # here because they'd call it -- so just assert the validators directly).
+    assert tracker._valid_update_remote("origin")
+    assert tracker._valid_update_remote("https://github.com/u/r.git")
+    assert tracker._valid_update_remote("/home/u/Code/starlogger")
+    assert tracker._valid_update_remote("~/Code/starlogger")
+    assert tracker._valid_update_remote("git@github.com:u/r.git")
+    assert not tracker._valid_update_remote("bogus-remote")
+    assert tracker._valid_update_branch("main") and tracker._valid_update_branch("feat/x-1")
+    assert not tracker._valid_update_branch("-x") and not tracker._valid_update_branch("a..b")
 
 
 def test_validate_update_source_skipped_off_git(monkeypatch):
     """Not a git clone -> nothing to validate, so a non-git install can still save."""
     monkeypatch.setattr(tracker.os.path, "isdir", lambda p: False)
-    assert tracker._validate_update_source("whatever", "x") is None
+    assert tracker._validate_update_source("https://example.com/x.git", "x") is None
 
 
 def _record_git(monkeypatch, shallow: bool):
