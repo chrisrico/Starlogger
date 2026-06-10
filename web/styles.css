@@ -91,20 +91,22 @@ header,main,footer{position:relative;z-index:2}
   border-bottom:1px solid var(--line);overflow:hidden}
 .sb-brand h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* ---- vertical nav buttons (one per screen): icon + label ---- */
+/* ---- vertical nav links (one per screen): icon + label. Real <a href="/tab"> anchors so
+   each screen is a shareable/middle-clickable URL; app.js intercepts plain clicks for SPA
+   nav (see routing there). ---- */
 nav{display:flex;flex-direction:column;gap:2px;padding:12px 10px;flex:1 1 auto;
   overflow-y:auto;overflow-x:hidden}
-nav button{position:relative;display:flex;align-items:center;gap:13px;width:100%;text-align:left;
-  background:transparent;color:var(--ink-2);border:0;border-radius:4px;
+nav a{position:relative;display:flex;align-items:center;gap:13px;width:100%;text-align:left;
+  background:transparent;color:var(--ink-2);border:0;border-radius:4px;text-decoration:none;
   padding:11px 12px;cursor:pointer;font-family:var(--display);font-size:13px;font-weight:600;
   letter-spacing:.1em;text-transform:uppercase;transition:color .15s,background .15s}
 .ic{flex:none;width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;
   stroke-linecap:round;stroke-linejoin:round}
-nav button .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-nav button:hover{color:var(--ink);background:rgba(var(--cyan-rgb),.06)}
-nav button.active{color:var(--cyan);background:rgba(var(--cyan-rgb),.10)}
-nav button.active .ic{filter:drop-shadow(0 0 6px rgba(var(--cyan-rgb),.55))}
-nav button.active::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;
+nav a .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+nav a:hover{color:var(--ink);background:rgba(var(--cyan-rgb),.06)}
+nav a.active{color:var(--cyan);background:rgba(var(--cyan-rgb),.10)}
+nav a.active .ic{filter:drop-shadow(0 0 6px rgba(var(--cyan-rgb),.55))}
+nav a.active::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;
   border-radius:0 2px 2px 0;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
 
 /* ---- collapse toggle (pinned at the sidebar foot) ---- */
@@ -157,10 +159,10 @@ nav button.active::before{content:"";position:absolute;left:0;top:7px;bottom:7px
 .sidebar.collapsed{flex-basis:62px;width:62px}
 .sidebar.collapsed .sb-brand{justify-content:center;padding-left:0;padding-right:0}
 .sidebar.collapsed .sb-brand h1,
-.sidebar.collapsed nav button .lbl,
+.sidebar.collapsed nav a .lbl,
 .sidebar.collapsed .sb-settings .lbl,
 .sidebar.collapsed .sb-collapse .lbl{display:none}
-.sidebar.collapsed nav button{justify-content:center;gap:0;padding-left:0;padding-right:0}
+.sidebar.collapsed nav a{justify-content:center;gap:0;padding-left:0;padding-right:0}
 .sidebar.collapsed .sb-settings,
 .sidebar.collapsed .sb-collapse{justify-content:center;padding-left:0;padding-right:0}
 .sidebar.collapsed .sb-chevron{transform:rotate(180deg)}

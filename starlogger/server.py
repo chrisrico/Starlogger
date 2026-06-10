@@ -118,6 +118,20 @@ def create_app(state: State, log_path: str | None = None, presence=None,
     def index():
         return send_from_directory(WEB_DIR, "index.html")
 
+    @app.errorhandler(404)
+    def spa_fallback(err):
+        # The dashboard is path-routed (/contracts, /cargo, /plan, /archive, /mining) via the
+        # History API, so a direct hit / reload / new-tab on one of those paths has no file on
+        # disk and the static handler 404s — serve the SPA shell and let app.js route from the
+        # URL. Real misses stay 404s: only GETs, never /api/* (a missing endpoint is a bug),
+        # and only extension-less paths (a missing /styles.css or /foo.js must surface, not
+        # silently return HTML).
+        path = request.path
+        if (request.method == "GET" and not path.startswith("/api/")
+                and "." not in path.rsplit("/", 1)[-1]):
+            return send_from_directory(WEB_DIR, "index.html")
+        return err
+
     @app.get("/mission-icons/<path:name>")
     def mission_icon(name):
         # The game's own mobiGlas mission-type icons, extracted from the p4k into the

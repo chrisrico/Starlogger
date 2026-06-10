@@ -143,8 +143,9 @@ function connectStream() {
   // the baseline; any later frame with a different hash -> reload to run the new code. The
   // server re-sends it both on reconnect (a relaunch replaced the build on this port) and
   // mid-stream (the frontend files changed under a still-running tracker), so a stale tab
-  // refreshes itself either way. (The active tab survives via location.hash.) An unchanged
-  // hash is silent -- a server-only relaunch never reloads.
+  // refreshes itself either way. (The active tab survives the reload via the URL path — the
+  // server's SPA fallback re-serves index.html for /<tab>, which boots back to that tab.) An
+  // unchanged hash is silent -- a server-only relaunch never reloads.
   es.addEventListener("meta", (e) => {
     let m; try { m = JSON.parse(e.data); } catch (_) { return; }
     if (!m || !m.assets) return;

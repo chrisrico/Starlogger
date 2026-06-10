@@ -93,6 +93,11 @@ export async function initMining() {
 // Switch sub-tabs by toggling visibility — never rebuild, so each sub keeps its state.
 export function miningSub(sub) {
   MINING_SUB = sub;
+  // Reflect into the URL #hash (/mining#identify|#find|#plan) so the active tool is a
+  // shareable deep link, matching the Cargo sub-tab scheme in app.js. replaceState only —
+  // toggling tools shouldn't grow the back stack. (Only meaningful on the Mining page, the
+  // sole place this runs.)
+  if (location.hash.slice(1) !== sub) history.replaceState(null, "", location.pathname + "#" + sub);
   if (!$("msub-" + sub)) { renderMiningShell(); return; }
   document.querySelectorAll("#mining .arch-tab").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
   document.querySelectorAll("#mining .msub").forEach(el => el.classList.toggle("hide", el.id !== "msub-" + sub));

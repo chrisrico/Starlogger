@@ -80,6 +80,24 @@ def test_index_serves_html(client):
     assert r.status_code == 200
 
 
+def test_spa_fallback_serves_shell_for_path_routed_pages(client):
+    # The dashboard is path-routed via the History API; a direct hit / reload on one of the
+    # primary screens has no file on disk, so the server must serve index.html and let app.js
+    # route from the URL. (The shell is the same bytes the "/" route serves.)
+    shell = client.get("/").data
+    for path in ("/contracts", "/cargo", "/plan", "/archive", "/mining"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert r.data == shell, path
+
+
+def test_spa_fallback_leaves_real_misses_as_404(client):
+    # The fallback must NOT mask genuine misses: a missing asset (has an extension) and a
+    # missing API endpoint (under /api/) both stay 404 rather than silently returning HTML.
+    assert client.get("/does-not-exist.js").status_code == 404
+    assert client.get("/api/nope").status_code == 404
+
+
 def test_state_passes_trade_flag(client, monkeypatch):
     seen = {}
     monkeypatch.setattr(server, "build_snapshot", lambda st, **kw: seen.update(kw) or {"ok": 1})

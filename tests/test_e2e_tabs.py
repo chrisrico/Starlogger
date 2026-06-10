@@ -106,7 +106,7 @@ def test_each_tab_renders_without_errors(page, populated_server):
     # Mining is intentionally excluded: its nav button stays hidden unless a mining ship is
     # active (this seeded state is cargo-hauling), so it isn't clickable here by design.
     for tab in ("contracts", "cargo", "plan", "archive"):
-        page.click(f'#nav button[data-tab="{tab}"]')
+        page.click(f'#nav a[data-tab="{tab}"]')
         page.wait_for_selector(f"#{tab}:not(.hide)")
     assert errors == [], errors
 
@@ -117,8 +117,8 @@ def test_mining_tab_renders_in_mining_mode(page, populated_server):
     confirm the tab and its tools shell render with no errors."""
     errors = _boot(page, populated_server)
     page.evaluate("window.setMode('mining')")
-    page.wait_for_selector('#nav button[data-tab="mining"]:not(.hide)')
-    page.click('#nav button[data-tab="mining"]')
+    page.wait_for_selector('#nav a[data-tab="mining"]:not(.hide)')
+    page.click('#nav a[data-tab="mining"]')
     page.wait_for_function("() => document.querySelector('#mining:not(.hide)') "
                            "&& document.querySelector('#mining').children.length > 0")
     assert errors == [], errors
@@ -127,7 +127,7 @@ def test_mining_tab_renders_in_mining_mode(page, populated_server):
 def test_contracts_editor_opens_via_inline_handler(page, populated_server):
     """Drives editMission (a bridged inline handler) and confirms the editor renders."""
     errors = _boot(page, populated_server)
-    page.click('#nav button[data-tab="contracts"]')
+    page.click('#nav a[data-tab="contracts"]')
     page.evaluate("window.editMission('mA')")
     page.wait_for_selector("#contracts input")   # the inline editor exposes input fields
     assert errors == [], errors
@@ -137,7 +137,7 @@ def test_cargo_subtab_toggle_via_interpolated_handler(page, populated_server):
     """cargoSub is referenced only through tabBar's interpolated onclick=\"${fn}(…)\" —
     the case static analysis is most likely to miss. Exercise it for real."""
     errors = _boot(page, populated_server)
-    page.click('#nav button[data-tab="cargo"]')
+    page.click('#nav a[data-tab="cargo"]')
     page.wait_for_selector("#cargo .arch-tabs")
     page.evaluate("window.cargoSub('dropoff')")
     page.wait_for_function(

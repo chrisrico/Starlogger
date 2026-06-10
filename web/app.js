@@ -32,18 +32,47 @@ let EDIT_CELL = null; // token of the open inline editor (unified, one at a time
 // (current location / cargo aboard) until the user picks one explicitly — see cargoDefault.
 let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "pickup" · "dropoff"
 
-// ---- tabs (with URL-hash deep-linking) ---- //
-const TABS = ["cargo", "plan", "contracts", "archive", "mining"];
-function activateTab(name) {
+// ---- tabs (path-routed: /contracts, /cargo, … — sub-tabs ride the #hash) ---- //
+// Each primary screen is a real page at /<tab>, navigated with the History API so the URL
+// is shareable / reloadable (the Flask app serves index.html for these paths — see
+// server.py's SPA fallback) and the sidebar items are genuine <a href> links. A section's
+// sub-tab (Cargo's Loading/Unloading, Mining's Identify/Find/Plan) is view state WITHIN a
+// page, not a page of its own, so it lives in the URL #hash instead of the path.
+const TABS = ["contracts", "cargo", "plan", "archive", "mining"];
+const DEFAULT_TAB = "contracts";
+const tabFromPath = (p) => {
+  const seg = (p || "/").replace(/^\/+|\/+$/g, "").split("/")[0];
+  return TABS.includes(seg) ? seg : DEFAULT_TAB;
+};
+// push=true  → a user navigation: enter the section fresh (drop any sub-tab #hash), add a
+//              history entry. push=false → boot/popstate/auto: mirror the current URL
+//              (keeping its #hash so the sub-tab is restored) without a new entry.
+function activateTab(name, { push = true } = {}) {
   if (!TABS.includes(name)) return;
   S.TAB = name;
-  document.querySelectorAll("#nav button").forEach(b => {
+  document.querySelectorAll("#nav [data-tab]").forEach(b => {
     b.classList.toggle("active", b.dataset.tab === name);
   });
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== name));
-  if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
+  const hash = push ? "" : location.hash;            // entering fresh drops the sub-tab hash
+  const url = "/" + name + hash;
+  if (location.pathname + location.hash !== url) {
+    (push ? history.pushState : history.replaceState).call(history, null, "", url);
+  }
   if (name === "archive") activateArchiveTab();
   if (name === "mining") initMining();
+  applySub(name, hash.slice(1));                     // restore Loading/Unloading / mining sub
+}
+// Apply a section's sub-tab from the URL #hash. No (or an unrecognised) hash leaves the
+// section's own default in place — for Cargo that's the auto/persisted phase (cargoSubActive),
+// so the hash acts as an explicit deep-link override rather than the source of truth.
+function applySub(name, sub) {
+  if (name === "cargo") {
+    if (sub === "loading") cargoSub("pickup");
+    else if (sub === "unloading") cargoSub("dropoff");
+  } else if (name === "mining") {
+    if (["identify", "find", "plan"].includes(sub)) miningSub(sub);
+  }
 }
 
 // ---- sidebar: wide (icon + label) ⇄ skinny (icons only) ----
@@ -71,7 +100,18 @@ SB_MQ.addEventListener?.("change", e => { if (storedPref() === null) applyCollap
 const _collapseBtn = $("navtoggle");
 if (_collapseBtn) _collapseBtn.onclick = () => setCollapsed(!$("sidebar").classList.contains("collapsed"));
 
-document.querySelectorAll("#nav button").forEach(b => { b.onclick = () => activateTab(b.dataset.tab); });
+// The nav items are real <a href="/tab"> links: a plain left-click is intercepted for an
+// in-page History-API switch, but modified clicks (Ctrl/Cmd/Shift/Alt, middle button) fall
+// through to the browser so "open in new tab/window" works against the server SPA fallback.
+document.querySelectorAll("#nav [data-tab]").forEach(a => {
+  a.addEventListener("click", (e) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    activateTab(a.dataset.tab);
+  });
+});
+// Back/forward (and the legacy-hash redirect below) replay the URL onto the dashboard.
+window.addEventListener("popstate", () => activateTab(tabFromPath(location.pathname), { push: false }));
 
 // ---- jukebox overlay (sidebar Jukebox button -> modal, same pattern as Settings) ----
 // Hidden until this tab wins the primary-jukebox lock (see the boot-restore below); only
@@ -123,13 +163,15 @@ function applyTabLayout(mining) {
   if (MINING_LAYOUT === mining) return;
   MINING_LAYOUT = mining;
   const order = mining ? MINE_TABS : HAUL_TABS;
-  document.querySelectorAll("#nav button").forEach(b => {
+  document.querySelectorAll("#nav [data-tab]").forEach(b => {
     const i = order.indexOf(b.dataset.tab);
     b.classList.toggle("hide", i < 0);
     if (i >= 0) b.style.order = i;   // flex order: keep the visible slots contiguous
   });
-  // If the active tab just got hidden, fall back to a sensible visible one.
-  if (!order.includes(S.TAB)) activateTab(mining ? "mining" : "contracts");
+  // If the active tab just got hidden, fall back to a sensible visible one. This is an
+  // automatic correction (the mode changed under the user), not a navigation — replace the
+  // URL rather than pushing a history entry the user never asked for.
+  if (!order.includes(S.TAB)) activateTab(mining ? "mining" : "contracts", { push: false });
 }
 
 
@@ -507,6 +549,10 @@ function cargoSub(k) {
   if (CARGO_SUB === k) return;
   CARGO_SUB = k;
   localStorage.setItem("cargoSub", k);
+  // Reflect the chosen phase into the URL #hash so /cargo#loading|#unloading is a shareable
+  // deep link. replaceState (not push): toggling a sub-tab shouldn't pile up history entries.
+  const h = k === "dropoff" ? "unloading" : "loading";
+  if (location.hash.slice(1) !== h) history.replaceState(null, "", location.pathname + "#" + h);
   const d = curData(); if (d) setHTML("cargo", cargoView(d));
 }
 function cargoView(d) {
@@ -1261,13 +1307,16 @@ Object.assign(window, {
   bpOpen, bpFilter, bpPick, bpKey,
 });
 
-// ---- deep-link resolution (runs last, once all tab state + functions exist) ---- //
-// Honour the URL hash, including legacy ones from before the Cargo/Plan merge: #loading /
-// #unloading → Cargo (pre-selecting the phase); #routes / #grid → Plan. Must run after the
-// whole module is initialised — activating #archive/#mining calls loadSessions()/initMining(),
-// which touch state declared far below the nav setup.
-const LEGACY_HASH = { loading: ["cargo", () => CARGO_SUB = "pickup"], unloading: ["cargo", () => CARGO_SUB = "dropoff"],
-                      routes: ["plan", () => {}], grid: ["plan", () => {}] };
-const _hash = location.hash.slice(1);
-if (LEGACY_HASH[_hash]) { LEGACY_HASH[_hash][1](); activateTab(LEGACY_HASH[_hash][0]); }
-else if (TABS.includes(_hash)) activateTab(_hash);
+// ---- initial route resolution (runs last, once all tab state + functions exist) ---- //
+// Map the URL onto the dashboard. Must run after the whole module is initialised —
+// activating archive/mining calls loadSessions()/initMining(), which touch state declared
+// far below the nav setup. Old #hash bookmarks (the pre-path scheme, plus the pre-Cargo/Plan-
+// merge #loading/#unloading/#routes/#grid) are redirected to their new path form first so
+// shared links keep working; then the path drives activateTab.
+const LEGACY_HASH = { contracts: "/contracts", cargo: "/cargo", plan: "/plan",
+                      archive: "/archive", mining: "/mining",
+                      loading: "/cargo#loading", unloading: "/cargo#unloading",
+                      routes: "/plan", grid: "/plan" };
+const _legacy = LEGACY_HASH[location.hash.slice(1)];
+if (location.pathname === "/" && _legacy) history.replaceState(null, "", _legacy);
+activateTab(tabFromPath(location.pathname), { push: false });
