@@ -8,8 +8,11 @@ export const $ = (id) => document.getElementById(id);
 // Defensive read of an input's value by id ("" when the element isn't in the DOM yet).
 export const val = (id) => ($(id) || {}).value || "";
 
-export const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"]/g,
-  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Escapes the five HTML-significant characters. The single quote matters too: inline handler
+// markup interpolates values into single-quoted JS-string arguments — fn('${esc(v)}') inside an
+// onclick — where an unescaped ' would break out. esc covers it, keeping every sink safe.
+export const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 export const num = (n) => (n == null ? "" : Number(n).toLocaleString());
 

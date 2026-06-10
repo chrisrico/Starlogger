@@ -6,12 +6,15 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import threading
+from html import escape as _html_escape
+from urllib.parse import urlsplit
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
 from .archive import filter_sessions, load_sessions
-from .config import MISSION_ICONS_DIR, MUSIC_DIR, OVERRIDES_PATH, WEB_DIR
+from .config import API_TOKEN_PATH, MISSION_ICONS_DIR, MUSIC_DIR, OVERRIDES_PATH, WEB_DIR
 from .jsonstore import atomic_write, read_json
 from .overrides import set_leg_field, set_leg_states
 from .replay import build_timeline, snapshot_with_overlay, state_at
@@ -85,6 +88,42 @@ def _assets_version() -> str:
     return digest
 
 
+def _load_or_create_token() -> str:
+    """The per-install API token, generated once and persisted 0600 in the data dir so it
+    survives restarts/re-exec. Gates the mutating API: same-origin dashboard JS reads it
+    from the served page, so a cross-origin attacker can't lift it to forge writes, and a
+    blind LAN client (when bound non-loopback) doesn't have it at all."""
+    try:
+        with open(API_TOKEN_PATH, encoding="utf-8") as f:
+            tok = f.read().strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    tok = secrets.token_urlsafe(32)
+    try:
+        os.makedirs(os.path.dirname(API_TOKEN_PATH), exist_ok=True)
+        # O_CREAT mode only applies when creating; chmod afterwards so a pre-existing file
+        # with looser perms is tightened too. Either way the secret ends up 0600.
+        fd = os.open(API_TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(tok)
+        try:
+            os.chmod(API_TOKEN_PATH, 0o600)
+        except OSError:  # pragma: no cover - e.g. Windows / unusual filesystems
+            pass
+    except OSError:  # pragma: no cover - read-only data dir; token still works in-memory
+        pass
+    return tok
+
+
+# Mutating routes that intentionally skip the token check. /api/closing is fired by
+# navigator.sendBeacon on tab close, which CANNOT set request headers; forging it only
+# shortens the watchdog's idle grace, so it's harmless to leave unauthenticated. The
+# cross-origin (Origin) check below still applies to it.
+_TOKEN_EXEMPT = frozenset({"/api/closing"})
+
+
 def create_app(state: State, log_path: str | None = None, presence=None,
                update_state=None, music_state=None) -> Flask:
     # static_url_path="" serves web/ assets at the root (/styles.css, /app.js).
@@ -96,6 +135,44 @@ def create_app(state: State, log_path: str | None = None, presence=None,
     # merged into the snapshot so the dashboard's update banner rides the SSE push.
     app = Flask(__name__, static_folder=WEB_DIR, static_url_path="")
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    app.config["API_TOKEN"] = _load_or_create_token()
+
+    @app.before_request
+    def _enforce_guard():
+        # Read-only methods are unguarded: the only secret the server emits (the page token)
+        # is same-origin readable, so it can't be lifted cross-origin. State-changing methods
+        # must clear two gates that together kill drive-by CSRF and blind LAN abuse.
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return None
+        # (1) Same-origin: a browser always stamps Origin on a cross-site write, so a mismatch
+        # is a forged request -> reject. This alone defeats the text/plain simple-request CSRF
+        # bypass. A matching Origin, or none at all (curl, sendBeacon), falls through to (2).
+        origin = request.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != request.host:
+            return jsonify({"ok": False, "error": "cross-origin request rejected"}), 403
+        # (2) Bearer token: same-origin dashboard JS attaches it; a cross-origin attacker can't
+        # read it, and a blind client (non-loopback bind) doesn't have it.
+        if request.path in _TOKEN_EXEMPT:
+            return None
+        token = app.config.get("API_TOKEN")
+        if not token:  # fail closed: a write must never slip through an unconfigured token
+            return jsonify({"ok": False, "error": "server token unavailable"}), 503
+        sent = request.headers.get("X-Starlogger-Token", "")
+        if not (sent and secrets.compare_digest(sent, token)):
+            return jsonify({"ok": False, "error": "unauthorized"}), 403
+        return None
+
+    def _serve_shell():
+        # index.html with the per-install API token injected as a <meta> the dashboard JS reads
+        # (see web/net.js). Injected at serve time, not on disk, so the asset-version hash (which
+        # reads the disk file) is unaffected. Falls back to the raw file if it can't be read.
+        try:
+            with open(os.path.join(WEB_DIR, "index.html"), encoding="utf-8") as f:
+                html = f.read()
+        except OSError:  # pragma: no cover
+            return send_from_directory(WEB_DIR, "index.html")
+        tag = f'<meta name="api-token" content="{_html_escape(app.config.get("API_TOKEN") or "")}">'
+        return Response(html.replace("<head>", "<head>\n" + tag, 1), mimetype="text/html")
 
     def _ok():
         # A manual edit (override/leg/ship/etc.) changed what build_snapshot returns but
@@ -116,7 +193,7 @@ def create_app(state: State, log_path: str | None = None, presence=None,
 
     @app.get("/")
     def index():
-        return send_from_directory(WEB_DIR, "index.html")
+        return _serve_shell()
 
     @app.errorhandler(404)
     def spa_fallback(err):
@@ -129,7 +206,7 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         path = request.path
         if (request.method == "GET" and not path.startswith("/api/")
                 and "." not in path.rsplit("/", 1)[-1]):
-            return send_from_directory(WEB_DIR, "index.html")
+            return _serve_shell()
         return err
 
     @app.get("/mission-icons/<path:name>")

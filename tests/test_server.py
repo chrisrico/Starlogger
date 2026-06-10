@@ -70,7 +70,23 @@ def client(monkeypatch):
         monkeypatch.setattr(server, name, fn)
     app = server.create_app(State(), log_path="/fake/Game.log")
     app.testing = True
-    return app.test_client()
+    return _token_client(app)
+
+
+def _token_client(app):
+    """A test client that attaches the per-install API token to every request. The mutating
+    API is token-gated (see server._enforce_guard); these tests exercise the route contract,
+    not the guard, which is covered separately in test_csrf_guard.py."""
+    c = app.test_client()
+    token = app.config["API_TOKEN"]
+    _open = c.open
+    def _open_with_token(*a, **kw):
+        headers = dict(kw.get("headers") or {})
+        headers.setdefault("X-Starlogger-Token", token)
+        kw["headers"] = headers
+        return _open(*a, **kw)
+    c.open = _open_with_token
+    return c
 
 
 # --- simple GETs ----------------------------------------------------------- #
@@ -397,7 +413,7 @@ def test_quit_invokes_shutdown(monkeypatch):
     called = threading.Event()
     app.config["QUIT_FN"] = called.set    # stand in for httpd.shutdown
     app.testing = True
-    r = app.test_client().post("/api/quit")
+    r = _token_client(app).post("/api/quit")
     assert r.get_json()["ok"] is True
     assert called.wait(2)                  # the daemon thread invoked QUIT_FN
 
@@ -415,7 +431,7 @@ def test_restart_invokes_on_restart(monkeypatch):
     called = threading.Event()
     app.config["ON_RESTART"] = called.set   # stand in for the tracker's re-exec trigger
     app.testing = True
-    r = app.test_client().post("/api/restart")
+    r = _token_client(app).post("/api/restart")
     assert r.get_json()["ok"] is True
     assert called.is_set()                   # ON_RESTART fired (it returns immediately)
 
@@ -441,7 +457,7 @@ def test_update_check_passes_through_status(monkeypatch):
     app = server.create_app(State(), log_path="/fake/Game.log")
     app.config["ON_CHECK_NOW"] = lambda: {"ok": True, "status": "updating", "latest": "abc1234"}
     app.testing = True
-    j = app.test_client().post("/api/update/check").get_json()
+    j = _token_client(app).post("/api/update/check").get_json()
     assert j == {"ok": True, "status": "updating", "latest": "abc1234"}
 
 
@@ -467,7 +483,7 @@ def test_bind_host_change_restarts(monkeypatch, tmp_path):
     app = _settings_app(monkeypatch, tmp_path)
     restarted = threading.Event()
     app.config["ON_RESTART"] = restarted.set    # stand in for the off-thread re-exec
-    j = app.test_client().post("/api/settings", json={"bind_host": "0.0.0.0"}).get_json()
+    j = _token_client(app).post("/api/settings", json={"bind_host": "0.0.0.0"}).get_json()
     assert j["ok"] is True
     assert restarted.is_set()                    # a changed bind address triggers a restart
 
@@ -477,7 +493,7 @@ def test_bind_host_unchanged_no_restart(monkeypatch, tmp_path):
     app = _settings_app(monkeypatch, tmp_path)
     restarted = threading.Event()
     app.config["ON_RESTART"] = restarted.set
-    app.test_client().post("/api/settings", json={"bind_host": "127.0.0.1"})
+    _token_client(app).post("/api/settings", json={"bind_host": "127.0.0.1"})
     assert not restarted.is_set()
 
 
@@ -486,7 +502,7 @@ def test_update_source_validation_rejects_bad_branch(monkeypatch, tmp_path):
     # error message, and nothing is persisted.
     app = _settings_app(monkeypatch, tmp_path)
     app.config["ON_VALIDATE_SOURCE"] = lambda remote, branch: f"Branch “{branch}” doesn't exist."
-    r = app.test_client().post("/api/settings", json={"update_branch": "nope"})
+    r = _token_client(app).post("/api/settings", json={"update_branch": "nope"})
     assert r.status_code == 400
     j = r.get_json()
     assert j["ok"] is False and "nope" in j["error"]
@@ -498,7 +514,7 @@ def test_update_source_validation_passes_good_branch(monkeypatch, tmp_path):
     app = _settings_app(monkeypatch, tmp_path)
     seen = {}
     app.config["ON_VALIDATE_SOURCE"] = lambda remote, branch: seen.update(r=remote, b=branch) or None
-    r = app.test_client().post("/api/settings", json={"update_branch": "dev"})
+    r = _token_client(app).post("/api/settings", json={"update_branch": "dev"})
     assert r.get_json()["ok"] is True
     # Validated the prospective pair: the unchanged remote + the new branch.
     assert seen == {"r": "origin", "b": "dev"}

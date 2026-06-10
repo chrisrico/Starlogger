@@ -75,6 +75,9 @@ TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+# Per-install bearer token gating the mutating API (see server._enforce_guard). Generated
+# on first run, persisted 0600, reused across restarts/re-exec. Local secret => gitignored.
+API_TOKEN_PATH = os.path.join(DATA_DIR, "api_token")
 SESSIONS_KEEP = 300  # cap archived session history
 
 USER_AGENT = (

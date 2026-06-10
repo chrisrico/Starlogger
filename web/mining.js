@@ -6,7 +6,7 @@
 // /api/blueprint* endpoints. The rest of the dashboard only calls initMining() (on tab
 // open) and the bridged inline handlers (miningSub + the identify/find/plan/bp actions).
 import { $, esc, num, val, th, tag, setHTML, logTable, tabBar, hintIcon } from "./dom.js";
-import { getJSON } from "./net.js";
+import { getJSON, writeHeaders } from "./net.js";
 import { S } from "./state.js";
 import { ensureGear, currentLoadout, gearCatalog } from "./shipequip.js";
 // feasibility()/suggestCrack() are globals from the classic /feasibility.js script (loaded
@@ -489,13 +489,16 @@ function _bpSections() {
       return s;
     });
 }
+let _bpId = 0;
 function blueprintMenuHtml() {
+  _bpId = 0;
   return _bpSections().map(s => {
     const items = s.items.map(b => {
       // Vehicle weapons span sizes within a model line — tag each with its size, shown
       // leading the name (left) so the column of sizes reads at a glance.
       const sz = s.type === "Vehicle Weapons" && b.size != null ? `<span class="bp-dd-sz">S${b.size}</span>` : "";
-      return `<div class="bp-dd-item" data-search="${esc(b.name.toLowerCase())}"
+      const id = `bp-opt-${_bpId++}`;
+      return `<div class="bp-dd-item" role="option" id="${id}" data-search="${esc(b.name.toLowerCase())}"
          onclick="bpPick(this.dataset.name)" data-name="${esc(b.name)}">${sz}<span>${esc(b.name)}</span></div>`;
     }).join("");
     const label = `<span class="bp-dd-type">${esc(s.type)}</span>` +
@@ -511,10 +514,12 @@ function planToolHtml() {
     <div class="mform">
       <div class="bp-dd">
         <input id="mp-bp" autocomplete="off" aria-label="Search blueprints"
+          role="combobox" aria-expanded="false" aria-controls="bp-dd-list" aria-autocomplete="list"
           placeholder="Search blueprints by name…"
           oninput="bpFilter(this.value)" onfocus="bpOpen(true)"
           onblur="bpOpen(false)" onkeydown="bpKey(event)">
-        <div id="bp-dd-list" class="bp-dd-list" onmousedown="event.preventDefault()">${blueprintMenuHtml()}</div>
+        <div id="bp-dd-list" class="bp-dd-list" role="listbox" aria-label="Blueprints"
+          onmousedown="event.preventDefault()">${blueprintMenuHtml()}</div>
       </div>
     </div>
   </div>`;
@@ -522,9 +527,28 @@ function planToolHtml() {
 export function bpOpen(show) {
   const el = $("bp-dd-list"); if (!el) return;
   el.classList.toggle("open", !!show);
+  const inp = $("mp-bp"); if (inp) inp.setAttribute("aria-expanded", show ? "true" : "false");
   // The card clips descendants via clip-path; drop it while the menu is open so the
   // dropdown can overflow past the card edge.
   const card = el.closest(".card"); if (card) card.classList.toggle("dd-open", !!show);
+  if (!show) _bpSetActive(null);
+}
+// Keyboard highlight for the listbox: the visible options, the active one, and a setter that
+// also drives aria-activedescendant so a screen reader follows the arrow-key cursor.
+const _bpVisible = () =>
+  [...($("bp-dd-list") || {}).querySelectorAll?.(".bp-dd-item") || []].filter(it => it.style.display !== "none");
+const _bpActive = () => ($("bp-dd-list") || {}).querySelector?.(".bp-dd-item.bp-dd-active") || null;
+function _bpSetActive(it) {
+  const list = $("bp-dd-list"); if (!list) return;
+  list.querySelectorAll(".bp-dd-item.bp-dd-active").forEach(e => e.classList.remove("bp-dd-active"));
+  const inp = $("mp-bp");
+  if (it) {
+    it.classList.add("bp-dd-active");
+    it.scrollIntoView({ block: "nearest" });
+    if (inp) inp.setAttribute("aria-activedescendant", it.id);
+  } else if (inp) {
+    inp.removeAttribute("aria-activedescendant");
+  }
 }
 export function bpPick(name) {
   const inp = $("mp-bp"); if (inp) inp.value = name;
@@ -545,13 +569,24 @@ export function bpFilter(q) {
     }
     sec.classList.toggle("hide", !any);
   }
+  _bpSetActive(null);   // the visible set changed; drop any stale arrow highlight
 }
 export function bpKey(e) {
   if (e.key === "Escape") { bpOpen(false); return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    bpOpen(true);
+    const vis = _bpVisible(); if (!vis.length) return;
+    const cur = _bpActive();
+    let i = cur ? vis.indexOf(cur) : -1;
+    i = e.key === "ArrowDown" ? (i + 1) % vis.length : (i <= 0 ? vis.length - 1 : i - 1);
+    _bpSetActive(vis[i]);
+    return;
+  }
   if (e.key !== "Enter") return;
-  const first = [...($("bp-dd-list") || {}).querySelectorAll?.(".bp-dd-item") || []]
-    .find(it => it.style.display !== "none");
-  if (first) bpPick(first.dataset.name);
+  // Enter picks the arrow-highlighted option, or the first visible match when none is active.
+  const pick = _bpActive() || _bpVisible()[0];
+  if (pick) bpPick(pick.dataset.name);
 }
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;
@@ -565,7 +600,7 @@ async function miningPlanFromBlueprint(name) {
     const bp = await fetch(`/api/blueprint?name=${encodeURIComponent(name)}`).then(r => r.json());
     if (bp.ok === false) { setHTML(mres(), `<div class="empty">No blueprint “${esc(name)}”.</div>`); return; }
     const plan = await fetch("/api/mining-plan", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: writeHeaders(),
       body: JSON.stringify({ minerals: bp.minerals || [] }),
     }).then(r => r.json());
     setHTML(mres(), recipeHtml(bp) + planResultHtml(plan));

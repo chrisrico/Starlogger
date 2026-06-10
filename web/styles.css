@@ -22,7 +22,7 @@
   --ink:#cfe2f5;
   --ink-1:#aebfd6;  /* between --ink and --ink-2 */
   --ink-2:#7d96b4;
-  --ink-3:#516583;
+  --ink-3:#7286a8;  /* muted text; lightened to clear WCAG AA 4.5:1 on every panel */
   --cyan:rgb(var(--cyan-rgb));   /* #4fdcff */
   --cyan-deep:#1aa6d6;
   --amber:rgb(var(--amber-rgb)); /* #ffc24b */
@@ -328,8 +328,9 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3;flex:1 0 a
    flagged (dashed underline + amber pen) to signal "fill me in". */
 .edc{cursor:pointer;border-radius:2px;transition:background .12s}
 .edc:hover{background:rgba(var(--cyan-rgb),.10)}
+.edc:focus-visible{outline:none;background:rgba(var(--cyan-rgb),.10);box-shadow:0 0 0 2px rgba(var(--cyan-rgb),.5)}
 .edc .edc-pen{opacity:0;color:var(--ink-3);font-size:11px;margin-left:4px;transition:opacity .12s}
-.edc:hover .edc-pen{opacity:.9}
+.edc:hover .edc-pen,.edc:focus-visible .edc-pen{opacity:.9}
 .edc.is-unknown{text-decoration:underline dotted var(--amber);text-underline-offset:3px}
 /* a missing/placeholder station in a read-only cell — reads as "unknown", not a name */
 .unk{color:var(--amber);font-style:italic}
@@ -851,9 +852,10 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .bp-dd-detail{color:var(--cyan);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bp-dd-item{display:flex;align-items:baseline;gap:9px;
   padding:5px 12px 5px 18px;font-family:var(--mono);font-size:12.5px;color:var(--ink-1);cursor:pointer}
-.bp-dd-item:hover{background:rgba(var(--cyan-rgb),.12);color:var(--cyan)}
+.bp-dd-item:hover,.bp-dd-item.bp-dd-active{background:rgba(var(--cyan-rgb),.12);color:var(--cyan)}
+.bp-dd-item.bp-dd-active{box-shadow:inset 2px 0 0 var(--cyan)}
 .bp-dd-sz{flex:0 0 auto;color:var(--ink-3);font-size:11px}
-.bp-dd-item:hover .bp-dd-sz{color:var(--cyan)}
+.bp-dd-item:hover .bp-dd-sz,.bp-dd-item.bp-dd-active .bp-dd-sz{color:var(--cyan)}
 /* prominent "scan for" band on the Find-mineral results */
 .mscan{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 16px;
   border-bottom:1px solid var(--line)}

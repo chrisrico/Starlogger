@@ -461,8 +461,13 @@ function editable(value, f, opts) {
   }
   const inner = known ? esc(value)
     : `<span class="edc-unkn">${esc(opts.label || (value != null && value !== "" ? value : editPlaceholder(f.k)))}</span>`;
+  // role=button + tabindex + Enter/Space (edOpenKey) make the cell operable by keyboard and
+  // announced by a screen reader, not mouse-only. aria-label says which field it edits.
+  const noun = f.k === "qty" ? "quantity" : f.k === "cargo" ? "commodity"
+    : f.k === "origin" ? "origin" : "station name";
   return `<span class="edc${known ? "" : " is-unknown"}" data-field='${esc(JSON.stringify(f))}'
-    title="${known ? "Click to correct" : "Click to set"}" onclick="edOpen(this)">${inner}<span class="edc-pen">✎</span></span>`;
+    role="button" tabindex="0" aria-label="${known ? "Edit" : "Set"} ${noun}"
+    title="${known ? "Click to correct" : "Click to set"}" onclick="edOpen(this)" onkeydown="edOpenKey(event)">${inner}<span class="edc-pen">✎</span></span>`;
 }
 // convenience wrappers used across the screens; render plain text when not editable
 function stationCell(name, zone) {
@@ -484,6 +489,10 @@ function edOpen(el) {
   const i = $("edit_input"); if (i) { i.focus(); if (i.select) i.select(); }
 }
 function edCancel() { EDIT_CELL = null; rerenderEdits(); }
+// Open the in-place editor from the keyboard (Enter/Space) when the cell itself is focused.
+function edOpenKey(e) {
+  if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); edOpen(e.currentTarget); }
+}
 function edKey(e) {
   if (e.key === "Enter") { e.preventDefault(); edCommit(e.target); }
   else if (e.key === "Escape") { e.preventDefault(); edCancel(); }
@@ -1210,6 +1219,7 @@ function restoreMission(mid) {                                // un-hide, keep e
   postOverride(mid, Object.keys(ov).length ? ov : null);
 }
 function deleteMission(mid) {                                 // hide, keep edits (Restore brings it back)
+  if (!confirm("Hide this contract from the active lists? You can bring it back from the Archive tab.")) return;
   postOverride(mid, { ...rawOverride(mid), hidden: true });
 }
 
@@ -1296,7 +1306,7 @@ Object.assign(window, {
   // contracts / mission editor
   editMission, saveMission, cancelEdit, deleteMission, resetMission, restoreMission, addLeg, edFormKey,
   // unified inline cell editor
-  edOpen, edKey, edCommit,
+  edOpen, edOpenKey, edKey, edCommit,
   // header / ship selector
   setMode, pickShip, openShipMenu, filterShipMenu, shipKeydown, onShipBlur,
   // cargo / plan tabs + route reorder
