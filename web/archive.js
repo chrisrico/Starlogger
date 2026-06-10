@@ -247,15 +247,14 @@ function contractLogView(sessions) {
     return `<tr>
       <td class="lt-when">${fmtWhen(r.when)}</td>
       <td><span class="badge b-${r.m.status}">${esc(r.m.status)}</span></td>
-      <td class="lt-type">${typeMark(r.type, r.m.icon)}</td>
+      <td class="lt-type">${tag(r.type, "ct-" + slugOf[r.type])}</td>
       <td class="lt-title">${esc(r.m.title)}${dest.length ? ` <span class="sub">→ ${esc(dest.join(", "))}</span>` : ""}</td>
       <td class="lt-num">${r.m.reward ? num(r.m.reward) : "—"}</td></tr>`;
   }).join("") || `<tr><td colspan="5" class="lt-empty">No contracts match the selected types.</td></tr>`;
   const hidden = CT_PRESENT.filter(t => CONTRACT_TYPE_HIDDEN.has(t)).length;
   const opts = CT_PRESENT.map(t =>
     `<label class="th-opt"><input type="checkbox" ${CONTRACT_TYPE_HIDDEN.has(t) ? "" : "checked"}
-       onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')"><img class="ct-ico opt-ico" alt=""
-       src="/mission-icons/${slugOf[t]}.svg" onerror="this.style.display='none'">${tag(t, "ct-" + slugOf[t])}</label>`).join("");
+       onclick="toggleTypeFilter('${t.replace(/'/g, "\\'")}')">${tag(t, "ct-" + slugOf[t])}</label>`).join("");
   const menu = `<span class="th-menu-wrap">
     <button class="th-menu-btn${hidden ? " on" : ""}" aria-haspopup="true" aria-expanded="${TYPE_MENU_OPEN}" onclick="toggleTypeMenu()">Type ▾</button>${
       TYPE_MENU_OPEN ? `<span class="th-menu">

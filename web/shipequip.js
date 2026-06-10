@@ -126,11 +126,24 @@ function renderEquip() {
         ${_moduleOptions(EDIT.modules[i] || "")}</select></div></div>`;
   }
   if (head) {
-    html += `<div class="se-note mn-dim">${esc(head.name)}: ` +
-      Object.entries(head.modifiers || {}).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}%`).join(" · ") +
-      (Object.keys(head.modifiers || {}).length ? "" : "no inherent modifiers") + `</div>`;
+    // The laser's own modifiers, then each fitted module's additions stacked beneath it,
+    // so the combined effect of the loadout is readable at a glance.
+    html += _statLine(head.name, head.modifiers, "no inherent modifiers");
+    for (const cls of EDIT.modules) {
+      const mod = _moduleByClass(cls);
+      if (mod) html += _statLine(mod.name, mod.modifiers, "no effect");
+    }
   }
   $("seBody").innerHTML = html;
+}
+
+// One "Name: stat +x% · stat -y%" line for a head or module's modifier map.
+function _statLine(name, modifiers, emptyText) {
+  const mods = modifiers || {};
+  const body = Object.keys(mods).length
+    ? Object.entries(mods).map(([k, v]) => `${k.replace(/_/g, " ")} ${v > 0 ? "+" : ""}${v}%`).join(" · ")
+    : emptyText;
+  return `<div class="se-note mn-dim"><b>${esc(name)}</b>: ${esc(body)}</div>`;
 }
 
 // Head change: re-read the pick, reset modules that no longer fit, re-render the slot rows.
@@ -148,6 +161,7 @@ export function seModuleChange() {
     if (v) mods.push(v);
   }
   EDIT.modules = mods;
+  renderEquip();   // refresh the per-module stat lines beneath the laser
 }
 
 export async function saveShipEquip() {
