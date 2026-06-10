@@ -30,8 +30,18 @@ _MINEABLE_NOISE = {"mineablerock", "mineable", "rock", "fps", "groundvehicle", "
                    "vehicle", "deposit", "felsic", "minable", "asteroid", "legendary",
                    "epic", "rare", "uncommon", "common", "pure", "small", "large",
                    "ore", "raw"}
-# Placeholder / dev entities that aren't real mineables -- skip them.
-_MINEABLE_SKIP = re.compile(r"(test|template|dummy|placeholder|abandon|angular_smooth)", re.I)
+# Skip:
+#  * placeholder / dev entities that aren't real mineables;
+#  * `groundvehicle` (ROC) and `fps` (hand-mined gemstone) rocks -- this is a SHIP-mining
+#    catalog (the Identify tab reads a ship scanner's RS), and those ~22 gem rocks (Carinite,
+#    Aphorite, Hadanite, Jaclium…) aren't ship-mineable, so they only clutter the lists and
+#    leak raw class names like "MinableElement GroundVehicle Carinite".
+_MINEABLE_SKIP = re.compile(
+    r"(test|template|dummy|placeholder|abandon|angular_smooth|groundvehicle|fps)", re.I)
+# Element basenames mined only by ROC arm / handheld gadget, not a ship laser. Used to drop a
+# rock whose composition is ENTIRELY these (a cave gem rock can carry the gem without a
+# `groundvehicle`/`fps` token in its own class name -- e.g. CaveLargeMineableRock = Janalite).
+_NONSHIP_ELEMENT = re.compile(r"(groundvehicle|fps)", re.I)
 
 
 def _mineable_label(cls: str, deposit_name: str) -> str:
@@ -79,9 +89,13 @@ def _composition(preset_path: str, elem_index: dict, loc: dict,
     except (OSError, ValueError, KeyError):
         return {"deposit_name": "", "min_distinct": 0, "elements": [], "material": {}}
     elements = []
+    n_parts = n_nonship = 0
     acc = {k: [0.0, 0.0] for k in _ELEMENT_PROPS}   # key -> [weighted_sum, weight_total]
     for part in cv.get("compositionArray") or []:
         base = _ref_basename(part.get("mineableElement"))
+        n_parts += 1
+        if _NONSHIP_ELEMENT.search(base or ""):
+            n_nonship += 1
         rec = elem_index.get(base or "")
         if base in elem_cache:
             name = elem_cache[base]
@@ -110,6 +124,9 @@ def _composition(preset_path: str, elem_index: dict, loc: dict,
         "min_distinct": cv.get("minimumDistinctElements") or 0,
         "elements": elements,
         "material": material,
+        # Wholly ground-vehicle/FPS composition (e.g. a cave gem rock whose class name lacks
+        # the method token) -> not ship-mineable, drop it like the class-skipped ones.
+        "non_ship": n_parts > 0 and n_nonship == n_parts,
     }
 
 
@@ -193,6 +210,8 @@ def build_mineables(records_root: str, loc: dict) -> list:
                                                         loc, elem_cache, prop_cache)
         else:
             comp = {"deposit_name": "", "min_distinct": 0, "elements": [], "material": {}}
+        if comp.get("non_ship"):
+            continue                 # all-ROC/FPS composition -> not a ship mineable
         # The shared-curve mechanics (laser power, mass) plus the per-material blend
         # (resistance/instability/window-thinness) -- the latter is what makes the
         # feasibility verdict differ between, say, Lindinium and Aluminum.

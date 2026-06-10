@@ -11,7 +11,7 @@
 //   effPower = head.power × (1 − effRes)                         (resistance saps the beam)
 //   margin   = effPower − rock.required-power                    (required ≈ 2500; 1 = trivial)
 //
-// margin < 0 means the beam can't overcome the rock at all → "Can't crack". Above that, how
+// margin < 0 means the beam can't overcome the rock at all → "Impossible". Above that, how
 // far the margin clears the requirement grades the crack from Hard → Workable → Easy. This is
 // why a negative-resistance rock (quartz −0.7) is trivially easy and Lindinium (0.8) is a wall.
 // `mech` is a rock's `mechanics` (laser_power, resistance, instability, window_thinness…);
@@ -46,7 +46,7 @@
     if (instPct) factors.push(`instability ${instPct > 0 ? "+" : ""}${instPct}%`);
 
     let tier, label;
-    if (margin < 0) { tier = "no"; label = "Can't crack"; }
+    if (margin < 0) { tier = "no"; label = "Impossible"; }
     else if (margin < HARD_AT * required) { tier = "hard"; label = "Hard"; }
     else if (margin < EASY_AT * required) { tier = "ok"; label = "Workable"; }
     else { tier = "easy"; label = "Easy"; }

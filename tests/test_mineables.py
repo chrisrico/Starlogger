@@ -96,6 +96,40 @@ def test_build_mineables_extracts_rs_and_composition(tmp_path):
     assert [e["element"] for e in ctype["composition"]] == ["Iron Ore"]
 
 
+def test_skips_fps_and_groundvehicle_mineables(tmp_path):
+    """ROC (ground-vehicle) and hand-mined (FPS) gem rocks aren't ship-mineable -> dropped,
+    whether tagged by class name OR only by an all-ROC/FPS composition (a cave gem rock whose
+    own class name carries no method token)."""
+    root = str(tmp_path)
+    ents = os.path.join(root, "libs/foundry/records/entities/mineable")
+    presets = os.path.join(root, "libs/foundry/records/mining/rockcompositionpresets")
+    elems = os.path.join(root, "libs/foundry/records/mining/mineableelements")
+
+    rocks = {
+        # kept: a normal ship rock
+        "GraniteMineRock_Gold": ("granite_gold", [("gold_ore", 40.0, 80.0)]),
+        # dropped by class name (fps / groundvehicle token)
+        "MineableRock_Fps_Carinite": ("fps_carinite", [("minableelement_fps_carinite", 50.0, 90.0)]),
+        "MineableRock_GroundVehicle_Beradom": ("gv_beradom", [("minableelement_groundvehicle_beradom", 50.0, 90.0)]),
+        # dropped by composition only: innocent class name, all-FPS makeup
+        "CaveLargeMineableRock": ("cave_janalite", [("minableelement_fps_janalite", 50.0, 90.0)]),
+    }
+    els = set()
+    for cls, (preset, parts) in rocks.items():
+        _write(os.path.join(ents, cls.lower() + ".json"), "EntityClassDefinition." + cls,
+               _entity(3000.0, f"file://../mining/rockcompositionpresets/{preset}.json"))
+        _write(os.path.join(presets, preset + ".json"), "MineableComposition." + preset.title(),
+               _preset("@" + preset, 1,
+                       [(f"file://../mineableelements/{e}.json", lo, hi, 1.0) for e, lo, hi in parts]))
+        els.update(e for e, _, _ in parts)
+    for el in els:
+        _write(os.path.join(elems, el + ".json"),
+               "MineableElement." + "".join(w.capitalize() for w in el.split("_")), {})
+
+    surviving = {r["class"] for r in scdata.build_mineables(root, {})}
+    assert surviving == {"GraniteMineRock_Gold"}
+
+
 def _entity_mech(rs: float, comp_ref: str, gp_ref: str) -> dict:
     """An entity value with the M1 mechanics components: MineableParams.globalParams +
     filledFactor and the SMineableHealthComponentParams hardness map. `damageStrength` is

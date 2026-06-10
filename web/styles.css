@@ -895,8 +895,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mcand.salv h3 .scu{color:var(--amber)}
 .mplan-srcs{padding:6px 16px 14px;display:flex;flex-direction:column;gap:10px}
 /* ship-vs-rock feasibility verdict pill + factors (Identify candidate card) */
-.feas{font-family:var(--display);font-size:10.5px;font-weight:600;letter-spacing:.1em;
-  text-transform:uppercase;border-radius:3px;padding:2px 8px;border:1px solid transparent}
+.feas{display:inline-block;white-space:nowrap;font-family:var(--display);font-size:10.5px;
+  font-weight:600;letter-spacing:.1em;text-transform:uppercase;border-radius:3px;
+  padding:2px 8px;border:1px solid transparent}
 .feas-easy{color:var(--green);background:rgba(var(--green-rgb),.12);border-color:rgba(var(--green-rgb),.4)}
 .feas-ok{color:var(--cyan);background:rgba(var(--cyan-rgb),.12);border-color:rgba(var(--cyan-rgb),.4)}
 .feas-hard{color:var(--amber);background:rgba(var(--amber-rgb),.12);border-color:rgba(var(--amber-rgb),.4)}
