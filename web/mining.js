@@ -572,7 +572,13 @@ function recipeHtml(bp) {
     <td>${esc(r.slot || "")}</td><td><b>${esc(r.resource)}</b></td>
     <td class="lt-num">${r.scu} SCU</td>
     <td class="lt-num">${r.min_quality > 0 ? "Q≥" + r.min_quality : "—"}</td></tr>`).join("");
+  // Which missions reward this blueprint (from the DataCore reward pools), when known.
+  const sources = (bp.sources || []).map(s => tag(s)).join(" ");
+  const srcRow = sources
+    ? `<div class="mrow bp-source"><span class="mk">🎁 Rewarded by</span><div>${sources}</div></div>`
+    : "";
   return `<div class="card"><h3><span>${esc(bp.name)}</span><span class="scu">${meta}</span></h3>
+    ${srcRow}
     ${logTable(
       th("Slot", false, "The recipe slot this material fills") +
       th("Material", false, "The mineral or resource the slot requires") +

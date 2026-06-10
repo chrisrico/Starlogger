@@ -49,6 +49,21 @@ def _fixture(root: str) -> None:
                    "mandatoryCost": {"_Type_": "CraftingCost_Select", "count": 2, "options": [
                        _resource_cost("Borase", 0.42, 1, "SHELL"),
                        _resource_cost("Gold", 0.68, 0, "CORE")]}}}}]}})
+    # two reward pools that grant bp_foo: one wired to a faction's missions via a contract
+    # generator (org dir -> "Foxwell Enforcement"), one a standalone event pool (XenoThreat).
+    def _pool(rec, bp_ref):
+        return {"_Type_": "BlueprintPoolRecord", "blueprintRewards": [
+            {"_Type_": "BlueprintReward", "weight": 1.0,
+             "blueprintRecord": f"file://./../../{bp_ref}"}]}
+    _write(os.path.join(root, "libs/foundry/records/crafting/blueprintrewards/blueprintmissionpools/bp_missionreward_test.json"),
+           "BlueprintPoolRecord.BP_MissionReward_Test", _pool("x", "weapons/bp_foo.json"))
+    _write(os.path.join(root, "libs/foundry/records/crafting/blueprintrewards/xenothreat2rewards/bp_rewards_xenothreat2_test.json"),
+           "BlueprintPoolRecord.BP_Rewards_XenoThreat2_Test", _pool("x", "weapons/bp_foo.json"))
+    # a generator under the foxwellenforcement org dir that points at the first pool.
+    _write(os.path.join(root, "libs/foundry/records/contracts/contractgenerator/mercenary_guild/foxwellenforcement/foxwell_test.json"),
+           "ContractGenerator.Foxwell_Test",
+           {"_Type_": "ContractGenerator", "blueprintPool":
+            "file://./../../../../crafting/blueprintrewards/blueprintmissionpools/bp_missionreward_test.json"})
     # a placeholder-named blueprint that must be dropped
     _write(os.path.join(root, "libs/foundry/records/crafting/blueprints/crafting/weapons/bp_ph.json"),
            "CraftingBlueprintRecord.BP_PH",
@@ -72,6 +87,17 @@ def test_build_blueprints_extracts_recipe(tmp_path):
     assert b["requirements"] == [
         {"slot": "Shell", "resource": "Borase", "scu": 0.42, "min_quality": 1},
         {"slot": "Core", "resource": "Gold", "scu": 0.68, "min_quality": 0}]
+
+
+def test_blueprint_sources_from_reward_pools(tmp_path):
+    # bp_foo is granted by a Foxwell generator-wired pool and a standalone XenoThreat pool;
+    # both surface as sorted source labels (org dir curated, event dir named).
+    root = str(tmp_path)
+    _fixture(root)
+    src = scdata.build_blueprint_sources(root)
+    assert src["bp_foo"] == ["Foxwell Enforcement", "XenoThreat"]
+    b = scdata.build_blueprints(root, {"item_name_foo": "Foo Widget"})[0]
+    assert b["sources"] == ["Foxwell Enforcement", "XenoThreat"]
 
 
 def test_lookup_blueprint_by_name(tmp_path):

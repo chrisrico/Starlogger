@@ -25,6 +25,89 @@ from ._p4k import (
 # per-slot list (no alternatives) and every resource is a mined mineral, so a blueprint
 # maps cleanly to "these minerals, this much, this quality" -> the rocks that yield them.
 
+# --------------------------------------------------------------------------- #
+# Where a blueprint comes from: the mission/faction that rewards it
+# --------------------------------------------------------------------------- #
+# A blueprint is dropped by one or more reward *pools* (BlueprintPoolRecord under
+# crafting/blueprintrewards/), each listing blueprintRewards[].blueprintRecord (the
+# bp_craft_* record). A pool is wired to a faction's missions via a `blueprintPool` ref
+# inside a ContractGenerator (grouped under a faction org dir), or stands alone for an
+# event (XenoThreat, Wikelo's collector exchange). So: blueprint <- pool <- faction. We
+# invert that to a {blueprint-record-stem: [faction/event labels]} index for the planner.
+# Pools carry no display name, so the label comes from the generator's org dir (curated for
+# the run-together names) or, for standalone pools, the pool's own name.
+_ORG_NAMES = {
+    "bitzeros": "BitZeros",
+    "bountyhunterguild": "Bounty Hunters Guild",
+    "citizensforprosperity": "Citizens for Prosperity",
+    "deadsaints": "Dead Saints",
+    "eckhartsecurity": "Eckhart Security",
+    "foxwellenforcement": "Foxwell Enforcement",
+    "shipbattles": "Foxwell Enforcement",   # a Foxwell sub-activity dir
+    "ftl": "FTL",
+    "headhunters": "Headhunters",
+    "hockrowagency": "Hockrow Agency",
+    "intersecdefensesolutions": "Intersec Defense Solutions",
+    "lingfamilyhauling": "Ling Family Hauling",
+}
+
+_POOL_PREFIX = re.compile(r"^(bp_missionreward_|bp_rewards_|bp_reward_)")
+
+
+def _stem(ref: str) -> str:
+    """Basename of a record file ref, minus the ``.json`` (``a/b/foo.json?x`` -> ``foo``)."""
+    return os.path.basename(ref.split("?")[0])[:-5]
+
+
+def _pool_label(pool: str, dirname: str, orgs: "set[str] | None") -> str:
+    """Human label for a reward pool: the faction whose missions grant it, an event name
+    for the standalone pools, or a prettified pool name when nothing else is known."""
+    if dirname == "xenothreat2rewards":
+        return "XenoThreat"
+    if dirname == "collectorwikelo":
+        return "Wikelo (Collector)"
+    real = {o for o in (orgs or set()) if o != "contractgenerator"}
+    if real:   # dedup AFTER mapping -- distinct org dirs can share a display name
+        return ", ".join(sorted({_ORG_NAMES.get(o, o.title()) for o in real}))
+    nm = _POOL_PREFIX.sub("", pool)
+    return _ORG_NAMES.get(nm, nm.replace("_", " ").title())
+
+
+def build_blueprint_sources(records_root: str) -> "dict[str, list[str]]":
+    """``{blueprint-record-stem: [faction/event labels]}`` -- the missions that reward each
+    blueprint. Reads the reward pools and the contract generators that point at them."""
+    # generator org per pool: scan generators once for their blueprintPool refs.
+    pool_orgs: "dict[str, set[str]]" = {}
+    for f in glob.glob(os.path.join(records_root, "**", "contractgenerator", "**", "*.json"),
+                       recursive=True):
+        try:
+            s = open(f, encoding="utf-8").read()
+        except OSError:
+            continue
+        if "blueprintrewards" not in s:
+            continue
+        org = os.path.basename(os.path.dirname(f))
+        for m in re.findall(r"blueprintrewards/[^\"]+?\.json", s):
+            pool_orgs.setdefault(_stem(m), set()).add(org)
+    # pool -> blueprints, inverted to blueprint -> labels.
+    sources: "dict[str, set[str]]" = {}
+    for f in glob.glob(os.path.join(records_root, "**", "blueprintrewards", "**", "*.json"),
+                       recursive=True):
+        try:
+            rv = _load_json(f)["_RecordValue_"]
+        except (OSError, ValueError, KeyError):
+            continue
+        bps = [_stem(b["blueprintRecord"]) for b in (rv.get("blueprintRewards") or [])
+               if b.get("blueprintRecord")]
+        if not bps:
+            continue
+        pool = _stem(f)
+        label = _pool_label(pool, os.path.basename(os.path.dirname(f)), pool_orgs.get(pool))
+        for b in bps:
+            sources.setdefault(b, set()).add(label)
+    return {k: sorted(v) for k, v in sources.items()}
+
+
 def _craft_seconds(bp: dict) -> int:
     """Total craft time in seconds from a recipe's TimeValue_Partitioned, if present."""
     tv = _deep_find(bp, "_Type_", "TimeValue_Partitioned")
@@ -72,9 +155,12 @@ def build_blueprints(records_root: str, loc: dict) -> list:
     """Every craftable blueprint -> {name, category, crafts, craft_seconds, requirements,
     minerals}, read from an extracted DataCore records root. ``requirements`` is the flat
     material list (slot/resource/scu/min_quality); ``minerals`` is the distinct resource
-    names for feeding the mining planner. Placeholders/unnamed blueprints are skipped."""
+    names for feeding the mining planner. A blueprint also carries ``sources`` -- the
+    faction/event missions that reward it -- when any are known. Placeholders/unnamed
+    blueprints are skipped."""
     ent_index = _index_by_basename(records_root, "entities")
     meta_cache: dict[str, dict] = {}   # entity basename -> {name, grade, grade_num}
+    sources = build_blueprint_sources(records_root)   # blueprint-record stem -> [labels]
     out = []
     for p in glob.glob(os.path.join(records_root, "**", "crafting", "blueprints",
                                     "crafting", "**", "*.json"), recursive=True):
@@ -129,6 +215,9 @@ def build_blueprints(records_root: str, loc: dict) -> list:
         if cat.startswith("Vehicle Component"):
             entry["grade"] = cmeta["grade"]
             entry["grade_num"] = cmeta["grade_num"]
+        src = sources.get(os.path.basename(p)[:-5])
+        if src:
+            entry["sources"] = src
         out.append(entry)
     out.sort(key=lambda b: (b["name"], b["category"]))
     return out

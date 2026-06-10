@@ -9,7 +9,9 @@ from ._reference import build_reference_data, _resource_maps
 from ._mineables import build_mineables, build_mineables_from_p4k
 from ._mining_gear import build_mining_gear, build_mining_gear_from_p4k
 from ._salvageables import build_salvageables, build_salvageables_from_p4k
-from ._blueprints import build_blueprints, build_blueprints_from_p4k
+from ._blueprints import (
+    build_blueprints, build_blueprints_from_p4k, build_blueprint_sources,
+)
 from ._contracts import (
     build_contract_taxonomy, build_contract_generators, build_cargo_manifests,
     build_contracts_from_p4k,
@@ -28,7 +30,7 @@ __all__ = [
     "build_mineables", "build_mineables_from_p4k",
     "build_mining_gear", "build_mining_gear_from_p4k",
     "build_salvageables", "build_salvageables_from_p4k",
-    "build_blueprints", "build_blueprints_from_p4k",
+    "build_blueprints", "build_blueprints_from_p4k", "build_blueprint_sources",
     "build_contract_taxonomy", "build_contract_generators", "build_cargo_manifests",
     "build_contracts_from_p4k",
     "build_music_from_p4k", "scan_songs", "select_full_songs", "dump_music_hirc",

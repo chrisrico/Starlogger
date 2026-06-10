@@ -27,7 +27,7 @@ _cache = {"mtime": None, "data": {"blueprints": [], "fetched_at": None, "game_ve
 # Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
 # dropped fields), so installs rebuild the cache on update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
-EXTRACT_VERSION = 0
+EXTRACT_VERSION = 1  # v1: blueprints carry `sources` (the missions/factions that reward them)
 
 
 def save_blueprints(blueprints: list, game_version: str | None = None,
