@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import threading
-from functools import lru_cache
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
@@ -48,22 +47,42 @@ def _asset_files() -> list[str]:
         f for f in os.listdir(WEB_DIR) if f.endswith(".js"))
 
 
-@lru_cache(maxsize=1)
+# (stat-signature, hash) of the last _assets_version() computation. Re-hashing only when a
+# file's mtime/size moves keeps the per-tick liveness check (see the SSE loop) cheap: a few
+# stats, the sha256 only on an actual change.
+_assets_cache: "tuple[tuple, str] | None" = None
+
+
 def _assets_version() -> str:
-    """Content hash of the served frontend assets. An open dashboard compares this
-    across SSE reconnects: a relaunch that changed any of these files -> the tab
-    reloads to pick up the new code; a server-only relaunch -> same hash, no reload.
-    Cached for process life -- the tracker is re-exec'd per launch, so it can't go
-    stale (same reasoning as snapshot._app_version)."""
+    """Content hash of the served frontend assets. An open dashboard reloads whenever this
+    hash changes -- whether it sees the change across an SSE reconnect (a relaunch dropped
+    the socket) or mid-stream (an in-place asset swap re-pushed by the live connection).
+    Stat-gated rather than cached for process life: the tracker mostly changes these files
+    by re-exec'ing into a new build, but they can also move under a still-running process (a
+    manual edit, a `git pull`, a dev sync), and that must still be noticed."""
+    global _assets_cache
+    names = _asset_files()
+    sig = []
+    for name in names:
+        try:
+            st = os.stat(os.path.join(WEB_DIR, name))
+            sig.append((name, st.st_mtime_ns, st.st_size))
+        except OSError:
+            sig.append((name, 0, -1))   # missing file -> a stable, distinct signature entry
+    sig = tuple(sig)
+    if _assets_cache is not None and _assets_cache[0] == sig:
+        return _assets_cache[1]
     h = hashlib.sha256()
-    for name in _asset_files():
+    for name in names:
         try:
             with open(os.path.join(WEB_DIR, name), "rb") as f:
                 h.update(f.read())
         except OSError:
             h.update(b"\0")  # missing file still contributes a stable token
         h.update(b"\x00")  # delimiter so concatenation can't alias
-    return h.hexdigest()[:16]
+    digest = h.hexdigest()[:16]
+    _assets_cache = (sig, digest)
+    return digest
 
 
 def create_app(state: State, log_path: str | None = None, presence=None,
@@ -132,7 +151,9 @@ def create_app(state: State, log_path: str | None = None, presence=None,
             try:
                 # First frame: the asset version, so a reconnecting dashboard can tell
                 # a new-build relaunch (reload to get new code) from a server-only one.
-                yield f"event: meta\ndata: {json.dumps({'assets': _assets_version()})}\n\n"
+                sent_assets = _assets_version()
+                yield f"event: meta\ndata: {json.dumps({'assets': sent_assets})}\n\n"
+                seen_assets = sent_assets   # one-tick debounce for the re-push below
                 last = None
                 while True:
                     with state.version_cv:
@@ -149,6 +170,16 @@ def create_app(state: State, log_path: str | None = None, presence=None,
                         yield f"data: {json.dumps(snap)}\n\n"
                     else:
                         yield ": keepalive\n\n"  # a failed write here -> finally -> disconnect
+                    # Catch a frontend update that swapped these files under us WITHOUT a
+                    # connection-dropping relaunch (manual edit / git pull / dev sync): re-push
+                    # `meta` so the tab reloads, instead of waiting for a reconnect that may
+                    # never come. Announce only once the new hash has held for a full tick, so
+                    # a mid-write copy can't reload the tab onto a half-written asset.
+                    now_assets = _assets_version()
+                    if now_assets != sent_assets and now_assets == seen_assets:
+                        sent_assets = now_assets
+                        yield f"event: meta\ndata: {json.dumps({'assets': now_assets})}\n\n"
+                    seen_assets = now_assets
             finally:
                 if presence is not None:
                     presence.stream_disconnect()

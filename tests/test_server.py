@@ -317,6 +317,60 @@ def test_stream_optional_without_presence(client):
     r.close()
 
 
+# --- live asset-version / auto-reload -------------------------------------- #
+
+def _fake_web(tmp_path):
+    (tmp_path / "index.html").write_text("<html>")
+    (tmp_path / "styles.css").write_text("body{}")
+    (tmp_path / "app.js").write_text("v1")
+    return str(tmp_path)
+
+
+def test_assets_version_tracks_file_changes(monkeypatch, tmp_path):
+    # The hash must follow the served files (so a long-running process notices an in-place
+    # swap), but stay stable -- and reuse the stat-gated cache -- while they don't change.
+    monkeypatch.setattr(server, "WEB_DIR", _fake_web(tmp_path))
+    monkeypatch.setattr(server, "_assets_cache", None)
+    v1 = server._assets_version()
+    assert v1 == server._assets_version()                 # unchanged files -> same hash
+    (tmp_path / "app.js").write_text("v2___longer")        # different size -> new signature
+    assert server._assets_version() != v1                  # ...and a new hash
+
+
+def test_stream_first_frame_is_asset_meta(monkeypatch):
+    c = _stream_client(monkeypatch, _Presence())
+    r = c.get("/api/stream", buffered=False)
+    first = next(r.response)
+    assert first.startswith(b"event: meta")               # asset version leads the stream
+    assert b'"assets"' in first
+    r.close()
+
+
+def test_stream_repushes_meta_on_asset_change(monkeypatch, tmp_path):
+    # An in-place frontend swap under a still-running server must re-push `meta` (the tab
+    # reloads) WITHOUT needing a reconnect. The new hash is announced only once it has held
+    # for a tick, so the bump after the change drives the debounce past its one-tick guard.
+    monkeypatch.setattr(server, "WEB_DIR", _fake_web(tmp_path))
+    monkeypatch.setattr(server, "_assets_cache", None)
+    monkeypatch.setattr(server, "build_snapshot", lambda st, **kw: {"v": st.version})
+    st = State()
+    app = server.create_app(st, log_path="/fake/Game.log")
+    app.testing = True
+    r = app.test_client().get("/api/stream", buffered=False)
+
+    f1 = next(r.response)                                  # meta (baseline hash)
+    assert f1.startswith(b"event: meta")
+    next(r.response)                                       # initial snapshot
+
+    (tmp_path / "app.js").write_text("v2___changed")       # swap an asset mid-stream
+    st.bump_version()                                      # wake the loop past the debounce
+    next(r.response)                                       # snapshot (debounce settles)
+    f4 = next(r.response)                                  # ...then the re-pushed meta
+    assert f4.startswith(b"event: meta")
+    assert f4 != f1                                        # carries the NEW hash
+    r.close()
+
+
 # --- /api/quit (a newer launch replacing this instance) ------------------- #
 
 def test_quit_invokes_shutdown(monkeypatch):

@@ -139,10 +139,12 @@ function connectStream() {
   if (_es) { try { _es.close(); } catch (_) {} }   // drop any stale handle before reopening
   const es = _es = new EventSource("/api/stream");
   es.onopen = () => hideDisconnect();
-  // Named `meta` event (NOT onmessage) carries the served-asset hash. First connect
-  // records the baseline; a reconnect with a different hash means a new build replaced
-  // the tracker on this port -> reload to run the new code. (The active tab survives via
-  // location.hash.) A server-only relaunch keeps the same hash, so the reconnect is silent.
+  // Named `meta` event (NOT onmessage) carries the served-asset hash. First frame records
+  // the baseline; any later frame with a different hash -> reload to run the new code. The
+  // server re-sends it both on reconnect (a relaunch replaced the build on this port) and
+  // mid-stream (the frontend files changed under a still-running tracker), so a stale tab
+  // refreshes itself either way. (The active tab survives via location.hash.) An unchanged
+  // hash is silent -- a server-only relaunch never reloads.
   es.addEventListener("meta", (e) => {
     let m; try { m = JSON.parse(e.data); } catch (_) { return; }
     if (!m || !m.assets) return;
