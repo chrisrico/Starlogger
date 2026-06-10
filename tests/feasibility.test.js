@@ -49,10 +49,10 @@ test("resistance modules crack what the head alone can't", () => {
 });
 
 test("a weak, resistance-worsening laser can't crack a hard rock", () => {
-  // Arbor S1 (power 1890, resistance +25%) on Lindinium: effRes 1.0, effPower ~0 -> Can't crack.
+  // Arbor S1 (power 1890, resistance +25%) on Lindinium: effRes 1.0, effPower ~0 -> Impossible.
   const f = fz(lindinium, ARBOR_S1, []);
   assert.equal(f.tier, "no");
-  assert.equal(f.label, "Can't crack");
+  assert.equal(f.label, "Impossible");
 });
 
 test("trivial rocks (required power 1) grade Easy", () => {
@@ -96,8 +96,26 @@ test("suggestCrack flags when a rock needs a bigger mining ship", () => {
   assert.equal(s.needSize, 2);
 });
 
-test("suggestCrack ignores non-resistance modules", () => {
-  // Only Rime/Lifeline/Surge can help; Focus III (window) is never part of a crack suggestion.
+test("suggestCrack ignores modules that don't move the margin", () => {
+  // Resistance cuts and power boosts can help; Focus III (window-only, margin 0) never can.
   const s = suggestCrack(bexalite, CATALOG.heads, CATALOG.modules, [1]);
   assert.ok(!s.combo.modules.some(m => m.name === "Focus III"));
+});
+
+test("a power booster is a valid crack lever, not just resistance", () => {
+  // Rock 0.45 on Helix I: head-only effPower 2158 < 2500 (can't crack). A single Rieger +25%
+  // power lifts grossPower to 3938 → effPower 2697 → crackable, with no resistance help at all.
+  const rock = { laser_power: 2500, resistance: 0.45 };
+  const cat = {
+    heads: [{ class: "helix_s1", name: "Helix I", size: 1, power: 3150, module_slots: 2, modifiers: { resistance: -30 } }],
+    modules: [
+      { class: "rieger3", name: "Rieger-C3", modifiers: { power: 25, window_size: -1 } },
+      { class: "focus3", name: "Focus III", modifiers: { window_size: 40 } },
+    ],
+  };
+  assert.equal(fz(rock, cat.heads[0], []).tier, "no");
+  const s = suggestCrack(rock, cat.heads, cat.modules, [1]);
+  assert.ok(s.combo);
+  assert.deepEqual(s.combo.modules.map(m => m.name), ["Rieger-C3"]);
+  assert.notEqual(s.combo.result.tier, "no");
 });

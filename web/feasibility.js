@@ -8,15 +8,19 @@
 // EFFECTIVE breaking power is its raw power scaled down by the rock's effective resistance:
 //
 //   effRes   = rock.resistance × (1 + Σ resistance-modifiers%)   (head + modules, additive)
-//   effPower = head.power × (1 − effRes)                         (resistance saps the beam)
+//   grossPwr = head.power × (1 + Σ power-modifiers%)             (modules boost/sap the beam)
+//   effPower = grossPwr × (1 − effRes)                           (resistance saps what's left)
 //   margin   = effPower − rock.required-power                    (required ≈ 2500; 1 = trivial)
 //
 // margin < 0 means the beam can't overcome the rock at all → "Impossible". Above that, how
 // far the margin clears the requirement grades the crack from Hard → Workable → Easy. This is
 // why a negative-resistance rock (quartz −0.7) is trivially easy and Lindinium (0.8) is a wall.
+// The `power` modifier is the module's beam-power delta (Rieger +25%, Rime −15%): it's a real
+// crack lever, so a power booster can lift an "Impossible" rock to crackable, and a resistance
+// module that costs power (Rime) is judged on its net effect, not its headline resistance cut.
 // `mech` is a rock's `mechanics` (laser_power, resistance, instability, window_thinness…);
 // `head`/`modules` are gear records (each a `power` and/or `modifiers` map). Returns
-//   { tier: 'easy'|'ok'|'hard'|'no', label, factors:[string…] }
+//   { tier: 'easy'|'ok'|'hard'|'no', label, margin, factors:[string…] }
 // or null when there's no mechanics or no head to judge.
 (function (global) {
   // Fractions of the rock's required power that the margin must clear for each tier.
@@ -28,16 +32,18 @@
     const gear = [head, ...(modules || [])];
     const sumPct = (key) => gear.reduce((a, g) => a + ((g.modifiers || {})[key] || 0), 0);
     const resPct = sumPct("resistance"), winPct = sumPct("window_size"), instPct = sumPct("instability");
+    const powPct = sumPct("power");
 
     const power = head.power || 0;
     const required = mech.laser_power || 2500;       // rock's full-charge power; default the std rock
     const baseRes = mech.resistance != null ? mech.resistance : 0;
     const effRes = +(baseRes * (1 + resPct / 100)).toFixed(3);
-    const effPower = power * (1 - effRes);
+    const grossPower = power * (1 + powPct / 100);   // modules boost (Rieger) or sap (Rime) the beam
+    const effPower = grossPower * (1 - effRes);
     const margin = effPower - required;
 
     const factors = [
-      `power ${round(power)} → ${round(effPower)} effective (need ${round(required)}, ${margin >= 0 ? "+" : ""}${round(margin)})`,
+      `power ${round(power)}${powPct ? ` ${powPct > 0 ? "+" : ""}${powPct}%` : ""} → ${round(effPower)} effective (need ${round(required)}, ${margin >= 0 ? "+" : ""}${round(margin)})`,
     ];
     if (mech.resistance != null) {
       factors.push(`resistance ${mech.resistance}${resPct ? ` → ${effRes} (${resPct > 0 ? "+" : ""}${resPct}%)` : ""}`);
@@ -50,30 +56,39 @@
     else if (margin < HARD_AT * required) { tier = "hard"; label = "Hard"; }
     else if (margin < EASY_AT * required) { tier = "ok"; label = "Workable"; }
     else { tier = "easy"; label = "Easy"; }
-    return { tier, label, factors };
+    return { tier, label, margin: +margin.toFixed(1), factors };
   }
 
   const TIER_ORDER = { easy: 0, ok: 1, hard: 2, no: 3 };
 
   // Given a rock the current gear can't crack, find gear that would. `heads`/`modules` are the
   // full catalog; `allowedSizes` are the ship's mining-hardpoint sizes (it can only fit a head
-  // matching one). Resistance is the only crack lever, so we stack the best resistance-reducing
-  // modules — fewest first — onto each head. Returns:
+  // matching one). Two crack levers — cut resistance (Rime/Lifeline) or boost power (Rieger) —
+  // so for each head we rank every module by how much it actually moves *this* rock's margin and
+  // stack the best, fewest first. (A window/yield-only module like Focus moves margin 0 → never
+  // suggested; a resistance cut that costs net power is judged on its real margin gain.) Returns:
   //   { combo: { head, modules, result } }  a fittable laser+modules that cracks it (minimal), or
   //   { needSize: <n> }                     when only a bigger hardpoint can (suggest that ship), or
   //   null                                  when nothing in the catalog cracks it.
   function suggestCrack(mech, heads, modules, allowedSizes) {
     if (!mech || !heads || !heads.length) return null;
     const allowed = new Set(allowedSizes || []);
-    const resMods = (modules || [])
-      .filter((m) => ((m.modifiers || {}).resistance || 0) < 0)
-      .sort((a, b) => a.modifiers.resistance - b.modifiers.resistance);   // most reduction first
-    // Fewest resistance modules that bring `head` to crackable; null if even maxed it can't.
+    const pool = modules || [];
+    // Fewest crack-helping modules that bring `head` to crackable; null if even maxed it can't.
     const minimalCrack = (head) => {
       const slots = head.module_slots || 0;
-      for (let k = 0; k <= slots; k++) {
-        const f = feasibility(mech, head, resMods.slice(0, k));
-        if (f && f.tier !== "no") return { head, modules: resMods.slice(0, k), result: f, count: k };
+      const base = feasibility(mech, head, []);
+      const baseMargin = base ? base.margin : -Infinity;
+      // Rank this head's modules by single-module margin gain; keep only the ones that help.
+      const ranked = pool
+        .map((m) => ({ m, gain: (feasibility(mech, head, [m]).margin) - baseMargin }))
+        .filter((x) => x.gain > 0)
+        .sort((a, b) => b.gain - a.gain)
+        .map((x) => x.m);
+      const cap = Math.min(slots, ranked.length);
+      for (let k = 0; k <= cap; k++) {
+        const f = feasibility(mech, head, ranked.slice(0, k));
+        if (f && f.tier !== "no") return { head, modules: ranked.slice(0, k), result: f, count: k };
       }
       return null;
     };

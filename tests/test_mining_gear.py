@@ -52,17 +52,22 @@ def _head_value(size: int, name_key: str, power, mods: dict, slots: int,
     ]}
 
 
-def _module_value(name_key: str, mfr: str, mods: dict, charges: int) -> dict:
-    # Real modules carry several modifier entries; only the mining one has values (the rest
-    # are empty MiningLaserModifier structs the extractor must aggregate past).
+def _module_value(name_key: str, mfr: str, mods: dict, charges: int,
+                  power_mult=None) -> dict:
+    # Real modules carry several modifier entries: a weapon modifier whose damageMultiplier is
+    # the beam-power delta (Rieger ×1.25), and a mining modifier holding the minigame deltas.
+    # The rest are empty MiningLaserModifier structs the extractor must aggregate past.
+    weapon = {"_Type_": "ItemWeaponModifiersParams",
+              "MiningLaserModifier": {"_Type_": "MiningLaserModifiers"}}
+    if power_mult is not None:
+        weapon["weaponModifier"] = {"weaponStats": {"damageMultiplier": power_mult}}
     return {"Components": [
         {"_Type_": "SAttachableComponentParams", "AttachDef": {
             "Size": 1, "Manufacturer": f"file://./.../scitemmanufacturer/{mfr}.json",
             "Localization": {"_Type_": "SCItemLocalization", "Name": name_key}}},
         {"_Type_": "EntityComponentAttachableModifierParams", "charges": charges,
          "modifiers": [
-             {"_Type_": "ItemWeaponModifiersParams",
-              "MiningLaserModifier": {"_Type_": "MiningLaserModifiers"}},
+             weapon,
              {"_Type_": "ItemMiningModifierParams", "MiningLaserModifier": {
                  "_Type_": "MiningLaserModifiers", **{k: _mod(v) for k, v in mods.items()}}}]},
     ]}
@@ -108,7 +113,13 @@ def _fixture_records(root: str) -> None:
     _write(os.path.join(modules, "mining_modules_active_brandt.json"),
            "EntityClassDefinition.Mining_Modules_Active_Brandt", _module_value(
                "@item_brandt", "scitemmanufacturer.misc",
-               {"resistanceModifier": 15.5, "shatterdamageModifier": -30.0}, charges=5))
+               {"resistanceModifier": 15.5, "shatterdamageModifier": -30.0}, charges=5,
+               power_mult=1.35))
+    # A power-booster passive (Rieger C3: ×1.25 beam power = +25%, -1% window).
+    _write(os.path.join(modules, "mining_modules_passive_rieger_mk3.json"),
+           "EntityClassDefinition.Mining_Modules_Passive_Rieger_MK3", _module_value(
+               "@item_rieger_mk3", "grin", {"optimalChargeWindowSizeModifier": -1.0},
+               charges=1, power_mult=1.25))
     _write(os.path.join(modules, "mining_modules_vehiclemod_rocds.json"),
            "EntityClassDefinition.Mining_Modules_VehicleMod_ROCDS",
            _module_value("@item_rocds", "thcn", {}, charges=0))
@@ -122,6 +133,7 @@ def _fixture_records(root: str) -> None:
         f.write("item_focus_mk3=Focus III Module\n")
         f.write("item_fltr_mk1=FLTR Module\n")
         f.write("item_brandt=Brandt Module\n")
+        f.write("item_rieger_mk3=Rieger-C3 Module\n")
         f.write("item_rocds=ROC Module\n")
 
 
@@ -167,14 +179,16 @@ def test_module_families_and_active_flag(tmp_path):
     gear = _build(tmp_path)
     by_name = {m["name"]: m for m in gear["modules"]}
     # the vehicle built-in (ROC) is skipped; the rest are kept (incl. the yield-only FLTR).
-    assert set(by_name) == {"Focus III", "FLTR", "Brandt"}
+    assert set(by_name) == {"Focus III", "FLTR", "Brandt", "Rieger-C3"}
     # passive vs active comes from the class family, NOT charges (passive Focus has charges 1).
     assert by_name["Focus III"]["active"] is False and by_name["Focus III"]["charges"] == 1
     assert by_name["Focus III"]["tier"] == 3 and by_name["Focus III"]["manufacturer_code"] == "THCN"
     assert by_name["Focus III"]["modifiers"] == {"window_size": 40.0}
+    # the beam-power delta (damageMultiplier) is captured as a `power` percent on both families.
+    assert by_name["Rieger-C3"]["modifiers"] == {"power": 25.0, "window_size": -1.0}
     assert by_name["Brandt"]["active"] is True and by_name["Brandt"]["charges"] == 5
     assert by_name["Brandt"]["manufacturer_code"] == "MISC"      # from the ref, not the class
-    assert by_name["Brandt"]["modifiers"] == {"resistance": 15.5, "shatter": -30.0}
+    assert by_name["Brandt"]["modifiers"] == {"power": 35.0, "resistance": 15.5, "shatter": -30.0}
     # the trailing " Module" is stripped; a modifier-less filter is still kept (slottable).
     assert by_name["FLTR"]["modifiers"] == {} and by_name["FLTR"]["tier"] == 1
 

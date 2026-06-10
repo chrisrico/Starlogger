@@ -171,6 +171,13 @@ def _module(rv: dict, cls: str, loc: dict) -> dict | None:
     am = _component(rv, "EntityComponentAttachableModifierParams") or {}
     mods: dict = {}
     for m in am.get("modifiers") or []:
+        # A module's beam-power delta lives apart from the mining-minigame block: it's a
+        # damageMultiplier on a weapon modifier (Rieger ×1.25 = +25% power, Rime ×0.85 = -15%).
+        # Capture it as a `power` percent so it stacks like the other modifiers and feeds the
+        # crack math -- without it a power booster looks like it does nothing (or worse).
+        dmg = _num(((m.get("weaponModifier") or {}).get("weaponStats") or {}).get("damageMultiplier"))
+        if dmg is not None and dmg != 1.0:
+            mods["power"] = round((dmg - 1.0) * 100, 1)
         mods.update(_laser_modifiers(m.get("MiningLaserModifier")))
     code, mfr = _mfr_from_ref(rv)
     charges = _num(am.get("charges"))
