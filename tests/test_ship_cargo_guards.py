@@ -21,7 +21,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from starlogger import ships
-from starlogger.scdata import _ships
+from starlogger.scdata import _p4k, _ships
 
 
 # --- #1: save refuses to shrink a healthy catalog --------------------------- #
@@ -80,6 +80,18 @@ def test_build_tolerates_a_few_failures(monkeypatch, tmp_path):
     # All loadout calls "succeed" (empty -> no cargo); no ship is kept, but no raise either.
     _stub_extract(monkeypatch, 20, lambda sb, p4k, args, timeout=120: "")
     assert _ships.build_ships("p4k", sb="sb", workdir=str(tmp_path)) == {}
+
+
+# --- shutdown hygiene: clear_scratch sweeps orphaned extract dirs ----------- #
+def test_clear_scratch_removes_orphaned_extracts(monkeypatch, tmp_path):
+    base = tmp_path / "scratch"
+    monkeypatch.setattr(_p4k, "EXTRACT_TMP_DIR", str(base))
+    orphan = base / "starlogger-scdata-deadbeef"
+    orphan.mkdir(parents=True)
+    (orphan / "records").mkdir()
+    _p4k.clear_scratch()
+    assert not base.exists()
+    _p4k.clear_scratch()   # absent base -> no-op, never raises
 
 
 if __name__ == "__main__":

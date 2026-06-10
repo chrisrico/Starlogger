@@ -890,6 +890,7 @@ def main() -> None:
         pass
     finally:
         stop.set()
+        scdata.clear_scratch()       # sweep any extract work dirs (incl. ones a hard-kill orphaned)
         httpd.server_close()         # release :8765 promptly for a relaunch to take over
         if restart.is_set():
             _reexec()                # replace this process with the updated code (POSIX: no return)

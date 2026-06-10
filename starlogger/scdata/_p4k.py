@@ -158,6 +158,13 @@ def scratch_dir(prefix: str) -> str:
     return tempfile.mkdtemp(prefix=prefix, dir=EXTRACT_TMP_DIR)
 
 
+def clear_scratch() -> None:
+    """Remove the whole extract scratch base. Called on shutdown to sweep any ~3 GB work dirs
+    an earlier hard-kill (``kill -9`` / OOM) abandoned before its per-extract ``finally`` could
+    run -- a clean run leaves nothing here, so this is usually a no-op."""
+    shutil.rmtree(EXTRACT_TMP_DIR, ignore_errors=True)
+
+
 def _run(sb: str, p4k: str, args: list[str], timeout: int = 1200) -> str:
     """Run StarBreaker at background priority so it yields to the game during a patch.
     Linux: `nice`/`ionice` prefix. Windows: IDLE_PRIORITY_CLASS (≈ nice -n19) plus

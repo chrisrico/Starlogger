@@ -3,7 +3,7 @@
 Split from the former single scdata.py module into a package by extraction job; this
 re-exports the public API so ``from . import scdata`` / ``scdata.X`` callers are unchanged.
 """
-from ._p4k import SB_VERSION, find_p4k
+from ._p4k import SB_VERSION, clear_scratch, find_p4k
 from ._ships import build_ships
 from ._reference import build_reference_data, _resource_maps
 from ._mineables import build_mineables, build_mineables_from_p4k
@@ -23,7 +23,7 @@ from ._music_context import (
 )
 
 __all__ = [
-    "SB_VERSION", "find_p4k", "build_ships",
+    "SB_VERSION", "clear_scratch", "find_p4k", "build_ships",
     "build_reference_data", "_resource_maps",
     "build_mineables", "build_mineables_from_p4k",
     "build_mining_gear", "build_mining_gear_from_p4k",
