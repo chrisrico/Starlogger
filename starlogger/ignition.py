@@ -21,13 +21,12 @@ import threading
 import urllib.error
 import urllib.request
 
-from starlogger import config
+from starlogger import config, settings
 
-# Community localization fork: a richer global.ini that names many otherwise-blank entities.
-STARSTRINGS_URL = (
-    "https://raw.githubusercontent.com/MrKraken/StarStrings/refs/heads/master/"
-    "Data/Localization/english/global.ini"
-)
+# The default StarStrings global.ini source. Re-exported here (the canonical value lives in
+# config) so existing callers/tests can still reach it as ignition.STARSTRINGS_URL; the
+# effective URL is resolved per-launch from the user setting, falling back to this.
+STARSTRINGS_URL = config.STARSTRINGS_URL
 # Where we remember the last-fetched ETag, so a conditional GET can stay quiet when the
 # upstream file is unchanged. A sidecar in DATA_DIR replaces the old xattr-on-the-file dance.
 _ETAG_PATH = os.path.join(config.DATA_DIR, "starstrings.etag")
@@ -67,7 +66,9 @@ def update_starstrings(log_path: str) -> None:
     if stored:
         headers["If-None-Match"] = stored
 
-    req = urllib.request.Request(STARSTRINGS_URL, headers=headers)
+    # The user can point at a different global.ini; an empty/unset setting uses the default.
+    url = settings.resolve_str("starstrings_url") or config.STARSTRINGS_URL
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = resp.read()
@@ -158,8 +159,10 @@ def launch_game(log_path: str, on_exit) -> int | None:
 
     # Refresh StarStrings concurrently with the launch (not before it): the RSI Launcher takes
     # seconds to come up and only then is the game started, so the fetch comfortably lands
-    # before global.ini is read, without ever delaying the launch on a slow network.
-    threading.Thread(target=update_starstrings, args=(log_path,), daemon=True).start()
+    # before global.ini is read, without ever delaying the launch on a slow network. Skipped
+    # entirely when the user has turned the global.ini download off.
+    if settings.resolve_bool("starstrings_enabled"):
+        threading.Thread(target=update_starstrings, args=(log_path,), daemon=True).start()
 
     try:
         proc = subprocess.Popen([sc_launch])

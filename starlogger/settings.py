@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 
+from . import config
 from .config import SETTINGS_PATH
 from .jsonstore import atomic_write, load_cached, read_json
 
@@ -37,7 +38,7 @@ _cache: dict = {"mtime": None, "data": {}}
 # `min` clamps numerics; `options` lists an enum's allowed values.
 CONFIG_SCHEMA = [
     {
-        "key": "open_browser", "type": "bool", "default": True,
+        "key": "open_browser", "type": "bool", "default": True, "widget": "segmented",
         "env": "STARLOGGER_NO_BROWSER", "env_toggle": True,
         "group": "General", "label": "Auto-open dashboard",
         "help": "Open the dashboard in a browser when the tracker starts. "
@@ -58,6 +59,24 @@ CONFIG_SCHEMA = [
                 "keeps it local; \"All network devices\" (0.0.0.0) lets other devices on "
                 "your network open it. An explicit --host / STARLOGGER_HOST overrides this "
                 "(and can bind a specific IP). Applies on the next launch.",
+    },
+    {
+        "key": "starstrings_enabled", "type": "bool", "default": True, "widget": "segmented",
+        "env": "STARLOGGER_NO_STARSTRINGS", "env_toggle": True,
+        "group": "Localization", "label": "Download global.ini",
+        "help": "Refresh the community StarStrings global.ini (richer entity names) at "
+                "launch, before the game reads it. Applies on the next launch.",
+    },
+    {
+        # default "" (not the URL) so an unset field renders BLANK with the default shown as a
+        # placeholder, and update() never records it until the user types a real override; the
+        # download falls back to config.STARSTRINGS_URL when this resolves empty. `format: url`
+        # validates a non-empty value (empty is allowed = "use the default").
+        "key": "starstrings_url", "type": "string", "default": "", "format": "url",
+        "env": "STARLOGGER_STARSTRINGS_URL", "placeholder": config.STARSTRINGS_URL,
+        "group": "Localization", "label": "global.ini source URL",
+        "help": "Where the global.ini is downloaded from. Leave blank to use the default "
+                "community StarStrings source shown. Applies on the next launch.",
     },
     {
         "key": "idle_timeout", "type": "number", "default": 30.0, "min": 1.0,
@@ -162,6 +181,17 @@ def set_ship_equipment(ship: str, equipment: dict | None, path: str | None = Non
 
 # ---- config knobs: coercion, resolution, description, update ------------- #
 
+def _is_http_url(value: str) -> bool:
+    """True for a syntactically valid http(s) URL (scheme + host). Used to validate the
+    `format: url` knobs (e.g. the global.ini source) on save."""
+    from urllib.parse import urlparse
+    try:
+        p = urlparse(value)
+    except ValueError:
+        return False
+    return p.scheme in ("http", "https") and bool(p.netloc)
+
+
 def _coerce(field: dict, value):
     """Coerce a stored/incoming value to the field's type, clamping numerics to `min`.
     Raises ValueError on a value that can't be coerced (drives the API's 400)."""
@@ -183,7 +213,12 @@ def _coerce(field: dict, value):
             raise ValueError(f"{value!r} not one of {field['options']}")
         return v
     # string
-    return str(value).strip()
+    s = str(value).strip()
+    # A `format: url` field accepts blank (= "use the default") but rejects a non-empty value
+    # that isn't a real http(s) URL, so a typo can't silently break the download.
+    if field.get("format") == "url" and s and not _is_http_url(s):
+        raise ValueError(f"{value!r} is not a valid http(s) URL")
+    return s
 
 
 def env_override(key: str) -> bool:
@@ -256,6 +291,8 @@ def describe() -> list[dict]:
             row["unit"] = f["unit"]         # short unit the UI shows inside the number input
         if "widget" in f:
             row["widget"] = f["widget"]     # UI control override (e.g. "segmented" for an enum)
+        if "placeholder" in f:
+            row["placeholder"] = f["placeholder"]  # ghost text shown when the input is blank
         for bound in ("min", "max"):        # numeric bounds the UI enforces (mirror the clamp)
             if bound in f:
                 row[bound] = f[bound]

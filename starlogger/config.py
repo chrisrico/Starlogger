@@ -82,6 +82,14 @@ USER_AGENT = (
     else "Mozilla/5.0 (X11; Linux x86_64) starlogger"
 )
 
+# Community localization fork: a richer global.ini that names many otherwise-blank
+# entities. The default source for the launch-time refresh (see ignition.update_starstrings);
+# the Settings panel can point at a different global.ini, and an empty setting falls back here.
+STARSTRINGS_URL = (
+    "https://raw.githubusercontent.com/MrKraken/StarStrings/refs/heads/master/"
+    "Data/Localization/english/global.ini"
+)
+
 # `Game.log` (and `Data.p4k` beside it) live in the game's LIVE folder. On native
 # Windows that's under %PROGRAMFILES%; on Linux it's inside the Wine/Proton prefix.
 # We probe every platform's candidates (a stray isfile() on the wrong OS is cheap and

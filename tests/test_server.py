@@ -389,6 +389,26 @@ def test_quit_noop_without_fn(client):
     assert client.post("/api/quit").get_json()["ok"] is True
 
 
+# --- /api/restart (re-exec in place) -------------------------------------- #
+
+def test_restart_invokes_on_restart(monkeypatch):
+    monkeypatch.setattr(server, "build_snapshot", lambda st, **kw: {})
+    app = server.create_app(State(), log_path="/fake/Game.log")
+    called = threading.Event()
+    app.config["ON_RESTART"] = called.set   # stand in for the tracker's re-exec trigger
+    app.testing = True
+    r = app.test_client().post("/api/restart")
+    assert r.get_json()["ok"] is True
+    assert called.is_set()                   # ON_RESTART fired (it returns immediately)
+
+
+def test_restart_503_without_fn(client):
+    # No ON_RESTART wired (e.g. a --once host) -> 503, restart unavailable.
+    r = client.post("/api/restart")
+    assert r.status_code == 503
+    assert r.get_json()["ok"] is False
+
+
 # --- /api/update/check (explicit "Check for updates" button) -------------- #
 
 def test_update_check_unavailable_without_fn(client):

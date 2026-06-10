@@ -16,7 +16,25 @@ let SETTINGS_SCHEMA = null;
 function _settingsCtl(f) {
   const id = "set_" + f.key, dis = f.env_override ? " disabled" : "";
   let ctl;
-  if (f.type === "bool") ctl = `<input type="checkbox" id="${id}"${f.value ? " checked" : ""}${dis}>`;
+  if (f.widget === "segmented") {
+    // A segmented control (shared .modesw chrome with the header's Auto/Cargo/Mining switch).
+    // For a bool it's a two-way On/Off; for an enum, one button per option. The picked value
+    // lives in a hidden input so saveSettings reads it like any other knob; the buttons are
+    // wired in renderSettings (no inline handlers / window bridge).
+    const opts = f.type === "bool"
+      ? [{ v: "on", lbl: "On" }, { v: "off", lbl: "Off" }]
+      : (f.options || []).map(o => ({ v: o,
+          lbl: (f.option_labels && f.option_labels[o]) || (o[0].toUpperCase() + o.slice(1)) }));
+    const cur = f.type === "bool" ? (f.value ? "on" : "off") : f.value;
+    const segs = opts.map(o => {
+      const on = o.v === cur;
+      return `<button type="button" class="modesw-opt${on ? " active" : ""}" role="radio"
+        aria-checked="${on}" data-val="${esc(o.v)}"${dis}>${esc(o.lbl)}</button>`;
+    }).join("");
+    ctl = `<input type="hidden" id="${id}" value="${esc(cur)}">` +
+      `<div class="modesw" id="${id}_seg" role="radiogroup">${segs}</div>`;
+  }
+  else if (f.type === "bool") ctl = `<input type="checkbox" id="${id}"${f.value ? " checked" : ""}${dis}>`;
   else if (f.type === "int" || f.type === "number") {
     const attrs = `step="${f.type === "int" ? "1" : "0.5"}" inputmode="${f.type === "int" ? "numeric" : "decimal"}"` +
       (f.min != null ? ` min="${esc(f.min)}"` : "") + (f.max != null ? ` max="${esc(f.max)}"` : "");
@@ -25,25 +43,14 @@ function _settingsCtl(f) {
     // spinners so it sits cleanly against the edge. No unit -> the bare input.
     ctl = f.unit ? `<span class="numf"><span class="numf-u">${esc(f.unit)}</span>${input}</span>` : input;
   }
-  else if (f.widget === "segmented") {
-    // A segmented control (shared .modesw chrome with the header's Auto/Cargo/Mining switch).
-    // The picked value lives in a hidden input so saveSettings reads it like any other knob;
-    // the buttons are wired in renderSettings (no inline handlers / window bridge).
-    const segs = (f.options || []).map(o => {
-      const lbl = (f.option_labels && f.option_labels[o]) || (o[0].toUpperCase() + o.slice(1));
-      const on = o === f.value;
-      return `<button type="button" class="modesw-opt${on ? " active" : ""}" role="radio"
-        aria-checked="${on}" data-val="${esc(o)}"${dis}>${esc(lbl)}</button>`;
-    }).join("");
-    ctl = `<input type="hidden" id="${id}" value="${esc(f.value)}">` +
-      `<div class="modesw" id="${id}_seg" role="radiogroup">${segs}</div>`;
-  }
   else if (f.type === "enum" || f.options)
     ctl = `<select id="${id}"${dis}>` + (f.options || []).map(o => {
       const lbl = (f.option_labels && f.option_labels[o]) || (o[0].toUpperCase() + o.slice(1));
       return `<option value="${esc(o)}"${o === f.value ? " selected" : ""}>${esc(lbl)}</option>`;
     }).join("") + `</select>`;
-  else ctl = `<input type="text" id="${id}" value="${esc(f.value)}"${dis}>`;
+  // A `placeholder` shows ghost text when the input is blank (e.g. the default global.ini URL).
+  else ctl = `<input type="text" id="${id}" value="${esc(f.value)}"` +
+    (f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : "") + `${dis}>`;
   const env = f.env_override ? `<span class="sp-env">set via ${esc(f.env)}</span>` : "";
   return `<div class="sp-ctl">${ctl}${env}</div>`;
 }
@@ -69,29 +76,34 @@ function renderSettings(schema) {
   let html = groups.map(g =>
     `<div class="sp-group"><h3 class="sp-group-h">${esc(g.name)}</h3>` +
     g.fields.map(_settingsRow).join("") +
-    (g.name === "Updates" ? _updateCheckRow() + _shutdownRow() : "") +
+    (g.name === "Updates" ? _updateCheckRow() : "") +
     `</div>`).join("");
-  if (advanced.length) {
-    let open = false;
-    try { open = localStorage.getItem("setAdvOpen") === "1"; } catch (_) {}
-    html += `<div class="sp-group sp-adv${open ? " open" : ""}">` +
-      `<button type="button" class="sp-adv-h" id="setAdvToggle" aria-expanded="${open}">` +
-      `<svg class="sp-adv-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>Advanced</button>` +
-      `<div class="sp-adv-body"${open ? "" : " hidden"}>` + advanced.map(_settingsRow).join("") + `</div></div>`;
-  }
+  // Restart / Shut down are deliberate, rarely-touched lifecycle actions, so they sit at the
+  // very bottom of the (collapsed-by-default) Advanced section, after the advanced knobs.
+  let open = false;
+  try { open = localStorage.getItem("setAdvOpen") === "1"; } catch (_) {}
+  html += `<div class="sp-group sp-adv${open ? " open" : ""}">` +
+    `<button type="button" class="sp-adv-h" id="setAdvToggle" aria-expanded="${open}">` +
+    `<svg class="sp-adv-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>Advanced</button>` +
+    `<div class="sp-adv-body"${open ? "" : " hidden"}>` +
+    advanced.map(_settingsRow).join("") + _shutdownRow() + `</div></div>`;
   $("settingsBody").innerHTML = html;
   const cb = $("checkUpdateBtn");
   if (cb) cb.onclick = checkForUpdate;
   const sd = $("shutdownBtn");
   if (sd) sd.onclick = shutdownTracker;
+  const rs = $("restartBtn");
+  if (rs) rs.onclick = restartTracker;
   const adv = $("setAdvToggle");
   if (adv) adv.onclick = toggleSetAdvanced;
   // Wire each segmented control's buttons to update its backing hidden input.
   $("settingsBody").querySelectorAll(".modesw .modesw-opt[data-val]").forEach(b => {
     b.onclick = () => setSegmented(b.closest(".modesw").id.replace(/_seg$/, ""), b.dataset.val);
   });
-  // The check interval is meaningless when updates are off — hide its row to match.
+  // The check interval is meaningless when updates are off — hide its row to match; likewise
+  // the global.ini URL is moot when its download is off.
   _applyUpdateModeDep();
+  _applyStarstringsDep();
 }
 
 // Apply a segmented control's pick: store it in the backing hidden input + repaint the buttons.
@@ -105,12 +117,19 @@ function setSegmented(id, val) {
     b.setAttribute("aria-checked", on ? "true" : "false");
   });
   if (id === "set_update_mode") _applyUpdateModeDep();
+  else if (id === "set_starstrings_enabled") _applyStarstringsDep();
 }
 
 // Show/hide the "Update check interval" row to match the current Updates mode.
 function _applyUpdateModeDep() {
   const um = $("set_update_mode"), row = $("set_live_update_secs")?.closest(".sp-row");
   if (um && row) row.toggleAttribute("hidden", um.value === "off");
+}
+
+// Show/hide the global.ini source URL row to match the download on/off switch.
+function _applyStarstringsDep() {
+  const en = $("set_starstrings_enabled"), row = $("set_starstrings_url")?.closest(".sp-row");
+  if (en && row) row.toggleAttribute("hidden", en.value === "off");
 }
 
 function toggleSetAdvanced() {
@@ -161,13 +180,27 @@ async function checkForUpdate() {
     default:         return done(`Update check failed${r && r.status ? " (" + esc(r.status) + ")" : ""}.`, true);
   }
 }
-// Stop the tracker process entirely (POST /api/quit -> the WSGI server's .shutdown()). Deliberate,
-// so it's confirmed; the dashboard goes dead afterwards (no auto-relaunch until the next SC launch).
+// Lifecycle actions: Restart re-execs in place (POST /api/restart -> ON_RESTART), Shut down stops
+// the process entirely (POST /api/quit -> the WSGI server's .shutdown()). Both are deliberate, so
+// both are confirmed. After Restart the dashboard's stream reconnects on its own; after Shut down
+// the dashboard goes dead (no auto-relaunch until the next SC launch). They share one note span.
 function _shutdownRow() {
   return `<div class="sp-row sp-action"><div class="sp-label">` +
-    `<span class="t">Shut down tracker ${hintIcon("Stop the tracker process. The dashboard will go offline until it's launched again.")}</span></div>` +
-    `<div class="sp-ctl"><button class="sp-btn danger" id="shutdownBtn">Shut down</button>` +
+    `<span class="t">Restart or shut down ${hintIcon("<b>Restart</b> relaunches the tracker in place — the dashboard reconnects on its own. <b>Shut down</b> stops it entirely; the dashboard goes offline until it's launched again.")}</span></div>` +
+    `<div class="sp-ctl"><div class="sp-btnrow">` +
+    `<button class="sp-btn" id="restartBtn">Restart</button>` +
+    `<button class="sp-btn danger" id="shutdownBtn">Shut down</button></div>` +
     `<span class="sp-note" id="shutdownMsg"></span></div></div>`;
+}
+async function restartTracker() {
+  const btn = $("restartBtn"), msg = $("shutdownMsg");
+  if (!btn) return;
+  if (!confirm("Restart the tracker? The dashboard will briefly disconnect, then reconnect.")) return;
+  btn.disabled = true; msg.textContent = "Restarting…"; msg.classList.remove("err");
+  // The server re-execs right after acking, so the connection drops briefly — a fetch error here
+  // is expected; the SSE stream reconnects to the same URL once the replacement is up.
+  try { await postRaw("/api/restart"); } catch (_) {}
+  msg.textContent = "Restarting — reconnecting…";
 }
 async function shutdownTracker() {
   const btn = $("shutdownBtn"), msg = $("shutdownMsg");
@@ -204,7 +237,8 @@ async function saveSettings() {
     const el = $("set_" + f.key);
     if (!el) continue;
     let v;
-    if (f.type === "bool") v = el.checked;
+    // A bool renders as a checkbox or (widget:"segmented") a hidden input holding "on"/"off".
+    if (f.type === "bool") v = el.type === "checkbox" ? el.checked : el.value === "on";
     else if (f.type === "int" || f.type === "number") {
       if (el.value.trim() === "") continue;        // left blank -> leave unchanged
       v = Number(el.value);
@@ -214,7 +248,9 @@ async function saveSettings() {
       if (f.max != null && v > f.max) return _settingsErr(`“${f.label}” must be at most ${f.max}.`);
     } else {
       v = el.value.trim();
-      if (v === "" && f.value !== "") return _settingsErr(`“${f.label}” can’t be empty.`);
+      // Blank is allowed only when the field's default is itself blank (e.g. the global.ini URL,
+      // where empty means "use the default" shown as placeholder); otherwise it must stay filled.
+      if (v === "" && f.default !== "") return _settingsErr(`“${f.label}” can’t be empty.`);
     }
     if (v !== f.value) payload[f.key] = v;          // only send genuine changes
   }

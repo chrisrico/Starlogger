@@ -999,6 +999,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
    hairline from the row above already divides it — no extra top border (that doubled the line);
    a slightly larger top margin gives the action group a little breathing room. */
 .sp-action{margin-top:8px}
+/* Two lifecycle buttons (Restart + Shut down) sit side by side; .sp-ctl stacks its children, so
+   this row keeps them on one line, with the shared status note below. */
+.sp-btnrow{display:flex;gap:8px}
 .sp-note{font-size:10.5px;font-family:var(--mono);color:var(--ink-3);text-align:right;max-width:160px}
 .sp-note.err{color:var(--red)}
 

@@ -144,6 +144,37 @@ def test_describe_shape(store, monkeypatch):
                 "env_override"} <= set(row)
 
 
+# --- StarStrings global.ini download knobs --------------------------------- #
+
+def test_starstrings_defaults(store):
+    from starlogger import config
+    assert settings.resolve_bool("starstrings_enabled") is True
+    # Unset URL resolves blank (= "use the default"); callers fall back to config.STARSTRINGS_URL.
+    assert settings.resolve_str("starstrings_url") == ""
+    row = {d["key"]: d for d in settings.describe()}["starstrings_url"]
+    assert row["placeholder"] == config.STARSTRINGS_URL   # the default shown as ghost text
+
+
+def test_starstrings_enabled_env_toggle(store, monkeypatch):
+    monkeypatch.setenv("STARLOGGER_NO_STARSTRINGS", "1")
+    assert settings.resolve_bool("starstrings_enabled") is False
+    assert settings.env_override("starstrings_enabled") is True
+
+
+def test_starstrings_url_accepts_valid_and_blank(store):
+    settings.update({"starstrings_url": "https://example.com/global.ini"})
+    assert settings.resolve_str("starstrings_url") == "https://example.com/global.ini"
+    settings.update({"starstrings_url": ""})               # blank = back to default
+    assert settings.resolve_str("starstrings_url") == ""
+
+
+def test_starstrings_url_rejects_non_url(store):
+    with pytest.raises(ValueError):
+        settings.update({"starstrings_url": "not a url"})
+    with pytest.raises(ValueError):
+        settings.update({"starstrings_url": "ftp://example.com/x.ini"})  # only http(s)
+
+
 # --- per-ship mining equipment --------------------------------------------- #
 
 def test_ship_equipment_round_trip(store):

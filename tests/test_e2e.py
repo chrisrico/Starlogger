@@ -50,8 +50,9 @@ def test_settings_advanced_collapsed_by_default(page, live_server):
     assert page.locator("#set_update_remote").is_hidden()
     assert page.locator("#set_update_branch").is_hidden()
     assert page.locator("#set_idle_timeout").is_hidden()
-    # a General row (always visible) anchors the un-collapsed section
-    assert page.locator("#set_open_browser").is_visible()
+    # a General row (always visible) anchors the un-collapsed section — Auto-open is a
+    # segmented on/off switch, so the visible control is its .modesw, not the backing input
+    assert page.locator("#set_open_browser_seg").is_visible()
     # expanding reveals the advanced rows
     page.click("#setAdvToggle")
     assert page.locator("#set_update_remote").is_visible()

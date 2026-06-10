@@ -202,6 +202,18 @@ def create_app(state: State, log_path: str | None = None, presence=None,
             threading.Thread(target=fn, daemon=True).start()
         return jsonify({"ok": True})
 
+    @app.post("/api/restart")
+    def api_restart():
+        # Restart in place: re-exec the tracker with the same args/env (ON_RESTART, wired by
+        # tracker.py, stops the server cleanly off-thread so this response returns first, then
+        # main's finally re-execs). The dashboard's SSE stream reconnects to the same URL once
+        # the replacement is up. 503 if not wired (e.g. tests / a host without restart support).
+        fn = app.config.get("ON_RESTART")
+        if fn is None:
+            return jsonify({"ok": False, "error": "restart unavailable"}), 503
+        fn()
+        return jsonify({"ok": True})
+
     @app.post("/api/closing")
     def api_closing():
         # The dashboard beacons this on pagehide (a deliberate tab close). It does NOT shut
