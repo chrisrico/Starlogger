@@ -323,6 +323,7 @@ main{padding:22px;max-width:1280px;margin:0 auto;width:100%;z-index:3;flex:1 0 a
 .card h3 > span:first-child{display:inline-flex;align-items:center;gap:8px}
 .card h3 > span:first-child::before{content:"";width:3px;height:15px;background:var(--cyan);box-shadow:0 0 8px var(--cyan-deep)}
 .card h3 .scu{font-family:var(--mono);color:var(--cyan);font-weight:600;white-space:nowrap;font-size:13px}
+.card h3 small{font-family:var(--mono);font-weight:400;font-size:10.5px;color:var(--ink-3);letter-spacing:.02em;text-transform:none}
 /* ---- unified in-place editor for unknown values (every cargo-ops screen) ---- */
 /* A click-to-edit cell. Known values reveal a ✎ on hover; unknowns are always
    flagged (dashed underline + amber pen) to signal "fill me in". */
@@ -1106,12 +1107,13 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .juke-seek:disabled{opacity:.4}
 
 /* ---- salvage mode: Ship-ID panel (detected-wreck pills + removable components) ---- */
-.salv-select{font-family:var(--display);font-size:13px;color:var(--ink);background:var(--input-bg);
-  border:1px solid var(--line-2);border-radius:3px;padding:6px 10px;min-width:260px;cursor:pointer}
+.salvage{display:flex;flex-direction:column;gap:14px}   /* mirror .mining so the two cards aren't flush */
+.salv-select{font-family:var(--mono);font-size:13px;color:var(--ink);background:var(--input-bg);
+  border:1px solid var(--line-2);border-radius:2px;padding:8px 10px;min-width:260px;cursor:pointer}
 .salv-select:focus-visible{outline:none;box-shadow:var(--focus-ring)}
 .salv-pills{display:flex;flex-wrap:wrap;gap:7px;padding:6px 16px 12px}
 .salv-pill{font-family:var(--display);font-size:12.5px;letter-spacing:.02em;color:var(--ink);
-  background:rgba(var(--line-rgb),.06);border:1px solid var(--line-2);border-radius:3px;
+  background:rgba(var(--line-rgb),.06);border:1px solid var(--line-2);border-radius:2px;
   padding:4px 11px;cursor:pointer;transition:border-color .12s,background .12s}
 .salv-pill:hover{border-color:var(--cyan);color:var(--cyan)}
 .salv-pill.open{border-color:var(--cyan);background:rgba(var(--cyan-rgb),.12);color:var(--cyan)}
@@ -1120,9 +1122,11 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .salv-detail{margin:0 16px 14px;border:1px solid var(--line);border-left:2px solid var(--cyan);
   border-radius:2px;background:var(--panel-2)}
 .salv-detail-h{font-family:var(--display);font-size:13px;letter-spacing:.03em;color:var(--ink);
-  padding:8px 12px;border-bottom:1px solid var(--line)}
+  padding:8px 12px;border-bottom:1px solid var(--line);
+  display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.salv-detail-h .scu{font-family:var(--mono);color:var(--cyan);font-weight:600;font-size:11.5px;white-space:nowrap}
 .salv-comps{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px 18px;padding:12px}
-.salv-cat-h{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;font-size:10px;
+.salv-cat-h{font-family:var(--display);text-transform:uppercase;letter-spacing:.12em;font-size:10.5px;
   color:var(--ink-3);border-bottom:1px solid var(--line);padding-bottom:3px;margin-bottom:4px}
 .salv-comp{display:flex;align-items:baseline;gap:8px;font-size:12.5px;padding:1px 0}
 .salv-cn{color:var(--ink-1);flex:1;min-width:0}

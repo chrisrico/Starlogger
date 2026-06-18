@@ -53,6 +53,30 @@ function componentsHtml(components) {
   return `<div class="salv-comps">${blocks.join("")}</div>`;
 }
 
+// "11/15 pullable" (counting ×N multiplicities) -- the actionable number for a salvager;
+// collapses to "15 pullable" when nothing's locked. Empty string for no components.
+function pullSummary(components) {
+  const cs = components || [];
+  if (!cs.length) return "";
+  const units = c => (c.count > 1 ? c.count : 1);
+  const total = cs.reduce((n, c) => n + units(c), 0);
+  const pull = cs.reduce((n, c) => n + (c.pullable ? units(c) : 0), 0);
+  return pull === total ? `${total} pullable` : `${pull}/${total} pullable`;
+}
+
+// The expanded breakdown panel, shared by the auto pills and the dropdown. `label` is the
+// header's left text, inserted RAW -- callers escape it (the pills pass a ship name; the
+// dropdown a fixed string, since the <select> already names the ship, so we don't repeat it).
+// The header's right side carries the pullable-count summary rather than duplicating the name.
+function detailPanel(label, components, resolved) {
+  const body = resolved
+    ? componentsHtml(components)
+    : `<div class="empty">Component data not built yet (catalog still building).</div>`;
+  const sum = resolved ? pullSummary(components) : "";
+  return `<div class="salv-detail"><div class="salv-detail-h"><span>${label}</span>`
+    + `${sum ? `<span class="scu">${sum}</span>` : ""}</div>${body}</div>`;
+}
+
 function pill(shipClass, name, count, open, resolved, fn) {
   const mult = count > 1 ? ` ×${count}` : "";
   const cls = "salv-pill" + (open ? " open" : "") + (resolved === false ? " unresolved" : "");
@@ -69,11 +93,8 @@ function autoHtml(d) {
   const pills = list.map(s => pill(s.ship_class, s.name, s.count, OPEN.has(s.ship_class),
                                    s.resolved, "salvageToggle")).join("");
   const detail = list.filter(s => OPEN.has(s.ship_class)).map(s =>
-    `<div class="salv-detail"><div class="salv-detail-h">${esc(s.name)}`
-    + `${s.manufacturer ? ` · ${esc(s.manufacturer)}` : ""}</div>`
-    + (s.resolved ? componentsHtml(s.components)
-                  : `<div class="empty">Component data not built yet (catalog still building).</div>`)
-    + `</div>`).join("");
+    detailPanel(`${esc(s.name)}${s.manufacturer ? ` · ${esc(s.manufacturer)}` : ""}`,
+                s.components, s.resolved)).join("");
   return `<div class="salv-pills">${pills}</div>${detail}`;
 }
 
@@ -99,12 +120,10 @@ function pickerHtml() {
     opts.map(([key, label]) =>
       `<option value="${esc(key)}"${key === PICKED ? " selected" : ""}>${esc(label)}</option>`)
   ).join("");
+  // The <select> already shows the picked ship's name+manufacturer, so the detail header below
+  // says "Removable components" (+ the pullable summary) instead of repeating it.
   const e = PICKED ? CATALOG[PICKED] : null;
-  const detail = e
-    ? `<div class="salv-detail"><div class="salv-detail-h">${esc(e.name)}`
-      + `${e.manufacturer ? ` · ${esc(e.manufacturer)}` : ""}</div>`
-      + componentsHtml(e.components) + `</div>`
-    : "";
+  const detail = e ? detailPanel("Removable components", e.components, true) : "";
   return `<div class="mform"><select id="salv-pick" class="salv-select" aria-label="Salvageable ship"`
     + ` onchange="salvagePick(this.value)">${options}</select></div>${detail}`;
 }
@@ -125,14 +144,18 @@ async function renderPicker() {
 
 // ---- shell ----
 function shell() {
+  // Wrap the cards in .salvage (a gap'd flex column, like .mining) so they don't sit flush;
+  // <span>-wrapped titles pick up the shared .card h3 cyan accent bar every other card has.
   setHTML("salvage", `
-    <div class="card">
-      <h3>Detected wrecks <small>this session</small></h3>
-      <div id="salv-auto"></div>
-    </div>
-    <div class="card">
-      <h3>Any salvageable ship</h3>
-      <div id="salv-pick-wrap"></div>
+    <div class="salvage">
+      <div class="card">
+        <h3><span>Detected wrecks</span><small>this session</small></h3>
+        <div id="salv-auto"></div>
+      </div>
+      <div class="card">
+        <h3><span>Any salvageable ship</span></h3>
+        <div id="salv-pick-wrap"></div>
+      </div>
     </div>`);
 }
 
