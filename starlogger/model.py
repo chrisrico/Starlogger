@@ -54,6 +54,25 @@ class Trade:
 
 
 @dataclass
+class SalvageTarget:
+    """A salvageable wreck detected at the salvage site from its entity-spawn line
+    (``CItemResourceHost::AddHostedNode ... Host :<class>_Unmanned_Salvage_<id>``; see
+    ``patterns.SALVAGE_SPAWN``). These lines carry no MissionId, so this is a session-scoped
+    sighting -- "what's out there to strip", not a contract link. ``ship_class`` is the base
+    spaceship class (e.g. ``AEGS_Gladius``); ``entity_ids`` dedupes the repeated host lines a
+    single wreck emits (one per child tank), so ``count`` is the number of distinct wrecks of
+    this class seen this session."""
+    ship_class: str
+    entity_ids: set[str] = field(default_factory=set)
+    first_seen: str | None = None
+    last_seen: str | None = None
+
+    @property
+    def count(self) -> int:
+        return len(self.entity_ids)
+
+
+@dataclass
 class Mission:
     mission_id: str
     title: str = ""

@@ -124,6 +124,25 @@ def test_mining_tab_renders_in_mining_mode(page, populated_server):
     assert errors == [], errors
 
 
+def test_salvage_tab_renders_in_salvage_mode(page, populated_server):
+    """The Salvage tab is hidden in cargo mode, so force salvage via setMode (a bridged
+    handler), confirm the Ship-ID panel shell renders, and drive the manual-RS lookup handler
+    (the test catalog is empty, so it should degrade to a graceful empty state, not an error).
+    Detected-wreck resolution is unit-tested; this is the real-browser mode/render path guard."""
+    errors = _boot(page, populated_server)
+    page.evaluate("window.setMode('salvage')")
+    page.wait_for_selector('#nav a[data-tab="salvage"]:not(.hide)')
+    page.click('#nav a[data-tab="salvage"]')
+    page.wait_for_selector("#salvage #salv-auto")          # auto-detected wreck container
+    page.wait_for_selector("#salvage #salv-rs")            # the manual RS input
+    page.fill("#salvage #salv-rs", "2400")
+    page.evaluate("window.salvageIdentify()")
+    page.wait_for_function(
+        "() => { const m = document.querySelector('#salv-manual'); "
+        "return m && m.textContent.trim().length > 0; }")
+    assert errors == [], errors
+
+
 def test_contracts_editor_opens_via_inline_handler(page, populated_server):
     """Drives editMission (a bridged inline handler) and confirms the editor renders."""
     errors = _boot(page, populated_server)

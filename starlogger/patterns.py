@@ -268,6 +268,17 @@ VEHICLE_CTRL = re.compile(
     r"Vehicle Control Flow>\s*\w+::(?P<act>SetDriver|ClearDriver):\s*Local client node "
     r"\[\d+\][^']*'(?P<ent>[A-Za-z][A-Za-z0-9_]+?)_\d+'"
 )
+# A salvageable wreck spawning at the salvage site: the game registers each unmanned-salvage
+# hull's resource host, whose token is `<BASE_SHIP_CLASS>_Unmanned_Salvage_<numericEntityId>`
+# (e.g. "Host  :AEGS_Gladius_Unmanned_Salvage_387873708417"). The line carries NO MissionId,
+# so this only says "that wreck is out there", not which contract -- see state._salvage_spawn /
+# model.SalvageTarget. `base` keeps the variant suffix (CRUS_Starlifter_C2); it keys straight
+# into salvage_ships.json. The ship token is bounded ({0,63}) like QT_ROUTE so the lazy match
+# can't backtrack quadratically on a hostile line (State.feed's 64 KB cap is the other backstop).
+SALVAGE_SPAWN = re.compile(
+    r"AddHostedNode\b.*?\bHost\s*:\s*"
+    r"(?P<base>[A-Za-z][A-Za-z0-9_]{0,63}?)_Unmanned_Salvage_(?P<eid>\d+)"
+)
 
 _TAG = re.compile(r"<[^>]+>")  # strip <EM4> ... </EM4> markup from titles
 

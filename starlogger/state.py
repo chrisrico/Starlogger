@@ -7,7 +7,7 @@ import threading
 from collections import deque
 
 from . import patterns
-from .model import Leg, Mission, Trade
+from .model import Leg, Mission, SalvageTarget, Trade
 from .planner import classify_station
 
 # A mission in one of these states is finished -- the trigger for a live archive
@@ -31,6 +31,10 @@ class State:
         self.travel_routes: list[dict] = []  # quantum route calcs (ts, ship, frm, to)
         self.travel_arrivals: list[dict] = []  # quantum drive arrivals (ts, ship)
         self.zone_names: dict[str, str] = {}  # zoneHostId -> station name
+        # Salvageable wrecks detected at the salvage site this session (entity-spawn lines;
+        # see patterns.SALVAGE_SPAWN). Keyed by base ship class, deduped by entity id. A
+        # session sighting, NOT tied to a contract; cleared on reset like the other sightings.
+        self.salvage_targets: dict[str, SalvageTarget] = {}
         self.player: str | None = None
         self.location: str | None = None  # current station (where the client last requested inventory)
         self.session_started_at: str | None = None
@@ -95,6 +99,7 @@ class State:
             self.travel_routes.clear()
             self.travel_arrivals.clear()
             self.zone_names.clear()
+            self.salvage_targets.clear()
             self.total_awarded = 0
             self._pending_award.clear()
             self.ship = None
@@ -145,6 +150,8 @@ class State:
         if self._version(line):
             return
         if self._ship(line, ts):
+            return
+        if self._salvage_spawn(line, ts):
             return
         if self._trade(line, ts):
             return
@@ -290,6 +297,22 @@ class State:
     def _clear_boarded(self) -> None:
         self.boarded_ship = None
         self.boarded_owner = None
+
+    def _salvage_spawn(self, line: str, ts: str | None) -> bool:
+        """Record a salvageable wreck from its resource-host spawn line. A single wreck logs
+        several host lines (one per child tank) at the same entity id, so dedupe by id; the
+        line names no MissionId, so this is just a session sighting (see model.SalvageTarget)."""
+        m = patterns.SALVAGE_SPAWN.search(line)
+        if not m:
+            return False
+        base, eid = m.group("base"), m.group("eid")
+        t = self.salvage_targets.get(base)
+        if t is None:
+            t = SalvageTarget(ship_class=base, first_seen=ts)
+            self.salvage_targets[base] = t
+        t.entity_ids.add(eid)
+        t.last_seen = ts
+        return True
 
     def _trade(self, line: str, ts: str | None) -> bool:
         """Record a manual commodity-terminal buy/sell. The request line is the only

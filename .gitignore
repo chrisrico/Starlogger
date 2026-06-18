@@ -45,6 +45,7 @@ ships.json
 reference.json
 mineables.json
 salvageables.json
+salvage_ships.json
 blueprints.json
 contracts.json
 mission_icons/

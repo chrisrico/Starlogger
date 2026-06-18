@@ -7,6 +7,9 @@ import {
   identifyAgain, identifyPredict, identifyKey, bpOpen, bpFilter, bpPick, bpKey,
   syncIdentifySession,
 } from "./mining.js";
+import {
+  initSalvage, renderSalvage, salvageToggle, salvageIdentify, salvageManualPick, salvageKey,
+} from "./salvage.js";
 import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState, claimJukeboxPrimary } from "./jukebox.js";
 import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
 import "./shipequip.js";  // side-effect: wires the ship-equipment popup + self-bridges its handlers
@@ -38,7 +41,7 @@ let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "p
 // server.py's SPA fallback) and the sidebar items are genuine <a href> links. A section's
 // sub-tab (Cargo's Loading/Unloading, Mining's Identify/Find/Plan) is view state WITHIN a
 // page, not a page of its own, so it lives in the URL #hash instead of the path.
-const TABS = ["contracts", "cargo", "plan", "archive", "mining"];
+const TABS = ["contracts", "cargo", "plan", "archive", "mining", "salvage"];
 const DEFAULT_TAB = "contracts";
 const tabFromPath = (p) => {
   const seg = (p || "/").replace(/^\/+|\/+$/g, "").split("/")[0];
@@ -61,6 +64,7 @@ function activateTab(name, { push = true } = {}) {
   }
   if (name === "archive") activateArchiveTab();
   if (name === "mining") initMining();
+  if (name === "salvage") initSalvage();
   applySub(name, hash.slice(1));                     // restore Loading/Unloading / mining sub
 }
 // Apply a section's sub-tab from the URL #hash. No (or an unrecognised) hash leaves the
@@ -129,12 +133,17 @@ document.addEventListener("keydown", (e) => {
 // the mining-relevant set. The MODE switch in the header lets the user pin it: "auto"
 // follows detection; "cargo"/"mining" force a mode (e.g. to use the mining reference tools
 // on foot, or to plan a haul while still sat in a Prospector). Persisted across sessions.
-let MODE_OVERRIDE = localStorage.getItem("modeOverride") || "auto";   // auto | cargo | mining
-function effectiveMining(d) {
-  if (MODE_OVERRIDE === "mining") return true;
-  if (MODE_OVERRIDE === "cargo") return false;
-  return !!(d && d.mining_ship);                                      // auto → follow the ship
+let MODE_OVERRIDE = localStorage.getItem("modeOverride") || "auto";   // auto | cargo | mining | salvage
+// The effective mode for this snapshot: a pinned override, else auto-detected. Mining wins (a
+// mining vehicle), then salvage (a salvage vessel OR wrecks detected in the log this session),
+// else cargo. Drives the tab layout and the header readouts/gauge.
+function effectiveMode(d) {
+  if (MODE_OVERRIDE !== "auto") return MODE_OVERRIDE;
+  if (d && d.mining_ship) return "mining";
+  if (d && (d.salvage_ship || (d.detected_salvage && d.detected_salvage.length))) return "salvage";
+  return "cargo";
 }
+function effectiveMining(d) { return effectiveMode(d) === "mining"; }  // header keys off this
 function setMode(m) {
   if (MODE_OVERRIDE === m) return;
   MODE_OVERRIDE = m;
@@ -142,36 +151,38 @@ function setMode(m) {
   const d = curData(); if (d) renderAll(d);                           // swap tabs + header at once
 }
 function modeSwitchHtml(d) {
-  const eff = effectiveMining(d) ? "mining" : "cargo";
-  return [["auto", "Auto"], ["cargo", "Cargo"], ["mining", "Mining"]].map(([k, t]) => {
-    const on = MODE_OVERRIDE === k;
-    const hint = (k === "auto") ? ` <small>${eff}</small>` : "";       // show what Auto resolved to
-    const title = k === "auto" ? "Follow the detected ship" : `Always use ${t} mode`;
-    return `<button class="modesw-opt${on ? " active" : ""}" aria-pressed="${on}"
-      title="${title}" onclick="setMode('${k}')">${t}${hint}</button>`;
-  }).join("");
+  const eff = effectiveMode(d);                                       // what Auto resolved to
+  return [["auto", "Auto"], ["cargo", "Cargo"], ["mining", "Mining"], ["salvage", "Salvage"]]
+    .map(([k, t]) => {
+      const on = MODE_OVERRIDE === k;
+      const hint = (k === "auto") ? ` <small>${eff}</small>` : "";
+      const title = k === "auto" ? "Follow the detected ship / wrecks" : `Always use ${t} mode`;
+      return `<button class="modesw-opt${on ? " active" : ""}" aria-pressed="${on}"
+        title="${title}" onclick="setMode('${k}')">${t}${hint}</button>`;
+    }).join("");
 }
 
-// When the player is in (or the MODE switch forces) mining, the cargo-hauling tabs make no
-// sense, so the Cargo and Plan tabs are hidden and the Mining tab takes their slot right
-// after Contracts. Driven from renderAll on every snapshot; idempotent via MINING_LAYOUT so
-// it only touches the DOM on an actual mode change.
+// Each mode shows its own tab set: cargo keeps the hauling tabs; mining and salvage each hide
+// Cargo+Plan and slot their own tool tab right after Contracts. Driven from renderAll on every
+// snapshot; idempotent via LAYOUT_MODE so it only touches the DOM on an actual mode change.
 const HAUL_TABS = ["contracts", "cargo", "plan", "archive"];
 const MINE_TABS = ["contracts", "mining", "archive"];
-let MINING_LAYOUT = null;   // null until the first snapshot picks a layout
-function applyTabLayout(mining) {
-  if (MINING_LAYOUT === mining) return;
-  MINING_LAYOUT = mining;
-  const order = mining ? MINE_TABS : HAUL_TABS;
+const SALV_TABS = ["contracts", "salvage", "archive"];
+const MODE_TABS = { mining: MINE_TABS, salvage: SALV_TABS, cargo: HAUL_TABS };
+let LAYOUT_MODE = null;   // null until the first snapshot picks a layout
+function applyTabLayout(mode) {
+  if (LAYOUT_MODE === mode) return;
+  LAYOUT_MODE = mode;
+  const order = MODE_TABS[mode] || HAUL_TABS;
   document.querySelectorAll("#nav [data-tab]").forEach(b => {
     const i = order.indexOf(b.dataset.tab);
     b.classList.toggle("hide", i < 0);
     if (i >= 0) b.style.order = i;   // flex order: keep the visible slots contiguous
   });
-  // If the active tab just got hidden, fall back to a sensible visible one. This is an
-  // automatic correction (the mode changed under the user), not a navigation — replace the
+  // If the active tab just got hidden, fall back to the mode's primary tab (mining→Mining,
+  // salvage→Salvage, else Contracts). An automatic correction, not a navigation — replace the
   // URL rather than pushing a history entry the user never asked for.
-  if (!order.includes(S.TAB)) activateTab(mining ? "mining" : "contracts", { push: false });
+  if (!order.includes(S.TAB)) activateTab(mode === "cargo" ? "contracts" : mode, { push: false });
 }
 
 
@@ -1004,8 +1015,9 @@ const destHue = (i) => Math.round((i * 137.508) % 360);
 export function renderAll(d) {
   if (!d) return;
   syncIdentifySession();   // reset the Identify strip the moment the play session changes
-  applyTabLayout(effectiveMining(d));   // detected mining ship (or the MODE switch) → Mining tabs
+  applyTabLayout(effectiveMode(d));   // detected ship / wrecks (or the MODE switch) → tab layout
   renderHeader(d);
+  renderSalvage(d);                   // refresh the Salvage panel's auto-detected wreck pills
   setHTML("datalists", datalistsHtml(d.catalog));
   // EDIT_CELL guards every cargo-ops screen so an open inline editor isn't clobbered by
   // the 3s poll; DRAG_DEST guards a route drag; GRID_HOVER guards the hold highlight. Plan
@@ -1315,6 +1327,8 @@ Object.assign(window, {
   // mining (Identify / Find / Plan)
   miningSub, miningIdentify, miningFind, miningIndex, identifyAgain, identifyPredict, identifyKey,
   bpOpen, bpFilter, bpPick, bpKey,
+  // salvage (Ship-ID panel)
+  salvageToggle, salvageIdentify, salvageManualPick, salvageKey,
 });
 
 // ---- initial route resolution (runs last, once all tab state + functions exist) ---- //

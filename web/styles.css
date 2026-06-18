@@ -1105,4 +1105,27 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .juke-seek{flex:1;min-width:60px;accent-color:var(--cyan)}
 .juke-seek:disabled{opacity:.4}
 
+/* ---- salvage mode: Ship-ID panel (detected-wreck pills + removable components) ---- */
+.salv-pills{display:flex;flex-wrap:wrap;gap:7px;padding:6px 16px 12px}
+.salv-pill{font-family:var(--display);font-size:12.5px;letter-spacing:.02em;color:var(--ink);
+  background:rgba(var(--line-rgb),.06);border:1px solid var(--line-2);border-radius:3px;
+  padding:4px 11px;cursor:pointer;transition:border-color .12s,background .12s}
+.salv-pill:hover{border-color:var(--cyan);color:var(--cyan)}
+.salv-pill.open{border-color:var(--cyan);background:rgba(var(--cyan-rgb),.12);color:var(--cyan)}
+.salv-pill.unresolved{color:var(--ink-3);border-style:dashed}
+.salv-pill:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+.salv-detail{margin:0 16px 14px;border:1px solid var(--line);border-left:2px solid var(--cyan);
+  border-radius:2px;background:var(--panel-2)}
+.salv-detail-h{font-family:var(--display);font-size:13px;letter-spacing:.03em;color:var(--ink);
+  padding:8px 12px;border-bottom:1px solid var(--line)}
+.salv-comps{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px 18px;padding:12px}
+.salv-cat-h{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;font-size:10px;
+  color:var(--ink-3);border-bottom:1px solid var(--line);padding-bottom:3px;margin-bottom:4px}
+.salv-comp{display:flex;align-items:baseline;gap:8px;font-size:12.5px;padding:1px 0}
+.salv-cn{color:var(--ink-1);flex:1;min-width:0}
+.salv-cm{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap}
+.salv-comp.greyed .salv-cn,.salv-comp.greyed .salv-cm{color:var(--ink-3);opacity:.6}
+.salv-lock{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--amber);border:1px solid rgba(var(--amber-rgb),.4);border-radius:2px;padding:0 4px}
+
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}

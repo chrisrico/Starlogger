@@ -46,6 +46,10 @@ MINING_GEAR_PATH = os.path.join(DATA_DIR, "mining_gear.json")
 # that identifies a target (whole-ship hull or n debris panels). Feeds the rock-lookup
 # Identify tab as a separate "salvage targets" section. See salvageables.py.
 SALVAGEABLES_PATH = os.path.join(DATA_DIR, "salvageables.json")
+# Salvageable wreck ships (every ship with an *_Unmanned_Salvage variant) -> the removable
+# components the salvage beam can strip, built from the same full DataCore extract + per-ship
+# loadouts. Feeds the Salvage mode's Ship-ID panel. See salvage_ships.py.
+SALVAGE_SHIPS_PATH = os.path.join(DATA_DIR, "salvage_ships.json")
 # Crafting blueprints + their material requirements, from the same full DataCore
 # extract (links a blueprint -> the minerals it needs -> the rocks that yield them).
 # See blueprints.py.

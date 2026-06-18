@@ -30,6 +30,7 @@ from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_miner
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .mining_gear import head_by_class, load_mining_gear, modules as gear_modules
 from .salvageables import salvage_lookup
+from . import salvage_ships
 from .ships import load_ship_cargo, mining_hardpoints
 from .tradeflags import set_lost
 from .snapshot import build_snapshot
@@ -367,6 +368,20 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         # Salvage targets share the radar; the same reading can also be a wreck (ship hull
         # or n debris panels), surfaced as a separate Identify section (no composition).
         return jsonify({"rs": rs, "candidates": lookup_rs(rs), "salvage": salvage_lookup(rs)})
+
+    @app.get("/api/salvage-ship")
+    def api_salvage_ship():
+        # Removable (salvage-beam-strippable) components of a wreck ship, for the Salvage
+        # mode's Ship-ID panel. ?class=<base class> or ?name=<display name> resolves one ship
+        # (used when a manual RS-lookup candidate is clicked); with neither, returns the whole
+        # catalog. Auto-detected wrecks already carry their components in the snapshot.
+        ident = request.args.get("class") or request.args.get("name")
+        if ident:
+            hit = salvage_ships.lookup(ident)
+            if not hit:
+                return jsonify({"ok": False, "error": "unknown salvage ship"}), 404
+            return jsonify(hit)
+        return jsonify(salvage_ships.load_salvage_ships())
 
     @app.get("/api/rock-decompose")
     def api_rock_decompose():

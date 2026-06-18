@@ -16,12 +16,29 @@ from ._p4k import (
 )
 
 
+# AttachDef.Type -> friendly slot. The first four are the headline non-weapon
+# components surfaced (with their grade) in the cargo ship view; the rest are the
+# weapons/ordnance/radar a salvage wreck can be stripped of (see the salvage Ship-ID
+# feature / _salvage_ships.py). build_ships keeps only `_HEADLINE_SLOTS` so ships.json
+# is unchanged; build_salvage_ships consumes the whole index.
 _COMPONENT_SLOTS = {
     "PowerPlant": "power_plant",
     "Cooler": "cooler",
     "Shield": "shield",
     "QuantumDrive": "quantum_drive",
+    "Radar": "radar",
+    "WeaponGun": "weapon",
+    "Missile": "missile",
+    "MissileLauncher": "missile_rack",
+    "Turret": "turret",
+    "TurretBase": "turret_base",
+    "UtilityTurret": "utility_turret",
+    "WeaponDefensive": "countermeasure",
 }
+
+# The slots build_ships writes into ships.json `components` (unchanged shape); the wider
+# weapon/turret/radar slots above are for the salvage catalog only.
+_HEADLINE_SLOTS = ("power_plant", "cooler", "shield", "quantum_drive")
 
 # A handful of capital / modular ships whose grids live in same-class sub-assemblies
 # that the flattened loadout text can't disambiguate. Hand-pinned total SCU; rare
@@ -116,12 +133,25 @@ def _find_container_ref(o) -> str | None:
 
 
 def build_component_index(records_root: str) -> dict:
-    """Map a ship-component item class (lower) -> {slot, size, grade, grade_num} for the
-    four headline components (power plant / cooler / shield / quantum drive), read from
-    each item's ``SAttachableComponentParams.AttachDef`` (``Type``/``Size``/``Grade``)."""
+    """Map a ship-component/weapon item class (lower) -> {slot, size, grade, grade_num,
+    salvagable, loc_key}, read from each item's ``SAttachableComponentParams.AttachDef``
+    (``Type``/``Size``/``Grade``/``Localization.Name``). Covers the headline components
+    (power plant / cooler / shield / quantum drive / radar) AND ship weapons / turrets /
+    missiles / countermeasures -- the whole ``_COMPONENT_SLOTS`` map.
+
+    ``salvagable`` is the item's ``SHealthComponentParams.IsSalvagable`` -- the game's own
+    per-item flag for whether the salvage beam can strip it off a wreck (see _salvage_ships).
+    ``loc_key`` is the AttachDef's localised-name pointer, used as a name fallback for items
+    (most weapons) whose loc key doesn't match their class id."""
     idx: dict[str, dict] = {}
-    for sub in ("powerplant", "cooler", "shieldgenerator", "quantumdrive"):
-        pat = os.path.join(records_root, "**", "entities", "scitem", "ships", sub, "**", "*.json")
+    # Scan both the ship-component tree (powerplant/cooler/shield/quantumdrive/radar/turret/
+    # missile_racks/...) and the weapons tree (guns/missiles). Items whose AttachDef.Type
+    # isn't in _COMPONENT_SLOTS (ammo boxes, magazines, ...) are skipped.
+    roots = (
+        os.path.join(records_root, "**", "entities", "scitem", "ships", "**", "*.json"),
+        os.path.join(records_root, "**", "entities", "scitem", "weapons", "**", "*.json"),
+    )
+    for pat in roots:
         for p in glob.glob(pat, recursive=True):
             try:
                 d = _load_json(p)
@@ -130,17 +160,21 @@ def build_component_index(records_root: str) -> dict:
             name = d.get("_RecordName_", "")
             if "." not in name:
                 continue
-            ad = _deep_find(d.get("_RecordValue_"), "_Type_", "SAttachableComponentParams")
+            rv = d.get("_RecordValue_")
+            ad = _deep_find(rv, "_Type_", "SAttachableComponentParams")
             ad = (ad or {}).get("AttachDef") or {}
             slot = _COMPONENT_SLOTS.get(ad.get("Type"))
             if not slot:
                 continue
             grade = ad.get("Grade")
+            health = _deep_find(rv, "_Type_", "SHealthComponentParams") or {}
             idx[name.split(".", 1)[1].lower()] = {
                 "slot": slot,
                 "size": ad.get("Size"),
                 "grade": _GRADE_LETTER.get(grade),
                 "grade_num": grade,
+                "salvagable": bool(health.get("IsSalvagable")),
+                "loc_key": (ad.get("Localization") or {}).get("Name"),
             }
     return idx
 
@@ -320,9 +354,11 @@ def resolve_ship_components(ship_class: str, loadout_text: str, component_index:
         # after `item_name` (e.g. `item_Name_POWR_AEGS_S03_Centurion`). Try each form
         # before falling back to the raw class.
         bare = child.removesuffix("_scitem")
+        loc_key = (info.get("loc_key") or "").lstrip("@").lower()
         name = (loc.get(f"item_name{child}")
                 or loc.get(f"item_name{bare}")
                 or loc.get(f"item_name_{bare}")
+                or (loc.get(loc_key) if loc_key else None)
                 or child)
         bucket[child] = {
             "name": name,
@@ -674,7 +710,10 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                 "groups": groups,
             }
             entry.update(meta)
+            # component_index now also carries weapons/turrets/radar (for the salvage
+            # catalog); ships.json keeps only the four headline component slots it always had.
             components = resolve_ship_components(cls, loadout_text, component_index, loc)
+            components = {s: components[s] for s in _HEADLINE_SLOTS if s in components}
             if components:
                 entry["components"] = components
             if mining:

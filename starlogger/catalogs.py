@@ -52,7 +52,7 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
     ``state``/``music_state`` (when given) let the music build push decode progress to the
     dashboard via the SSE snapshot -- everything else builds silently."""
     from . import (blueprints, contracts, mineables, mining_gear, music, reference,
-                   salvageables)
+                   salvageables, salvage_ships)
     from .config import MUSIC_DIR
 
     def _ship(p4k, ver, reason):
@@ -101,6 +101,13 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
         if wrecks:
             salvageables.save_salvageables(wrecks, game_version=ver)
             print(f"[salvageables] built {len(wrecks)} salvage targets ({reason})")
+
+    def _salvage_ships(p4k, ver, reason):
+        print(f"[salvage ships] rebuilding from local install ({reason}) -- niced, ~minutes")
+        ships = scdata.build_salvage_ships_from_p4k(p4k)
+        if ships:
+            salvage_ships.save_salvage_ships(ships, game_version=ver)
+            print(f"[salvage ships] built {len(ships)} salvage ships ({reason})")
 
     def _contracts(p4k, ver, reason):
         print(f"[contracts] rebuilding from local install ({reason}) -- niced, ~minutes")
@@ -181,6 +188,12 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
                  lambda: bool(salvageables.load_salvageables().get("wrecks")),
                  salvageables.salvageables_version, _salvageables,
                  salvageables.EXTRACT_VERSION, salvageables.salvageables_extract_version),
+        # Salvage wreck ships -> removable (salvage-beam-strippable) components, with per-ship
+        # loadouts (full-extract source; gated like the ship catalog). Feeds Salvage mode.
+        _Catalog("salvage ships",
+                 lambda: bool(salvage_ships.load_salvage_ships().get("ships")),
+                 salvage_ships.salvage_ships_version, _salvage_ships,
+                 salvage_ships.EXTRACT_VERSION, salvage_ships.salvage_ships_extract_version),
         # Contract taxonomy + cargo manifests (same full-extract source as mineables).
         _Catalog("contracts",
                  lambda: bool(contracts.load_contracts().get("templates")),

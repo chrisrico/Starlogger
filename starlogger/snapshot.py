@@ -20,8 +20,10 @@ from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
 from .overrides import apply_override, get_overrides
 from .settings import get_settings
 from .ships import (
-    is_mining_ship, load_ship_cargo, mining_hardpoints, ship_capacity, ship_grid, ship_layout,
+    is_mining_ship, is_salvage_ship, load_ship_cargo, mining_hardpoints,
+    ship_capacity, ship_grid, ship_layout,
 )
+from . import salvage_ships
 from .tradeflags import lost_trade_ids
 from .state import State
 from .stations import get_station_names, learn_station_names
@@ -250,6 +252,28 @@ def _autocomplete_catalog(missions: list, zone_names: dict) -> dict:
             "cargo_types": cargo_types}
 
 
+def _detected_salvage(state: State, salvage_db: dict) -> list:
+    """Salvageable wrecks sighted this session (state.salvage_targets) -> a list for the
+    Salvage mode's Ship-ID panel, each decorated with its removable components from the
+    salvage-ship catalog. ``resolved`` is False (and ``components`` empty) when the catalog
+    has no entry for that hull yet (not built, or a brand-new ship). Newest sighting first."""
+    out = []
+    for t in state.salvage_targets.values():
+        entry = salvage_db.get(t.ship_class.lower())
+        out.append({
+            "ship_class": t.ship_class,
+            "name": (entry or {}).get("name") or t.ship_class,
+            "manufacturer": (entry or {}).get("manufacturer"),
+            "count": t.count,
+            "first_seen": t.first_seen,
+            "last_seen": t.last_seen,
+            "resolved": entry is not None,
+            "components": (entry or {}).get("components") or [],
+        })
+    out.sort(key=lambda d: (d["last_seen"] or ""), reverse=True)
+    return out
+
+
 def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None = None) -> dict:
     # `overlay` (replay/archive editing) supplies an EPHEMERAL edit set —
     # {overrides, station_names, lost, selected_ship} — used instead of the on-disk
@@ -335,6 +359,11 @@ def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None 
             # Identify tab's "can't crack → try this gear" suggester (it can only fit heads that
             # match a hardpoint, and flags when a rock needs a bigger mining ship entirely).
             "mining_hardpoints": mining_hardpoints(effective_ship, state.ship_internal, cargo_db),
+            # True in a salvage vessel (Vulture/Reclaimer…): one trigger for the Salvage mode.
+            "salvage_ship": is_salvage_ship(effective_ship, state.ship_internal, cargo_db),
+            # Wrecks detected from the log this session, each with its removable components --
+            # feeds the Salvage mode's Ship-ID panel (and, non-empty, also triggers the mode).
+            "detected_salvage": _detected_salvage(state, salvage_ships.catalog()),
             "ship_cargo_updated": cargo_db.get("fetched_at"),
             "ship_cargo_version": cargo_db.get("game_version"),
             "game_version": state.game_version,

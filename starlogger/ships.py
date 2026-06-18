@@ -147,6 +147,16 @@ def is_mining_ship(name: str | None, internal: str | None = None,
     return bool(hit and (hit.get("mining") or "mining" in (hit.get("role") or "").lower()))
 
 
+def is_salvage_ship(name: str | None, internal: str | None = None,
+                    db: dict | None = None) -> bool:
+    """True when the effective ship is a salvage vessel (Vulture, Reclaimer, MOTH, ...), per
+    the cargo DB's role ('... Salvage'). One trigger for the dashboard's Salvage mode -- the
+    other being wrecks detected in the log (see snapshot ``detected_salvage``). Mirrors
+    ``is_mining_ship``; salvage roles are distinct from mining ones."""
+    hit = _lookup(name, db) or _lookup(internal, db)
+    return bool(hit and "salvage" in (hit.get("role") or "").lower())
+
+
 def mining_hardpoints(name: str | None, internal: str | None = None,
                       db: dict | None = None) -> list:
     """The sizes of a ship's mining-laser hardpoints (e.g. the MOLE -> [2, 2, 2], the
