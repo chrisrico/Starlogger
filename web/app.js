@@ -8,7 +8,7 @@ import {
   syncIdentifySession,
 } from "./mining.js";
 import {
-  initSalvage, renderSalvage, salvageToggle, salvageIdentify, salvageManualPick, salvageKey,
+  initSalvage, renderSalvage, salvageToggle, salvagePick,
 } from "./salvage.js";
 import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState, claimJukeboxPrimary } from "./jukebox.js";
 import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
@@ -1328,7 +1328,7 @@ Object.assign(window, {
   miningSub, miningIdentify, miningFind, miningIndex, identifyAgain, identifyPredict, identifyKey,
   bpOpen, bpFilter, bpPick, bpKey,
   // salvage (Ship-ID panel)
-  salvageToggle, salvageIdentify, salvageManualPick, salvageKey,
+  salvageToggle, salvagePick,
 });
 
 // ---- initial route resolution (runs last, once all tab state + functions exist) ---- //

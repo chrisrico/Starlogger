@@ -1106,6 +1106,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .juke-seek:disabled{opacity:.4}
 
 /* ---- salvage mode: Ship-ID panel (detected-wreck pills + removable components) ---- */
+.salv-select{font-family:var(--display);font-size:13px;color:var(--ink);background:var(--input-bg);
+  border:1px solid var(--line-2);border-radius:3px;padding:6px 10px;min-width:260px;cursor:pointer}
+.salv-select:focus-visible{outline:none;box-shadow:var(--focus-ring)}
 .salv-pills{display:flex;flex-wrap:wrap;gap:7px;padding:6px 16px 12px}
 .salv-pill{font-family:var(--display);font-size:12.5px;letter-spacing:.02em;color:var(--ink);
   background:rgba(var(--line-rgb),.06);border:1px solid var(--line-2);border-radius:3px;
