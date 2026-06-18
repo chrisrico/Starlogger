@@ -211,13 +211,13 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
 .status .shipsel:hover{border-color:var(--cyan)}
 /* shared form controls — one dark field + cyan focus ring for every input/select/combobox.
    Per-context rules elsewhere set only their own width/padding/font-size/radius. */
-.editor input,.editor select,.mining input,.cg-search,.status .shipsel,.tc-sel{
+.editor input,.editor select,.mining input,.cg-search,.status .shipsel,.tc-sel,.salv-dd-in{
   background:var(--input-bg);color:var(--ink);border:1px solid var(--line-2);font-family:var(--mono)}
 .editor input:focus,.editor select:focus,.mining input:focus,.cg-search:focus,
-.status .shipsel:focus,.tc-sel:focus,.edc-in:focus{outline:none;border-color:var(--cyan);
+.status .shipsel:focus,.tc-sel:focus,.edc-in:focus,.salv-dd-in:focus{outline:none;border-color:var(--cyan);
   box-shadow:var(--focus-ring)}
 /* shared floating-panel chrome — ship combobox, the Type filter menu, the blueprint picker */
-.shipmenu,.th-menu,.bp-dd-list{background:var(--panel-2);border:1px solid var(--line-2);
+.shipmenu,.th-menu,.bp-dd-list,.salv-dd-list{background:var(--panel-2);border:1px solid var(--line-2);
   border-radius:3px;box-shadow:var(--panel-shadow);overflow-y:auto}
 /* shared "eyebrow" label — small uppercase display-font section/field labels. Members below
    keep only their own size / letter-spacing / margin (and color when it isn't the ink-3 default). */
@@ -1108,9 +1108,26 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 
 /* ---- salvage mode: Ship-ID panel (detected-wreck pills + removable components) ---- */
 .salvage{display:flex;flex-direction:column;gap:14px}   /* mirror .mining so the two cards aren't flush */
-.salv-select{font-family:var(--mono);font-size:13px;color:var(--ink);background:var(--input-bg);
-  border:1px solid var(--line-2);border-radius:2px;padding:8px 10px;min-width:260px;cursor:pointer}
-.salv-select:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+/* searchable ship picker -- a combobox over a manufacturer-grouped listbox (mirrors the
+   blueprint picker's .bp-dd in mining.js); .salv-dd-in/.salv-dd-list also pull the shared
+   input + floating-panel chrome (see the .editor/.mining input and .shipmenu rules above). */
+.salv-pick-row{padding:6px 16px 12px}
+.salv-dd{position:relative}
+.salv-dd-in{width:100%;box-sizing:border-box;border-radius:2px;padding:8px 10px;font-size:13px}
+.salv-dd-list{display:none;position:absolute;z-index:30;top:calc(100% + 4px);left:0;right:0;max-height:340px}
+.salv-dd-list.open{display:block}
+.salv-dd-sec.hide{display:none}
+.salv-dd-grp{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;gap:10px;
+  padding:6px 12px;background:var(--panel);border-top:1px solid var(--line-2);border-bottom:1px solid var(--line);
+  font-family:var(--display);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase}
+.salv-dd-sec:first-child .salv-dd-grp{border-top:none}
+.salv-dd-mfr{color:var(--ink-3);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.salv-dd-n{color:var(--ink-3);flex:0 0 auto;font-family:var(--mono);letter-spacing:0}
+.salv-dd-item{display:flex;align-items:baseline;gap:9px;padding:5px 12px 5px 18px;
+  font-family:var(--mono);font-size:12.5px;color:var(--ink-1);cursor:pointer}
+.salv-dd-item:hover,.salv-dd-item.salv-dd-active{background:rgba(var(--cyan-rgb),.12);color:var(--cyan)}
+.salv-dd-item.salv-dd-active{box-shadow:inset 2px 0 0 var(--cyan)}
+.salv-dd-item[aria-selected="true"]{color:var(--cyan)}
 .salv-pills{display:flex;flex-wrap:wrap;gap:7px;padding:6px 16px 12px}
 .salv-pill{font-family:var(--display);font-size:12.5px;letter-spacing:.02em;color:var(--ink);
   background:rgba(var(--line-rgb),.06);border:1px solid var(--line-2);border-radius:2px;

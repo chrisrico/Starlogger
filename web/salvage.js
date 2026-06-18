@@ -1,10 +1,10 @@
 "use strict";
 // Salvage mode: identify wreck ships and the components the salvage beam can strip off them.
 // Two entry points: wrecks auto-detected from the live Game.log (snapshot.detected_salvage,
-// refreshed by renderSalvage every poll) shown as pills, and a dropdown of EVERY salvageable
-// ship (the full /api/salvage-ship catalog) for looking one up directly. Either way the ship
-// expands to its removable-component breakdown, grouped by category, with non-pullable items
-// (currently un-strippable: non-weapons over size 2) greyed + tagged.
+// refreshed by renderSalvage every poll) shown as pills, and a searchable dropdown of EVERY
+// salvageable ship (the full /api/salvage-ship catalog, grouped by manufacturer) for looking
+// one up directly. Either way the ship expands to its removable-component breakdown, grouped by
+// category, with non-pullable items (currently un-strippable: non-weapons over size 2) greyed.
 
 import { $, esc, setHTML } from "./dom.js";
 import { getJSON } from "./net.js";
@@ -108,29 +108,120 @@ export function salvageToggle(shipClass) {
   renderSalvage(curData());
 }
 
-// ---- pick any salvageable ship (dropdown over the whole catalog) ----
+// ---- pick any salvageable ship: a searchable dropdown grouped by manufacturer ----
+// Mirrors the blueprint picker (mining.js): an <input role="combobox"> over a floating
+// listbox of manufacturer sections, type-to-filter, arrow-key navigation. Picking a ship
+// renders its removable-component breakdown below.
+
+// Catalog grouped into manufacturer sections (sorted); ships sorted by name within each.
+function shipSections() {
+  const byMfr = new Map();
+  for (const [key, e] of Object.entries(CATALOG || {})) {
+    const mfr = e.manufacturer || "Other";
+    if (!byMfr.has(mfr)) byMfr.set(mfr, []);
+    byMfr.get(mfr).push({ key, name: e.name || key });
+  }
+  return [...byMfr.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([mfr, ships]) => ({ mfr, ships: ships.sort((x, y) => x.name.localeCompare(y.name)) }));
+}
+
+let _salvId = 0;
+function shipMenuHtml() {
+  _salvId = 0;
+  return shipSections().map(sec => {
+    const items = sec.ships.map(s =>
+      `<div class="salv-dd-item" role="option" id="salv-opt-${_salvId++}" data-key="${esc(s.key)}"`
+      + ` data-search="${esc(s.name.toLowerCase())}" aria-selected="${s.key === PICKED}"`
+      + ` onclick="salvagePick(this.dataset.key)"><span>${esc(s.name)}</span></div>`).join("");
+    return `<div class="salv-dd-sec"><div class="salv-dd-grp">`
+      + `<span class="salv-dd-mfr">${esc(sec.mfr)}</span>`
+      + `<span class="salv-dd-n">${sec.ships.length}</span></div>${items}</div>`;
+  }).join("");
+}
+
 function pickerHtml() {
   if (CATALOG == null) return `<div class="empty">loading…</div>`;
-  const opts = Object.entries(CATALOG)
-    .map(([key, e]) => [key, e.manufacturer ? `${e.name} · ${e.manufacturer}` : e.name])
-    .sort((a, b) => a[1].localeCompare(b[1]));
-  if (!opts.length)
+  if (!Object.keys(CATALOG).length)
     return `<div class="empty">No salvageable-ship catalog yet (still building from the game files).</div>`;
-  const options = [`<option value="">Select a ship…</option>`].concat(
-    opts.map(([key, label]) =>
-      `<option value="${esc(key)}"${key === PICKED ? " selected" : ""}>${esc(label)}</option>`)
-  ).join("");
-  // The <select> already shows the picked ship's name+manufacturer, so the detail header below
-  // says "Removable components" (+ the pullable summary) instead of repeating it.
+  // The combobox already shows the picked ship's name, so the detail header says "Removable
+  // components" (+ the pullable summary) rather than repeating it.
   const e = PICKED ? CATALOG[PICKED] : null;
   const detail = e ? detailPanel("Removable components", e.components, true) : "";
-  return `<div class="mform"><select id="salv-pick" class="salv-select" aria-label="Salvageable ship"`
-    + ` onchange="salvagePick(this.value)">${options}</select></div>${detail}`;
+  return `<div class="salv-pick-row">
+      <div class="salv-dd">
+        <input id="salv-pick" class="salv-dd-in" autocomplete="off" role="combobox"
+          aria-expanded="false" aria-controls="salv-dd-list" aria-autocomplete="list"
+          aria-label="Salvageable ship" placeholder="Search salvageable ships…"
+          value="${e ? esc(e.name) : ""}"
+          oninput="salvageDdFilter(this.value)" onfocus="salvageDdOpen(true)"
+          onblur="salvageDdOpen(false)" onkeydown="salvageDdKey(event)">
+        <div id="salv-dd-list" class="salv-dd-list" role="listbox" aria-label="Salvageable ships"
+          onmousedown="event.preventDefault()">${shipMenuHtml()}</div>
+      </div>
+    </div>${detail}`;
 }
 
 export function salvagePick(key) {
   PICKED = key || "";
-  setHTML("salv-pick-wrap", pickerHtml());   // re-render select (selection kept) + the breakdown
+  setHTML("salv-pick-wrap", pickerHtml());   // closes the menu + renders the breakdown
+}
+
+// ---- combobox open / filter / keyboard (mirrors mining.js's blueprint picker) ----
+export function salvageDdOpen(show) {
+  const el = $("salv-dd-list"); if (!el) return;
+  el.classList.toggle("open", !!show);
+  const inp = $("salv-pick"); if (inp) inp.setAttribute("aria-expanded", show ? "true" : "false");
+  // The card clip-path would crop the menu; drop it while open so the list can overflow.
+  const card = el.closest(".card"); if (card) card.classList.toggle("dd-open", !!show);
+  if (!show) _salvSetActive(null);
+}
+const _salvVisible = () =>
+  [...($("salv-dd-list") || {}).querySelectorAll?.(".salv-dd-item") || []].filter(it => it.style.display !== "none");
+const _salvActive = () => ($("salv-dd-list") || {}).querySelector?.(".salv-dd-item.salv-dd-active") || null;
+function _salvSetActive(it) {
+  const list = $("salv-dd-list"); if (!list) return;
+  list.querySelectorAll(".salv-dd-item.salv-dd-active").forEach(e => e.classList.remove("salv-dd-active"));
+  const inp = $("salv-pick");
+  if (it) {
+    it.classList.add("salv-dd-active");
+    it.scrollIntoView({ block: "nearest" });
+    if (inp) inp.setAttribute("aria-activedescendant", it.id);
+  } else if (inp) {
+    inp.removeAttribute("aria-activedescendant");
+  }
+}
+// Filter items by a case-insensitive substring; hide whole sections with no visible items.
+export function salvageDdFilter(q) {
+  const list = $("salv-dd-list"); if (!list) return;
+  list.classList.add("open");
+  const needle = (q || "").trim().toLowerCase();
+  for (const sec of list.querySelectorAll(".salv-dd-sec")) {
+    let any = false;
+    for (const it of sec.querySelectorAll(".salv-dd-item")) {
+      const show = !needle || it.dataset.search.includes(needle);
+      it.style.display = show ? "" : "none";
+      if (show) any = true;
+    }
+    sec.classList.toggle("hide", !any);
+  }
+  _salvSetActive(null);   // the visible set changed; drop any stale arrow highlight
+}
+export function salvageDdKey(e) {
+  if (e.key === "Escape") { salvageDdOpen(false); return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    salvageDdOpen(true);
+    const vis = _salvVisible(); if (!vis.length) return;
+    const cur = _salvActive();
+    let i = cur ? vis.indexOf(cur) : -1;
+    i = e.key === "ArrowDown" ? (i + 1) % vis.length : (i <= 0 ? vis.length - 1 : i - 1);
+    _salvSetActive(vis[i]);
+    return;
+  }
+  if (e.key !== "Enter") return;
+  e.preventDefault();   // pick the arrow-highlighted option, else the first visible match
+  const pick = _salvActive() || _salvVisible()[0];
+  if (pick) salvagePick(pick.dataset.key);
 }
 
 async function renderPicker() {

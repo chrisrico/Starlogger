@@ -126,9 +126,11 @@ def test_mining_tab_renders_in_mining_mode(page, populated_server):
 
 def test_salvage_tab_dropdown_lists_ships(page, populated_server):
     """The Salvage tab is hidden in cargo mode, so force salvage via setMode (a bridged handler),
-    then drive the ship dropdown: selecting a hull (salvagePick) must render its removable-component
-    breakdown, greying the non-pullable (size>2 non-weapon) rows. A tiny catalog is seeded into the
-    isolated data dir so /api/salvage-ship has content; deeper resolution is unit-tested."""
+    then drive the ship picker: a searchable combobox (mirroring the blueprint picker) over a
+    manufacturer-grouped listbox. Focusing opens the list (salvageDdOpen); clicking a hull option
+    (salvagePick) must render its removable-component breakdown, greying the non-pullable
+    (size>2 non-weapon) rows. A tiny catalog is seeded into the isolated data dir so
+    /api/salvage-ship has content; deeper resolution is unit-tested."""
     from starlogger import config, salvage_ships
     salvage_ships.save_salvage_ships({
         "aegs_gladius": {"class": "AEGS_Gladius", "name": "Gladius", "manufacturer": "Aegis",
@@ -146,8 +148,12 @@ def test_salvage_tab_dropdown_lists_ships(page, populated_server):
     page.wait_for_selector('#nav a[data-tab="salvage"]:not(.hide)')
     page.click('#nav a[data-tab="salvage"]')
     page.wait_for_selector("#salvage #salv-auto")                       # auto-detected wreck container
-    page.wait_for_selector("#salvage select#salv-pick")                 # dropdown (after catalog fetch)
-    page.select_option("#salvage #salv-pick", "aegs_gladius")           # auto-waits for the option
+    page.wait_for_selector("#salvage input#salv-pick")                  # combobox (after catalog fetch)
+    page.click("#salvage #salv-pick")                                   # focus -> opens the listbox
+    page.wait_for_selector("#salvage .salv-dd-list.open")
+    # The list is structured: ships are grouped under manufacturer section headers.
+    assert page.locator("#salvage .salv-dd-grp").count() >= 2           # Aegis + Anvil sections
+    page.click("#salvage .salv-dd-item[data-key='aegs_gladius']")       # pick the hull
     page.wait_for_selector("#salvage .salv-comps")                      # components rendered
     page.wait_for_selector("#salvage .salv-comp.greyed")                # the size-3 shield is greyed
     assert errors == [], errors
