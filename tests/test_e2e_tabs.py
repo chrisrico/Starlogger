@@ -104,10 +104,22 @@ def test_every_inline_handler_resolves_on_window(page, populated_server):
 def test_each_tab_renders_without_errors(page, populated_server):
     errors = _boot(page, populated_server)
     # Mining is intentionally excluded: its nav button stays hidden unless a mining ship is
-    # active (this seeded state is cargo-hauling), so it isn't clickable here by design.
-    for tab in ("contracts", "cargo", "plan", "archive"):
+    # active (this seeded state is cargo-hauling), so it isn't clickable here by design. Signal ID
+    # is included — it's a top-level page visible in every mode.
+    for tab in ("contracts", "signal", "cargo", "plan", "archive"):
         page.click(f'#nav a[data-tab="{tab}"]')
         page.wait_for_selector(f"#{tab}:not(.hide)")
+    assert errors == [], errors
+
+
+def test_signal_tab_renders_top_level(page, populated_server):
+    """Signal ID is a top-level page in every mode (here cargo, the seeded state) — no setMode
+    needed. Clicking it builds the RS-reading tool; deeper identify behaviour needs the p4k
+    mineables catalog (absent from the isolated test data dir), so this confirms it mounts clean."""
+    errors = _boot(page, populated_server)
+    page.click('#nav a[data-tab="signal"]')
+    page.wait_for_selector("#signal:not(.hide)")
+    page.wait_for_selector("#signal input#signal-rs")   # the RS-reading tool rendered
     assert errors == [], errors
 
 

@@ -1,13 +1,12 @@
 "use strict";
-// Mining tab: the Refinery-Station (RS) reference tools — Identify (a scanner reading →
-// rock class(es) + likely minerals), Find (mineral → which RS to scan + ranked source
-// rocks), and Plan (refining blueprint → deposit coverage + sources). Self-contained: it
-// owns all MINING_*/IDENTIFY_* state and talks to its own /api/rock-*, /api/mineral-*,
-// /api/blueprint* endpoints. The rest of the dashboard only calls initMining() (on tab
-// open) and the bridged inline handlers (miningSub + the identify/find/plan/bp actions).
+// Mining tab: the Refinery-Station (RS) reference tools — Find (mineral → which RS to scan +
+// ranked source rocks) and Plan (refining blueprint → deposit coverage + sources). The former
+// Identify tool moved out to the top-level Signal ID page (signal.js); the rock-render helpers
+// it still imports (mineralUnion/elBadge/mechHtml/feasibilityHtml) are exported from here. The
+// rest of the dashboard only calls initMining() (on tab open) and the bridged inline handlers
+// (miningSub + the find/plan/bp actions).
 import { $, esc, num, val, th, tag, setHTML, logTable, tabBar, hintIcon } from "./dom.js";
 import { getJSON, writeHeaders } from "./net.js";
-import { S } from "./state.js";
 import { ensureGear, currentLoadout, gearCatalog } from "./shipequip.js";
 // feasibility()/suggestCrack() are globals from the classic /feasibility.js script (loaded
 // before app.js), shared with the Node unit test — same pattern as cargogrid.js's window.*.
@@ -21,50 +20,11 @@ const { feasibility, suggestCrack } = window;
 // once; switching sub-tabs only toggles which is visible, so each keeps its inputs,
 // results, and scroll. Submitting a query repaints just that sub's #mres-<sub>.
 // ============================================================================ //
-let MINING_SUB = "identify";       // identify | find | plan
+let MINING_SUB = "find";           // find | plan
 let MINING_MINERALS = null;        // cached mineral names for the autocomplete
 let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the picker
-let MINING_RS = null;              // cached base RS values, seeding Identify's prediction
-let IDENTIFY_HISTORY = [];         // recent valid readings {rs, summary}, newest first
-const IDENTIFY_HIST_MAX = 16;      // how many recent readings to keep (2 rows of 8)
-let IDENTIFY_LAST = null;          // last result {v, candidates, combos} — re-rendered on loadout change
 let FIND_LAST = null;              // last mineral-lookup result — re-ranked on loadout change
 let MINING_INIT = false;
-
-// Recent readings persist in localStorage, scoped to the current play SESSION: they survive
-// page reloads, and reset when a NEW session begins (a different non-null session start than
-// the one they were saved under). A null session (logged out / not started) never resets —
-// the readings carry over "until the next session". Keyed off the LIVE snapshot (S.LAST),
-// not the replay view, so replaying an archived session can't wipe the live readings.
-const IDENTIFY_HIST_KEY = "miIdentifyHist";
-let IDENTIFY_HIST_SESSION = null;  // the session start the in-memory readings belong to
-const _liveSession = () => { try { return (S.LAST && S.LAST.session_started_at) || null; } catch (_) { return null; } };
-
-function loadIdentifyHistory() {
-  let stored = null;
-  try { stored = JSON.parse(localStorage.getItem(IDENTIFY_HIST_KEY) || "null"); } catch (_) { /* ignore */ }
-  IDENTIFY_HISTORY = (stored && Array.isArray(stored.readings)) ? stored.readings.slice(0, IDENTIFY_HIST_MAX) : [];
-  IDENTIFY_HIST_SESSION = stored ? (stored.session ?? null) : null;
-  syncIdentifySession();
-}
-function persistIdentifyHistory() {
-  try {
-    localStorage.setItem(IDENTIFY_HIST_KEY, JSON.stringify({ session: IDENTIFY_HIST_SESSION, readings: IDENTIFY_HISTORY }));
-  } catch (_) { /* quota/private-mode — fine, just won't persist */ }
-}
-// Reset the strip when the live session has advanced to a new one; otherwise leave it alone
-// (including while logged out, so readings persist until the next session). Repaints #mi-hist
-// when it's on screen. Cheap (a string compare) — safe to call on every snapshot.
-export function syncIdentifySession() {
-  const cur = _liveSession();
-  if (cur != null && cur !== IDENTIFY_HIST_SESSION) {
-    IDENTIFY_HIST_SESSION = cur;
-    IDENTIFY_HISTORY = [];
-    persistIdentifyHistory();
-    if ($("mi-hist")) setHTML("mi-hist", identifyHistHtml());
-  }
-}
-loadIdentifyHistory();
 
 export async function initMining() {
   if (!MINING_INIT) {
@@ -73,27 +33,23 @@ export async function initMining() {
       try { return (await getJSON(url))[key] || []; }
       catch (e) { return []; }
     };
-    [MINING_MINERALS, MINING_BLUEPRINTS, MINING_RS] = await Promise.all([
-      grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints"),
-      grab("/api/rock-signatures", "signatures")]);
+    [MINING_MINERALS, MINING_BLUEPRINTS] = await Promise.all([
+      grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints")]);
     ensureGear();   // preload the mining-gear catalog for the feasibility verdict (fire-and-forget)
-    // Re-render the current Identify + Find results when the ship loadout changes (popup save)
-    // — both surface the feasibility/minability of the equipped ship.
+    // Re-rank the current Find results when the ship loadout changes (popup save) — it surfaces
+    // the minability of the equipped ship.
     document.addEventListener("loadout-changed", () => {
-      if (IDENTIFY_LAST) setHTML("mres-identify", identifyResultHtml(
-        IDENTIFY_LAST.v, IDENTIFY_LAST.candidates, IDENTIFY_LAST.combos, IDENTIFY_LAST.salvage));
       if (FIND_LAST) setHTML("mres-find", FIND_LAST.index
         ? indexResultHtml(FIND_LAST.index) : findResultHtml(FIND_LAST));
     });
   }
-  syncIdentifySession();   // opening the tab after a relog → reconcile the persisted strip
   // Build once, only after the catalogs have loaded; switching subs then just toggles.
-  if (MINING_BLUEPRINTS !== null && !$("msub-identify")) renderMiningShell();
+  if (MINING_BLUEPRINTS !== null && !$("msub-find")) renderMiningShell();
 }
 // Switch sub-tabs by toggling visibility — never rebuild, so each sub keeps its state.
 export function miningSub(sub) {
   MINING_SUB = sub;
-  // Reflect into the URL #hash (/mining#identify|#find|#plan) so the active tool is a
+  // Reflect into the URL #hash (/mining#find|#plan) so the active tool is a
   // shareable deep link, matching the Cargo sub-tab scheme in app.js. replaceState only —
   // toggling tools shouldn't grow the back stack. (Only meaningful on the Mining page, the
   // sole place this runs.)
@@ -109,8 +65,7 @@ const _pct = (x) => (x == null ? "?" : Math.round(x));
 const _chance = (p) => (p == null ? "" : Math.round(p * 100) + "%");
 
 function renderMiningShell() {
-  const subs = [["identify", "Identify rock", identifyToolHtml], ["find", "Find mineral", findToolHtml],
-                ["plan", "Blueprint plan", planToolHtml]];
+  const subs = [["find", "Find mineral", findToolHtml], ["plan", "Blueprint plan", planToolHtml]];
   // Same underlined sub-tab strip as the Archive tab, with a data-sub on each button so
   // miningSub() can toggle .active without a rebuild.
   const bar = tabBar(subs, MINING_SUB, "miningSub", { attr: k => `data-sub="${k}"` });
@@ -126,14 +81,14 @@ function renderMiningShell() {
 }
 
 // small shared bits ---------------------------------------------------------- //
-function elBadge(e) {
+export function elBadge(e) {
   return `<span class="mn-el"><b>${esc(e.element)}</b>` +
     ` <span class="mn-pct">${_pct(e.min_pct)}–${_pct(e.max_pct)}%</span>` +
     (e.probability != null ? ` <span class="mn-prob">${_chance(e.probability)}</span>` : "") + `</span>`;
 }
 // Dedupe a rock list's composition to the distinct possible minerals (keep the
 // richest occurrence), so an ambiguous RS shows "what might be in there".
-function mineralUnion(rocks) {
+export function mineralUnion(rocks) {
   const m = new Map();
   for (const r of rocks || []) for (const e of r.composition || []) {
     const cur = m.get(e.element);
@@ -145,7 +100,7 @@ function mineralUnion(rocks) {
 // Compact rock-cracking advisor line from a class's M1 mechanics (p4k); "" when absent.
 // Surfaces the break-difficulty the in-game HUD doesn't show — laser power needed,
 // resistance/instability, optimal-window width, mass. Uses the first rock that carries it.
-function mechHtml(rocks) {
+export function mechHtml(rocks) {
   const m = (rocks || []).map(r => r.mechanics).find(Boolean);
   if (!m) return "";
   const bits = [];
@@ -175,7 +130,7 @@ function equippedLoadout() {
 // The feasibility row for an Identify candidate card: "" when the current ship isn't a miner
 // or has no rock mechanics; a "set up gear" nudge when it's a miner with nothing fitted; else
 // a coloured verdict pill + the contributing factors. Uses the first rock that carries mechanics.
-function feasibilityHtml(rocks) {
+export function feasibilityHtml(rocks) {
   const lo = currentLoadout();
   if (!lo || !lo.isMiningShip) return "";          // only meaningful for the equipped mining ship
   const m = (rocks || []).map(r => r.mechanics).find(Boolean);
@@ -214,159 +169,6 @@ function suggestHtml(mech, lo) {
   return `<div class="mrow"><span class="mk"></span>
     <div class="mels feas-suggest">✦ try ${esc(gear)}
       <span class="mn-dim">→ ${esc(result.label)}</span></div></div>`;
-}
-
-// ---- Identify: RS reading → rock class(es), cluster size, possible minerals ---- //
-// Tuned for rapid back-to-back readings: typing a number + Enter (or Identify) shows the
-// result, then clears and refocuses the box for the next reading. A strip of the last few
-// readings (with their top match) stays on screen so earlier scans can be glanced at. As
-// you type, the box predicts the rest from your recent readings (deposits recur while
-// mining) as a selected suffix — Enter accepts it, keep typing or Esc/Backspace to override.
-function identifyToolHtml() {
-  return `<div class="card mtool"><h3><span>RS reading → rock ${hintIcon(
-      "The radar number is <code>base RS × number of rocks</code>. RS identifies the rock " +
-      "<b>class</b>, not the exact mineral — many classes share a base, so a reading can be ambiguous.")}</span></h3>
-    <div class="mform">
-      <input id="mi-rs" type="text" inputmode="numeric" autocomplete="off"
-        placeholder="e.g. 9400" aria-label="Radar signature reading"
-        oninput="identifyPredict(event)" onkeydown="identifyKey(event)">
-      <button class="primary" onclick="miningIdentify()">Identify</button>
-    </div>
-    <div id="mi-hist" class="mi-hist">${identifyHistHtml()}</div>
-  </div>`;
-}
-// The recent-readings strip: a grid of uniform two-line chips (RS reading on top, result
-// gist below). Chips re-run their reading when clicked; the title carries the full,
-// untruncated summary since the bottom line is ellipsis-truncated.
-function identifyHistHtml() {
-  if (!IDENTIFY_HISTORY.length) return "";
-  return IDENTIFY_HISTORY.map(h =>
-    `<button class="mi-chip" onclick="identifyAgain(${h.rs})"
-       title="RS ${num(h.rs)} — ${esc(h.summary)}"><b>${num(h.rs)}</b><span>${esc(h.summary)}</span></button>`).join("");
-}
-// One-line gist of a reading's result, for the history chip.
-function identifySummary(candidates, combos, salvage = []) {
-  if (candidates.length) {
-    const c = candidates[0];
-    const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
-    // Drop the redundant material-state suffix ((Ore)/(Raw)) for the compact chip; keep
-    // meaningful ones like (C-Type)/(Pure).
-    const dep = (deps[0] || "").replace(/\s*\((?:ore|raw)\)\s*$/i, "");
-    return `${c.count}× ${dep}${deps.length > 1 ? " +" + (deps.length - 1) : ""}`;
-  }
-  if (combos.filter(c => c.parts.length > 1).length) return "mixed cluster";
-  if (salvage.length) return salvage[0].label;
-  return "no clean match";
-}
-export function identifyAgain(rs) {
-  const inp = $("mi-rs"); if (inp) inp.value = rs;
-  miningIdentify();
-}
-// Inline prediction: while typing a prefix, complete it with a likely reading, leaving the
-// guessed suffix selected. Typing replaces the selection (so the guess just refines), → /
-// End accepts it natively, Enter submits, Esc/Backspace drops it. Skipped on deletes so
-// editing stays free. This session's readings win (recurring deposits), then the catalog's
-// base RS values seed a guess before any have been entered.
-export function identifyPredict(e) {
-  if (e && e.inputType && e.inputType.startsWith("delete")) return;
-  const inp = $("mi-rs"); if (!inp) return;
-  const typed = inp.value;
-  if (!typed) return;
-  const pool = [...IDENTIFY_HISTORY.map(h => String(h.rs)), ...(MINING_RS || []).map(String)];
-  const hit = pool.find(s => s.length > typed.length && s.startsWith(typed));
-  if (hit) { inp.value = hit; inp.setSelectionRange(typed.length, hit.length); }
-}
-export function identifyKey(e) {
-  if (e.key === "Enter") { miningIdentify(); return; }
-  if (e.key === "Escape") {              // drop a predicted suffix without clearing the typed part
-    const inp = $("mi-rs");
-    if (inp && inp.selectionStart < inp.value.length) {
-      inp.value = inp.value.slice(0, inp.selectionStart);
-      e.preventDefault();
-    }
-  }
-}
-export async function miningIdentify() {
-  const v = parseFloat(val("mi-rs"));
-  if (!(v > 0)) { setHTML(mres(), `<div class="empty">Enter a positive RS reading.</div>`); return; }
-  syncIdentifySession();   // a new session clears the strip first, so this reading opens it
-  setHTML(mres(), `<div class="empty">scanning…</div>`);
-  try {
-    const [look, dec] = await Promise.all([
-      fetch(`/api/rock-lookup?rs=${v}`).then(r => r.json()),
-      fetch(`/api/rock-decompose?rs=${v}`).then(r => r.json()),
-    ]);
-    const candidates = look.candidates || [], combos = dec.combos || [], salvage = look.salvage || [];
-    // Only a valid reading (matches a rock, a mixed cluster, or a salvage target) is kept in
-    // the strip — a miss isn't recorded. A reading already in the history updates in place
-    // (re-running a chip mustn't reorder it); a new one is prepended (newest first).
-    const ok = candidates.length > 0 || salvage.length > 0 || combos.some(c => c.parts.length > 1);
-    if (ok) {
-      const entry = { rs: v, summary: identifySummary(candidates, combos, salvage) };
-      const at = IDENTIFY_HISTORY.findIndex(h => h.rs === v);
-      if (at >= 0) IDENTIFY_HISTORY[at] = entry;
-      else IDENTIFY_HISTORY = [entry, ...IDENTIFY_HISTORY].slice(0, IDENTIFY_HIST_MAX);
-      persistIdentifyHistory();
-      setHTML("mi-hist", identifyHistHtml());
-    }
-    // Clear + refocus so the next reading can be typed straight away.
-    const inp = $("mi-rs"); if (inp) { inp.value = ""; inp.focus(); }
-    IDENTIFY_LAST = { v, candidates, combos, salvage };
-    setHTML(mres(), identifyResultHtml(v, candidates, combos, salvage));
-  } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
-}
-function identifyResultHtml(v, candidates, combos, salvage = []) {
-  if (!candidates.length && !combos.length && !salvage.length)
-    return `<div class="empty">Nothing reads RS ${num(v)} as a clean cluster.</div>`;
-  let html = "";
-  if (candidates.length) {
-    html += `<div class="mres-h">Single-class readings</div>`;
-    html += candidates.map(c => {
-      const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
-      const minerals = mineralUnion(c.rocks);
-      const extra = deps.length > 1 ? ` <span class="mn-dim">+${deps.length - 1} more</span>` : "";
-      return `<div class="card mcand">
-        <h3><span>${c.count} × <b>${esc(deps[0])}</b>${extra}</span>
-            <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>
-        <div class="mcand-body">
-          ${deps.length > 1 ? `<div class="mrow"><span class="mk">reads as</span>
-             <div class="mels">${deps.map(d => tag(d)).join(" ")}</div></div>` : ""}
-          <div class="mrow"><span class="mk">possible minerals</span>
-            <div class="mels">${minerals.map(elBadge).join("") || '<span class="mn-dim">—</span>'}</div></div>
-          ${mechHtml(c.rocks)}
-          ${feasibilityHtml(c.rocks)}
-        </div></div>`;
-    }).join("");
-  }
-  const mixed = combos.filter(c => c.parts.length > 1);
-  if (mixed.length) {
-    html += `<div class="mres-h">Mixed-cluster interpretations</div><div class="card">` + logTable(
-      th("Cluster") + th("Total RS", true) + th("Rocks", true),
-      mixed.slice(0, 12).map(c =>
-        `<tr><td>${c.parts.map(p => `${p.count}× ${esc(p.names[0] || ("RS " + p.base_rs))}`).join(" + ")}</td>` +
-        `<td class="lt-num">${num(c.total)}</td><td class="lt-num">${c.count}</td></tr>`).join(""),
-      "") + `</div>`;
-  }
-  if (salvage.length) html += salvageSectionHtml(salvage);
-  return html;
-}
-// Salvage targets reading at this RS — a wreck has no mineral composition, only an identity
-// (a whole-ship hull, or n flat-2000 debris panels), so it gets its own labelled section.
-function salvageSectionHtml(salvage) {
-  return `<div class="mres-h">Salvage targets</div>` + salvage.map(c => {
-    // For panels the part is noise ("Avenger Nose" vs "Avenger Wing" all read 2000), so list
-    // the distinct donor ships; a whole-ship hull just names itself.
-    const names = [...new Set((c.targets || []).map(t =>
-      c.kind === "ship" ? t.name : (t.ship || t.name)))];
-    const more = (c.targets || []).length >= 12 ? ' <span class="mn-dim">…</span>' : "";
-    return `<div class="card mcand salv">
-      <h3><span><b>${esc(c.label)}</b></span>
-          <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>
-      <div class="mcand-body"><div class="mrow">
-        <span class="mk">${c.kind === "ship" ? "ship hull" : "any of"}</span>
-        <div class="mels">${names.map(n => tag(n)).join(" ")}${more}</div>
-      </div></div></div>`;
-  }).join("");
 }
 
 // ---- Find: mineral → RS to scan for + ranked source rocks (+ browse all) ---- //

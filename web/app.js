@@ -3,10 +3,11 @@
 import { $, val, esc, num, setHTML, logTable, th, tag, tabBar, toast } from "./dom.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 import {
-  initMining, miningSub, miningIdentify, miningFind, miningIndex,
-  identifyAgain, identifyPredict, identifyKey, bpOpen, bpFilter, bpPick, bpKey,
-  syncIdentifySession,
+  initMining, miningSub, miningFind, miningIndex, bpOpen, bpFilter, bpPick, bpKey,
 } from "./mining.js";
+import {
+  initSignal, syncSignalSession, signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
+} from "./signal.js";
 import {
   initSalvage, renderSalvage, salvageToggle, salvagePick,
   salvageDdOpen, salvageDdFilter, salvageDdKey,
@@ -42,7 +43,7 @@ let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "p
 // server.py's SPA fallback) and the sidebar items are genuine <a href> links. A section's
 // sub-tab (Cargo's Loading/Unloading, Mining's Identify/Find/Plan) is view state WITHIN a
 // page, not a page of its own, so it lives in the URL #hash instead of the path.
-const TABS = ["contracts", "cargo", "plan", "archive", "mining", "salvage"];
+const TABS = ["contracts", "signal", "cargo", "plan", "archive", "mining", "salvage"];
 const DEFAULT_TAB = "contracts";
 const tabFromPath = (p) => {
   const seg = (p || "/").replace(/^\/+|\/+$/g, "").split("/")[0];
@@ -64,6 +65,7 @@ function activateTab(name, { push = true } = {}) {
     (push ? history.pushState : history.replaceState).call(history, null, "", url);
   }
   if (name === "archive") activateArchiveTab();
+  if (name === "signal") initSignal();
   if (name === "mining") initMining();
   if (name === "salvage") initSalvage();
   applySub(name, hash.slice(1));                     // restore Loading/Unloading / mining sub
@@ -166,9 +168,9 @@ function modeSwitchHtml(d) {
 // Each mode shows its own tab set: cargo keeps the hauling tabs; mining and salvage each hide
 // Cargo+Plan and slot their own tool tab right after Contracts. Driven from renderAll on every
 // snapshot; idempotent via LAYOUT_MODE so it only touches the DOM on an actual mode change.
-const HAUL_TABS = ["contracts", "cargo", "plan", "archive"];
-const MINE_TABS = ["contracts", "mining", "archive"];
-const SALV_TABS = ["contracts", "salvage", "archive"];
+const HAUL_TABS = ["contracts", "signal", "cargo", "plan", "archive"];
+const MINE_TABS = ["contracts", "signal", "mining", "archive"];
+const SALV_TABS = ["contracts", "signal", "salvage", "archive"];
 const MODE_TABS = { mining: MINE_TABS, salvage: SALV_TABS, cargo: HAUL_TABS };
 let LAYOUT_MODE = null;   // null until the first snapshot picks a layout
 function applyTabLayout(mode) {
@@ -1015,7 +1017,7 @@ const destHue = (i) => Math.round((i * 137.508) % 360);
 // Exported: archive.js's replay controls re-render the whole dashboard through this.
 export function renderAll(d) {
   if (!d) return;
-  syncIdentifySession();   // reset the Identify strip the moment the play session changes
+  syncSignalSession();   // reset the Signal ID strip the moment the play session changes
   applyTabLayout(effectiveMode(d));   // detected ship / wrecks (or the MODE switch) → tab layout
   renderHeader(d);
   renderSalvage(d);                   // refresh the Salvage panel's auto-detected wreck pills
@@ -1325,9 +1327,10 @@ Object.assign(window, {
   // cargo / plan tabs + route reorder
   cargoSub, resetRouteOrder, rowHover, boxHover, markDelivered,
   routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,
-  // mining (Identify / Find / Plan)
-  miningSub, miningIdentify, miningFind, miningIndex, identifyAgain, identifyPredict, identifyKey,
-  bpOpen, bpFilter, bpPick, bpKey,
+  // mining (Find / Plan)
+  miningSub, miningFind, miningIndex, bpOpen, bpFilter, bpPick, bpKey,
+  // signal id (RS reading → rock / wreck)
+  signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
   // salvage (Ship-ID panel)
   salvageToggle, salvagePick, salvageDdOpen, salvageDdFilter, salvageDdKey,
 });
