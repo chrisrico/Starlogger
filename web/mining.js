@@ -1,5 +1,5 @@
 "use strict";
-// Mining tab: the Refinery-Station (RS) reference tools — Find (mineral → which RS to scan +
+// Mining tab: the Radar-Signature (RS) reference tools — Find (mineral → which RS to scan +
 // ranked source rocks) and Plan (refining blueprint → deposit coverage + sources). The former
 // Identify tool moved out to the top-level Signal ID page (signal.js); the rock-render helpers
 // it still imports (mineralUnion/elBadge/mechHtml/feasibilityHtml) are exported from here. The

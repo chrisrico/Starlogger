@@ -1,5 +1,5 @@
 "use strict";
-// Signal ID — a top-level page (useful in every mode) that turns a Refinery-Station (radar)
+// Signal ID — a top-level page (useful in every mode) that turns a Radar Signature (RS)
 // reading into an identification: a mineable rock class (with its likely minerals + the
 // equipped ship's cracking feasibility) AND/OR a salvageable ship hull. It's the former mining
 // "Identify rock" tool, promoted out of the Mining tab so mining and salvage teams share one
@@ -10,7 +10,7 @@ import { getJSON } from "./net.js";
 import { S } from "./state.js";
 import { ensureGear } from "./shipequip.js";
 import { mineralUnion, elBadge, mechHtml, feasibilityHtml } from "./mining.js";
-import { shipDetailPanel } from "./shipcard.js";
+import { componentsHtml, pullSummary } from "./shipcard.js";
 
 // Recent readings (newest first), persisted in localStorage scoped to the play SESSION — they
 // survive reloads and reset on a NEW session. Keyed off the LIVE snapshot (S.LAST), same as the
@@ -55,7 +55,7 @@ loadHistory();
 // ---- the reading tool ---- //
 function signalToolHtml() {
   return `<div class="card mtool"><h3><span>Signal ID — RS reading ${hintIcon(
-      "Punch in a Refinery-Station (radar) reading to identify the contact: a mineable rock " +
+      "Punch in a Radar Signature (RS) reading to identify the contact: a mineable rock " +
       "<b>class</b> (with its likely minerals) and/or a salvageable ship hull. The number is " +
       "<code>base RS × number of rocks</code>; bases can be shared, so a reading can be ambiguous.")}</span></h3>
     <div class="mform">
@@ -178,40 +178,56 @@ function resultHtml(v, candidates, combos, salvage = []) {
   if (salvage.length) html += salvageSectionHtml(salvage);
   return html;
 }
-// A wreck has no mineral composition, only an identity (a whole-ship hull, or n flat-2000
-// debris panels), so it gets its own labelled section. For a ship hull the candidate hulls are
-// PILLS (driven by the signal, not a dropdown) and the selected one slots in the shared
-// removable-component breakdown (resolved by ship CLASS against the salvage-ship catalog).
+// A wreck has no mineral composition, only an identity (a whole-ship hull, or n flat-2000 debris
+// panels), so it gets its own labelled section. A ship hull names itself in the card title and
+// renders its strippable components directly into the card — no repeated name, no nested panel;
+// picker pills appear only when the reading is ambiguous (several hulls share the base RS).
 function salvageSectionHtml(salvage) {
-  return `<div class="mres-h">Salvage targets</div>` + salvage.map(c => {
-    const head = `<h3><span><b>${esc(c.label)}</b></span>
-          <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>`;
-    if (c.kind === "ship") {
-      // The salvageables catalog identifies hulls by display name (its `class` is a debris-record
-      // id, not the ship base class), so the pills carry — and the breakdown resolves by — NAME.
-      const hulls = [], seen = new Set();
-      for (const t of c.targets || []) {
-        const nm = t.name; if (!nm || seen.has(nm)) continue;
-        seen.add(nm); hulls.push(nm);
-      }
-      const pills = hulls.map(nm =>
-        `<button class="salv-pill${nm === HULL ? " open" : ""}" aria-expanded="${nm === HULL}"
-           data-hull="${esc(nm)}" onclick="signalHull(this.dataset.hull)">${esc(nm)}</button>`).join("");
-      return `<div class="card mcand salv">${head}
-        <div class="mcand-body"><div class="mrow">
-          <span class="mk">ship hull</span><div class="mels">${pills}</div>
-        </div></div>
-        ${HULL ? hullBreakdown(HULL) : ""}</div>`;
-    }
-    // debris panels: the part is noise (all read 2000), so just name the distinct donor ships
-    const ships = [...new Set((c.targets || []).map(t => t.ship || t.name))];
-    const more = (c.targets || []).length >= 12 ? ' <span class="mn-dim">…</span>' : "";
-    return `<div class="card mcand salv">${head}
-      <div class="mcand-body"><div class="mrow">
-        <span class="mk">any of</span>
-        <div class="mels">${ships.map(n => tag(n)).join(" ")}${more}</div>
-      </div></div></div>`;
-  }).join("");
+  return `<div class="mres-h">Salvage targets</div>`
+    + salvage.map(c => (c.kind === "ship" ? hullCardHtml(c) : panelCardHtml(c))).join("");
+}
+function panelCardHtml(c) {
+  // Debris panels: the part is noise (all read 2000), so just name the distinct donor ships.
+  const ships = [...new Set((c.targets || []).map(t => t.ship || t.name))];
+  const more = (c.targets || []).length >= 12 ? ' <span class="mn-dim">…</span>' : "";
+  return `<div class="card mcand salv">
+    <h3><span><b>${esc(c.label)}</b></span>
+        <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>
+    <div class="mcand-body"><div class="mrow">
+      <span class="mk">any of</span>
+      <div class="mels">${ships.map(n => tag(n)).join(" ")}${more}</div>
+    </div></div></div>`;
+}
+// One salvageable-hull card. The title names the (selected) hull once; components render straight
+// into the card (no nested breakdown panel). Pills show only when >1 hull shares this base RS.
+function hullCardHtml(c) {
+  const hulls = [], seen = new Set();
+  for (const t of c.targets || []) { const nm = t.name; if (nm && !seen.has(nm)) { seen.add(nm); hulls.push(nm); } }
+  const multi = hulls.length > 1;
+  const sel = (HULL && hulls.includes(HULL)) ? HULL : (hulls[0] || null);
+  const e = sel ? hullEntry(sel) : null;
+
+  const title = multi
+    ? `<b>${esc(sel || c.label)}</b> <span class="mn-dim">+${hulls.length - 1} more</span>`
+    : e ? `<b>${esc(e.name)}</b>${e.manufacturer ? ` · ${esc(e.manufacturer)}` : ""}`
+        : `<b>${esc(sel || c.label)}</b>`;
+  const sum = e ? pullSummary(e.components) : "";
+  const scu = `RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}${sum ? ` · ${sum}` : ""}`;
+
+  const picker = multi
+    ? `<div class="mcand-body"><div class="mrow"><span class="mk">ship hull</span>
+        <div class="mels">${hulls.map(nm =>
+          `<button class="salv-pill${nm === sel ? " open" : ""}" data-hull="${esc(nm)}"
+             aria-expanded="${nm === sel}" onclick="signalHull(this.dataset.hull)">${esc(nm)}</button>`).join("")}</div>
+      </div></div>`
+    : "";
+  const body = e ? componentsHtml(e.components)
+    : CATALOG === null ? `<div class="empty">Loading component data…</div>`
+    : `<div class="empty">No stock-salvage component data for this hull yet.</div>`;
+
+  return `<div class="card mcand salv">
+    <h3><span>${title}</span><span class="scu">${scu}</span></h3>
+    ${picker}${body}</div>`;
 }
 // Distinct hull names across all ship-hull candidates (first one is the default selection).
 function hullNames(salvage) {
@@ -228,13 +244,6 @@ function hullEntry(name) {
   for (const e of Object.values(CATALOG))
     if (t === (e.name || "").toLowerCase() || t === (e.name_full || "").toLowerCase()) return e;
   return null;
-}
-function hullBreakdown(name) {
-  if (CATALOG === null) return shipDetailPanel("…", [], false, "Loading component data…");
-  const e = hullEntry(name);
-  return e
-    ? shipDetailPanel(`${esc(e.name)}${e.manufacturer ? ` · ${esc(e.manufacturer)}` : ""}`, e.components, true)
-    : shipDetailPanel(esc(name), [], false, "No stock-salvage component data for this hull yet.");
 }
 export function signalHull(name) {
   HULL = name || null;
