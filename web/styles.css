@@ -560,9 +560,6 @@ tr:hover .lt-replay .lt-act{opacity:1}
 .logtable thead th{position:sticky;top:0;background:var(--panel);z-index:1;text-align:left;
   font-family:var(--display);text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;
   color:var(--ink-3);padding:8px 12px;border-bottom:1px solid var(--line)}
-/* numeric columns: right-align the HEADER to match its right-aligned values
-   (this beats the rule above, which otherwise left-aligns every header) */
-.logtable thead th.lt-num{text-align:right}
 .logtable td{padding:6px 12px;border-bottom:1px solid rgba(var(--line-rgb),.06);vertical-align:top}
 .logtable tbody tr:hover{background:rgba(var(--line-rgb),.04)}
 /* Column-totals row: the last row of the table (NOT sticky — a pinned/sticky cell in a
@@ -577,7 +574,7 @@ tr:hover .lt-replay .lt-act{opacity:1}
 .logtable tfoot .lt-foot-num.neg{color:var(--red)}
 .lt-when{font-family:var(--mono);color:var(--ink-3);font-size:11px;white-space:nowrap}
 .lt-title{color:var(--ink)}
-.lt-num{font-family:var(--mono);text-align:right;white-space:nowrap}
+.lt-num{font-family:var(--mono);white-space:nowrap}
 .lt-shop{color:var(--ink-2);white-space:nowrap}
 .lt-status{white-space:nowrap}
 .qt-leg{color:var(--ink-3)}
@@ -841,8 +838,8 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .bp-h{cursor:pointer;display:inline-flex;align-items:center;gap:3px}
 .bp-h:hover{color:var(--cyan)}
 .bp-sort{color:var(--cyan);font-size:9px}
-#mining .bp-fbtn{margin-left:6px;padding:1px 4px;background:none;border:1px solid transparent;
-  color:var(--ink-3);display:inline-flex;align-items:center;vertical-align:middle}
+#mining .bp-fbtn{margin-left:6px;padding:1px 3px;background:none;border:1px solid transparent;
+  color:var(--ink-2);display:inline-flex;align-items:center;vertical-align:middle}
 #mining .bp-fbtn svg{display:block}
 #mining .bp-fbtn:hover{color:var(--cyan);border-color:var(--cyan)}
 #mining .bp-filtered .bp-fbtn{color:var(--cyan);border-color:var(--cyan)}
