@@ -4,6 +4,7 @@ import { $, val, esc, num, setHTML, logTable, th, tag, tabBar, toast } from "./d
 import { postJSON, postRaw, getJSON } from "./net.js";
 import {
   initMining, miningSub, miningFind, miningIndex, bpOpen, bpFilter, bpPick, bpKey,
+  bpListQty, bpListRemove, bpListClear,
 } from "./mining.js";
 import {
   initSignal, syncSignalSession, signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
@@ -1329,6 +1330,7 @@ Object.assign(window, {
   routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,
   // mining (Find / Plan)
   miningSub, miningFind, miningIndex, bpOpen, bpFilter, bpPick, bpKey,
+  bpListQty, bpListRemove, bpListClear,
   // signal id (RS reading → rock / wreck)
   signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
   // salvage (Ship-ID panel)

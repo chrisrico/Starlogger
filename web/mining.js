@@ -25,6 +25,11 @@ let MINING_MINERALS = null;        // cached mineral names for the autocomplete
 let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the picker
 let FIND_LAST = null;              // last mineral-lookup result — re-ranked on loadout change
 let MINING_INIT = false;
+// Plan sub's crafting list: the blueprints to build, each with a quantity. Persisted so a
+// planned crafting run survives a reload (same localStorage convention as the route order and
+// jukebox). Picking from the combobox adds to this list rather than replacing one selection.
+let BP_LIST = (() => { try { return JSON.parse(localStorage.getItem("bpList") || "[]"); } catch (_) { return []; } })();
+const _bpSave = () => { try { localStorage.setItem("bpList", JSON.stringify(BP_LIST)); } catch (_) {} };
 
 export async function initMining() {
   if (!MINING_INIT) {
@@ -78,6 +83,8 @@ function renderMiningShell() {
     ${bar}
     ${sections}
   </div>`);
+  // Repaint the persisted crafting list now the Plan sub's results div exists.
+  if (BP_LIST.length) renderBpPlan();
 }
 
 // small shared bits ---------------------------------------------------------- //
@@ -353,10 +360,24 @@ function _bpSetActive(it) {
   }
 }
 export function bpPick(name) {
-  const inp = $("mp-bp"); if (inp) inp.value = name;
-  bpOpen(false);
-  miningPlanFromBlueprint(name);
+  // Add to the crafting list (bump qty if already present) instead of selecting just one.
+  name = (name || "").trim(); if (!name) return;
+  const row = BP_LIST.find(r => r.name.toLowerCase() === name.toLowerCase());
+  if (row) row.qty += 1; else BP_LIST.push({ name, qty: 1 });
+  _bpSave();
+  const inp = $("mp-bp"); if (inp) { inp.value = ""; inp.focus(); }
+  bpFilter("");          // reset the filter, leaving the menu open for the next add
+  renderBpPlan();
 }
+// Crafting-list row actions — by index, since the list re-renders fully after each change.
+export function bpListQty(i, delta) {
+  const row = BP_LIST[i]; if (!row) return;
+  row.qty += delta;
+  if (row.qty < 1) BP_LIST.splice(i, 1);
+  _bpSave(); renderBpPlan();
+}
+export function bpListRemove(i) { BP_LIST.splice(i, 1); _bpSave(); renderBpPlan(); }
+export function bpListClear() { BP_LIST = []; _bpSave(); renderBpPlan(); }
 // Filter items by a case-insensitive substring; hide whole sections with no visible items.
 export function bpFilter(q) {
   const list = $("bp-dd-list"); if (!list) return;
@@ -394,38 +415,63 @@ const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;
   return m ? `${m}m${sec ? " " + sec + "s" : ""}` : `${sec}s`;
 };
-async function miningPlanFromBlueprint(name) {
-  name = (name || val("mp-bp")).trim();
-  if (!name) { setHTML(mres(), `<div class="empty">Pick a blueprint.</div>`); return; }
-  setHTML(mres(), `<div class="empty">loading blueprint…</div>`);
+// Sum the crafting list's materials (server) → one deposit-coverage plan for the whole list,
+// and repaint the Plan sub: the editable list, the merged shopping list, then the best deposits.
+async function renderBpPlan() {
+  const out = "mres-plan";
+  if (!BP_LIST.length) {
+    setHTML(out, `<div class="empty">Add blueprints to build a crafting list — the materials you'll need are summed across all of them.</div>`);
+    return;
+  }
+  setHTML(out, bpListHtml() + `<div class="empty">summing materials…</div>`);
   try {
-    const bp = await fetch(`/api/blueprint?name=${encodeURIComponent(name)}`).then(r => r.json());
-    if (bp.ok === false) { setHTML(mres(), `<div class="empty">No blueprint “${esc(name)}”.</div>`); return; }
-    const plan = await fetch("/api/mining-plan", {
-      method: "POST", headers: writeHeaders(),
-      body: JSON.stringify({ minerals: bp.minerals || [] }),
+    const agg = await fetch("/api/blueprints-plan", {
+      method: "POST", headers: writeHeaders(), body: JSON.stringify({ items: BP_LIST }),
     }).then(r => r.json());
-    setHTML(mres(), recipeHtml(bp) + planResultHtml(plan));
-  } catch (e) { setHTML(mres(), `<div class="empty">plan failed</div>`); }
+    const plan = await fetch("/api/mining-plan", {
+      method: "POST", headers: writeHeaders(), body: JSON.stringify({ minerals: agg.minerals || [] }),
+    }).then(r => r.json());
+    setHTML(out, bpListHtml() + breakdownHtml(agg) + planResultHtml(plan));
+  } catch (e) { setHTML(out, bpListHtml() + `<div class="empty">plan failed</div>`); }
 }
-function recipeHtml(bp) {
-  const meta = [esc(bp.category || ""), bp.craft_seconds ? _miningDur(bp.craft_seconds) : ""].filter(Boolean).join(" · ");
-  const rows = (bp.requirements || []).map(r => `<tr>
-    <td>${esc(r.slot || "")}</td><td><b>${esc(r.resource)}</b></td>
-    <td class="lt-num">${r.scu} SCU</td>
-    <td class="lt-num">${r.min_quality > 0 ? "Q≥" + r.min_quality : "—"}</td></tr>`).join("");
-  // Which missions reward this blueprint (from the DataCore reward pools), when known.
-  const sources = (bp.sources || []).map(s => tag(s)).join(" ");
-  const srcRow = sources
-    ? `<div class="mrow bp-source"><span class="mk">Rewarded by</span><div>${sources}</div></div>`
-    : "";
-  return `<div class="card"><h3><span>${esc(bp.name)}</span><span class="scu">${meta}</span></h3>
-    ${srcRow}
+// The editable crafting list: a row per blueprint with a − qty + stepper and a remove ✕.
+function bpListHtml() {
+  const rows = BP_LIST.map((r, i) => `<tr>
+    <td><b>${esc(r.name)}</b></td>
+    <td class="bp-qty">
+      <button class="bp-step" aria-label="One fewer" onclick="bpListQty(${i},-1)">−</button>
+      <span class="bp-n">${r.qty}</span>
+      <button class="bp-step" aria-label="One more" onclick="bpListQty(${i},1)">+</button>
+    </td>
+    <td class="lt-num"><button class="bp-rm" aria-label="Remove" onclick="bpListRemove(${i})">✕</button></td>
+  </tr>`).join("");
+  return `<div class="card mtool"><h3><span>Crafting list</span>
+      <button class="bp-clear" onclick="bpListClear()">Clear</button></h3>
     ${logTable(
-      th("Slot", false, "The recipe slot this material fills") +
-      th("Material", false, "The mineral or resource the slot requires") +
-      th("Qty", true, "Amount needed, in SCU") +
-      th("Min quality", true, "Minimum refined quality the material must meet (— = any)"),
+      th("Blueprint", false, "A blueprint you want to craft") +
+      th("Qty", true, "How many to craft — the material totals scale with this") +
+      th("", true, ""),
+      rows, "No blueprints yet.")}
+  </div>`;
+}
+// The merged shopping list: every recipe's materials summed by resource across the whole list.
+function breakdownHtml(agg) {
+  const rows = (agg.requirements || []).map(r => `<tr>
+    <td><b>${esc(r.resource)}</b></td>
+    <td class="lt-num">${num(r.scu)} SCU</td>
+    <td class="lt-num">${r.min_quality > 0 ? "Q≥" + r.min_quality : "—"}</td>
+    <td>${(r.from || []).map(f => tag(f.qty > 1 ? `${f.name} ×${f.qty}` : f.name)).join(" ")}</td>
+  </tr>`).join("");
+  const meta = [
+    agg.total_scu ? `${num(agg.total_scu)} SCU total` : "",
+    agg.craft_seconds ? _miningDur(agg.craft_seconds) + " craft" : "",
+  ].filter(Boolean).join(" · ");
+  return `<div class="card"><h3><span>Materials needed</span><span class="scu">${meta}</span></h3>
+    ${logTable(
+      th("Material", false, "The mineral or resource to mine and refine") +
+      th("Qty", true, "Total amount across the whole list, in SCU") +
+      th("Min quality", true, "Strictest refined quality any blueprint in the list requires (— = any)") +
+      th("For", false, "Which blueprints in the list need this material"),
       rows, "No materials.")}
   </div>`;
 }

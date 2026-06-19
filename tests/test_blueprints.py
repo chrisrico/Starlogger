@@ -108,6 +108,38 @@ def test_lookup_blueprint_by_name(tmp_path):
     assert blueprints.lookup_blueprint("nothing", path=path) is None
 
 
+def test_aggregate_blueprints(tmp_path):
+    # A build-list of {name, qty} merges by resource: scu scales with qty, the two blueprints'
+    # shared Gold sums, the strictest min_quality wins, craft time is qty-weighted, and an
+    # unknown name is echoed (found=False) without polluting the totals.
+    path = str(tmp_path / "blueprints.json")
+    bps = [
+        {"name": "Widget A", "category": "FPS Weapons", "craft_seconds": 100,
+         "minerals": ["Borase", "Gold"], "requirements": [
+             {"slot": "Shell", "resource": "Borase", "scu": 0.42, "min_quality": 1},
+             {"slot": "Core", "resource": "Gold", "scu": 0.5, "min_quality": 0}]},
+        {"name": "Widget B", "category": "FPS Weapons", "craft_seconds": 60,
+         "minerals": ["Gold"], "requirements": [
+             {"slot": "Core", "resource": "Gold", "scu": 1.0, "min_quality": 2}]},
+    ]
+    blueprints.save_blueprints(bps, game_version="4.8", path=path)
+    blueprints._cache["mtime"] = None
+
+    agg = blueprints.aggregate_blueprints(
+        [{"name": "Widget A", "qty": 2}, {"name": "Widget B", "qty": 1}, {"name": "ghost"}], path=path)
+
+    gold = next(r for r in agg["requirements"] if r["resource"] == "Gold")
+    assert gold["scu"] == 2.0 and gold["min_quality"] == 2          # 0.5×2 + 1.0×1, strictest Q
+    assert gold["from"] == [{"name": "Widget A", "qty": 2}, {"name": "Widget B", "qty": 1}]
+    borase = next(r for r in agg["requirements"] if r["resource"] == "Borase")
+    assert borase["scu"] == 0.84 and borase["min_quality"] == 1     # 0.42×2
+    assert [r["resource"] for r in agg["requirements"]] == ["Gold", "Borase"]   # heaviest first
+    assert agg["minerals"] == ["Borase", "Gold"]
+    assert agg["craft_seconds"] == 100 * 2 + 60                     # qty-weighted
+    assert agg["total_scu"] == 2.84
+    assert {"name": "ghost", "qty": 1, "found": False} in agg["items"]
+
+
 def test_blueprint_section_derivation():
     # picker grouping helpers: size, weapon kind, model-line label, armour set, grade gate
     assert blueprints._size_num("Vehicle Component S3") == 3

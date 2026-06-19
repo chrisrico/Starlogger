@@ -208,3 +208,48 @@ def lookup_blueprint(name: str, path: str = BLUEPRINTS_PATH) -> dict | None:
         if q in key:
             return b
     return None
+
+
+def aggregate_blueprints(items: list, path: str = BLUEPRINTS_PATH) -> dict:
+    """Merge a build-list of ``{name, qty}`` into one crafting shopping list: every recipe's
+    materials summed by resource (``scu`` × qty), tagged with the strictest ``min_quality`` any
+    line asks for and which blueprints (and how many) need it. Unknown names are echoed with
+    ``found: False`` and left out of the totals. The ``minerals`` shortcut feeds the same
+    deposit-coverage plan (``/api/mining-plan``) as a single blueprint does."""
+    by_res: dict[str, dict] = {}        # resource -> running total + contributors
+    resolved: list = []
+    total_seconds = 0.0
+    for it in items or []:
+        name = (it.get("name") or "").strip()
+        try:
+            qty = max(1, int(it.get("qty", 1)))
+        except (TypeError, ValueError):
+            qty = 1
+        bp = lookup_blueprint(name, path) if name else None
+        if not bp:
+            resolved.append({"name": name, "qty": qty, "found": False})
+            continue
+        resolved.append({"name": bp["name"], "qty": qty, "found": True,
+                         "category": bp.get("category"), "craft_seconds": bp.get("craft_seconds")})
+        total_seconds += (bp.get("craft_seconds") or 0) * qty
+        for r in bp.get("requirements", []):
+            agg = by_res.setdefault(r["resource"], {"resource": r["resource"], "scu": 0.0,
+                                                    "min_quality": 0, "from": {}})
+            agg["scu"] += (r.get("scu") or 0) * qty
+            agg["min_quality"] = max(agg["min_quality"], r.get("min_quality") or 0)
+            agg["from"][bp["name"]] = agg["from"].get(bp["name"], 0) + qty
+    requirements = [{
+        "resource": a["resource"],
+        "scu": round(a["scu"], 2),
+        "min_quality": a["min_quality"],
+        "from": [{"name": n, "qty": q} for n, q in sorted(a["from"].items())],
+    } for a in by_res.values()]
+    # Heaviest material first -- that's the one that dictates the mining run.
+    requirements.sort(key=lambda r: (-r["scu"], r["resource"]))
+    return {
+        "items": resolved,
+        "requirements": requirements,
+        "minerals": sorted(by_res),
+        "craft_seconds": round(total_seconds),
+        "total_scu": round(sum(a["scu"] for a in by_res.values()), 2),
+    }

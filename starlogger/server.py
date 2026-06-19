@@ -23,7 +23,7 @@ from .settings import describe as describe_settings, set_setting
 from .settings import get_ship_equipment, set_ship_equipment
 from .settings import resolve_str as settings_str
 from .settings import update as update_settings
-from .blueprints import blueprint_catalog, lookup_blueprint
+from .blueprints import aggregate_blueprints, blueprint_catalog, lookup_blueprint
 from .contracts import load_contracts
 from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
@@ -447,6 +447,19 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         if not bp:
             return jsonify({"ok": False, "error": "no such blueprint"}), 404
         return jsonify(bp)
+
+    @app.post("/api/blueprints-plan")
+    def api_blueprints_plan():
+        # A build-list of {name, qty} -> one material shopping list (every recipe summed by
+        # resource) + the distinct minerals to feed /api/mining-plan. Like /api/blueprint but
+        # for many blueprints at once; the Plan tab's crafting list posts here.
+        payload = request.get_json(force=True, silent=True) or {}
+        items = payload.get("items")
+        if not isinstance(items, list):
+            return jsonify({"ok": False, "error": "items must be a list"}), 400
+        return jsonify(aggregate_blueprints(
+            [{"name": str((it or {}).get("name", "")), "qty": (it or {}).get("qty", 1)}
+             for it in items]))
 
     @app.get("/api/mining-gear")
     def api_mining_gear():

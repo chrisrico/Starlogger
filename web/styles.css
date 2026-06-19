@@ -857,6 +857,11 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .bp-dd-item.bp-dd-active{box-shadow:inset 2px 0 0 var(--cyan)}
 .bp-dd-sz{flex:0 0 auto;color:var(--ink-3);font-size:11px}
 .bp-dd-item:hover .bp-dd-sz,.bp-dd-item.bp-dd-active .bp-dd-sz{color:var(--cyan)}
+/* Plan tab crafting list: qty steppers + remove/clear (buttons inherit the .mtool button base) */
+.bp-qty{display:flex;align-items:center;justify-content:flex-end;gap:7px}
+.bp-qty .bp-n{font-family:var(--mono);min-width:1.6em;text-align:center;color:var(--ink)}
+.bp-step{padding:2px 9px}
+.bp-clear{margin-left:auto;font-size:10px;padding:3px 10px}
 /* prominent "scan for" band on the Find-mineral results */
 .mscan{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 16px;
   border-bottom:1px solid var(--line)}
