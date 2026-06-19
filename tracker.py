@@ -27,7 +27,7 @@ import time
 import urllib.request
 import webbrowser
 
-from starlogger import catalogs, contracts, ignition, scdata, settings
+from starlogger import catalogs, contracts, ignition, scdata, screenlock, settings
 from starlogger.archive import (
     ARCHIVE_SCHEMA,
     archive_session,
@@ -870,6 +870,9 @@ def main() -> None:
     threading.Thread(target=catalogs.refresh_loop, args=(state, stop, log_path),
                      kwargs={"music_state": mstate}, daemon=True).start()
     threading.Thread(target=cleanup_loop, args=(log_path, epoch_trigger, stop), daemon=True).start()
+    # Auto-pause the jukebox while the desktop screen is locked (Linux): watch the freedesktop
+    # ScreenSaver D-Bus signal and ride it on the snapshot, like game_running. None if unavailable.
+    lock_proc = screenlock.watch_screen_lock(state.set_screen_locked)
 
     url = f"http://{args.host}:{args.port}"
     print("Starlogger -- Star Citizen cargo/flight logger")
@@ -926,6 +929,11 @@ def main() -> None:
         pass
     finally:
         stop.set()
+        if lock_proc:
+            try:
+                lock_proc.terminate()
+            except Exception:
+                pass
         scdata.clear_scratch()       # sweep any extract work dirs (incl. ones a hard-kill orphaned)
         httpd.server_close()         # release :8765 promptly for a relaunch to take over
         if restart.is_set():

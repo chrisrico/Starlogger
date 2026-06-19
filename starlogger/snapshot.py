@@ -376,6 +376,7 @@ def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None 
             # authoritative launcher-process state when the tracker launched the game. Drives the
             # jukebox auto-pause (web/jukebox.js jukeOnGameRunning).
             "game_running": state.game_running,
+            "screen_locked": state.screen_locked,   # desktop locked -> jukebox auto-pause
             "session_gamerules": state.session_gamerules,
             "last_event_ts": state.last_event_ts,
             "total_awarded": earned,

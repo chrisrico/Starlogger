@@ -9,7 +9,7 @@ import { postJSON, getJSON } from "./net.js";
 import { S, curData } from "./state.js";
 import { renderAll } from "./app.js";
 import { loadSessions } from "./archive.js";
-import { jukeApplyMusicState, jukeOnGameRunning } from "./jukebox.js";
+import { jukeApplyMusicState, jukeOnGameRunning, jukeOnScreenLocked } from "./jukebox.js";
 
 let _lastRenderSig = null;  // serialized snapshot last rendered (skip identical re-renders)
 let ASSET_VER = null;       // served-asset hash from the SSE `meta` frame; reload if it changes
@@ -96,6 +96,7 @@ function applySnapshot(d) {
   renderUpdateBar(d.update);   // update banner is global — show it even in replay mode
   if (d.music) jukeApplyMusicState(d.music);   // push extraction progress to the jukebox (no polling)
   if ("game_running" in d) jukeOnGameRunning(d.game_running);   // pause/resume the jukebox with the game
+  if ("screen_locked" in d) jukeOnScreenLocked(d.screen_locked);   // ...and while the screen is locked
   notifyIfUpdated(d.app_version);   // toast once when the running build changed under us
   if (S.REPLAY_MODE) return;   // keep S.LAST fresh underneath; the replay view owns the screen
   // Skip the whole render pass when the snapshot is byte-identical to the last one

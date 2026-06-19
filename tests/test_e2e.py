@@ -235,3 +235,29 @@ def test_manual_stop_during_game_is_not_auto_resumed(page, game_server):
     # give any erroneous resume a chance to fire, then assert it stayed stopped
     page.wait_for_timeout(500)
     assert not page.evaluate(_AUDIO_PLAYING)
+
+
+# --- pause-while-the-screen-is-locked ------------------------------------------------- #
+# The backend watches the desktop ScreenSaver D-Bus signal (starlogger/screenlock.py) and rides
+# screen_locked on the snapshot, so the jukebox auto-pauses while the screen is locked (letting an
+# idle OLED sleep) and resumes on unlock -- the same auto-pause path as the game.
+
+def _set_screen_locked(st, val):
+    with st.lock:
+        st.screen_locked = val
+    st.bump_version()
+
+
+def test_jukebox_pauses_on_screen_lock_and_resumes_on_unlock(page, game_server):
+    url, st = game_server
+    page.goto(url)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukePlay:not([disabled])")
+    page.click("#jukePlay")
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)
+
+    _set_screen_locked(st, True)                                # screen locks -> auto-pause
+    page.wait_for_function("() => document.getElementById('jukeAudio').paused", timeout=5000)
+
+    _set_screen_locked(st, False)                               # unlock -> resume what we paused
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)

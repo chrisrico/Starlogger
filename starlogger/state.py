@@ -47,6 +47,7 @@ class State:
         # (see server `_snap`), but this covers externally-launched/standalone sessions. Drives
         # the jukebox auto-pause-while-playing. Unlike logged_in it stays True at the main menu.
         self.game_running: bool = False
+        self.screen_locked: bool = False  # desktop screensaver/lock engaged (screenlock watcher)
         self.game_version: str | None = None  # e.g. "4.8.0"
         self.game_build: str | None = None    # changelist
         self.last_event_ts: str | None = None
@@ -199,6 +200,16 @@ class State:
         with self.version_cv:
             self.version += 1
             self.version_cv.notify_all()
+
+    def set_screen_locked(self, locked: bool) -> None:
+        """Record the desktop screen-lock state (from the screenlock watcher thread) and wake
+        streamers so the dashboard can auto-pause/resume the jukebox. Cross-thread -> guarded."""
+        locked = bool(locked)
+        with self.lock:
+            if self.screen_locked == locked:
+                return
+            self.screen_locked = locked
+        self.bump_version()
 
     # -- handlers -------------------------------------------------------- #
     def _session_boundary(self, line: str, ts: str | None) -> bool:
