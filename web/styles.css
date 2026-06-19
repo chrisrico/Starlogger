@@ -840,8 +840,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .bp-h{cursor:pointer;display:inline-flex;align-items:center;gap:3px}
 .bp-h:hover{color:var(--cyan)}
 .bp-sort{color:var(--cyan);font-size:9px}
-#mining .bp-fbtn{margin-left:6px;padding:0 4px;font-size:10px;line-height:1.4;background:none;
-  border:1px solid transparent;color:var(--ink-3)}
+#mining .bp-fbtn{margin-left:6px;padding:1px 4px;background:none;border:1px solid transparent;
+  color:var(--ink-3);display:inline-flex;align-items:center;vertical-align:middle}
+#mining .bp-fbtn svg{display:block}
 #mining .bp-fbtn:hover{color:var(--cyan);border-color:var(--cyan)}
 #mining .bp-filtered .bp-fbtn{color:var(--cyan);border-color:var(--cyan)}
 .bp-prow{cursor:pointer}
@@ -858,7 +859,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
   border:1px solid var(--line-2);border-radius:3px;box-shadow:var(--panel-shadow)}
 .bp-fpop.open{display:block}
 .bp-fhead{display:flex;gap:8px;align-items:center;padding:8px;border-bottom:1px solid var(--line)}
-.bp-fpop .bp-fsearch{flex:1;min-width:0;padding:4px 6px;font-size:11px}
+.bp-fpop .bp-fsearch{flex:1;min-width:0;padding:4px 6px;font-size:11px;color:var(--ink);background:var(--panel);border:1px solid var(--line-2);border-radius:2px}
 .bp-fall{display:flex;gap:5px;align-items:center;font-family:var(--display);font-size:9.5px;
   text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);cursor:pointer;white-space:nowrap}
 .bp-fopts{max-height:260px;overflow-y:auto;padding:4px 0}

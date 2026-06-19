@@ -300,7 +300,7 @@ const _bpCell = (b, k) => { const v = b[k]; return (v === "" || v == null) ? "" 
 
 function blueprintTableHtml() {
   const head = BP_COLS.map(c =>
-    `<th data-col="${c.key}"${_bpRA(c.key) ? ' class="lt-num"' : ""}><span class="bp-h" onclick="bpSort('${c.key}')">${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span><button class="bp-fbtn" title="Filter ${c.label}" onclick="bpFilterOpen(event,'${c.key}')">▾</button></th>`
+    `<th data-col="${c.key}"${_bpRA(c.key) ? ' class="lt-num"' : ""}><span class="bp-h" onclick="bpSort('${c.key}')">${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span><button class="bp-fbtn" title="Filter ${c.label}" onclick="bpFilterOpen(event,'${c.key}')"><svg viewBox="0 0 12 12" width="9" height="9" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg></button></th>`
   ).join("") + `<th class="lt-num">Qty</th>`;
   const rows = (MINING_BLUEPRINTS || []).map((b, i) => {
     const q = BP_QTY[b.name] || 0;
@@ -319,7 +319,6 @@ function planToolHtml() {
       "everything with a quantity, then ranked by deposit coverage.")}</span>
       <button class="bp-clear" onclick="bpClearList()" title="Reset every quantity to 0">Clear</button></h3>
     <div class="bp-pick">${blueprintTableHtml()}</div>
-    <div id="bp-fpop" class="bp-fpop"></div>
   </div>`;
 }
 let _bpTimer = 0;
@@ -369,22 +368,27 @@ export function bpSort(col) {
   for (const c of BP_COLS) { const el = $("bps-" + c.key); if (el) el.textContent = c.key === col ? (BP_SORT.dir > 0 ? " ▲" : " ▼") : ""; }
 }
 // ---- per-column multi-select filter (a checklist of the column's distinct values) ---- //
+// Rows passing every column's filter EXCEPT `skip` — so a column's own dropdown lists the values
+// still reachable given the OTHER active filters (and you can always re-check what you hid here).
+const _bpVisibleExcept = (skip) => (MINING_BLUEPRINTS || []).filter(b =>
+  BP_COLS.every(c => c.key === skip || !(BP_FILTERS[c.key] && BP_FILTERS[c.key].has(_bpCell(b, c.key)))));
 const _bpDistinct = (col) => {
-  const vals = [...new Set((MINING_BLUEPRINTS || []).map(b => _bpCell(b, col)))];
+  const vals = [...new Set(_bpVisibleExcept(col).map(b => _bpCell(b, col)))];
   vals.sort(_bpNum(col) ? (a, b) => (+a) - (+b) : (a, b) => a.localeCompare(b));
   return vals;
 };
 let _bpFcol = null;
 export function bpFilterOpen(e, col) {
   e.stopPropagation();
-  const pop = $("bp-fpop"); if (!pop) return;
+  let pop = $("bp-fpop");
+  if (!pop) { pop = document.createElement("div"); pop.id = "bp-fpop"; pop.className = "bp-fpop"; document.body.appendChild(pop); }
   if (_bpFcol === col && pop.classList.contains("open")) { _bpFclose(); return; }
   _bpFcol = col;
   const ex = BP_FILTERS[col] || new Set();
   const opts = _bpDistinct(col).map(v =>
     `<label class="bp-fopt"><input type="checkbox" value="${esc(v)}" ${ex.has(v) ? "" : "checked"} onchange="bpFilterToggle(this.checked,this.value)"><span>${v === "" ? "(blank)" : esc(v)}</span></label>`).join("");
   pop.innerHTML = `<div class="bp-fhead"><input class="bp-fsearch" placeholder="search…" aria-label="search values" oninput="bpFilterSearch(this.value)"><label class="bp-fall"><input type="checkbox" ${ex.size ? "" : "checked"} onchange="bpFilterAll(this.checked)">All</label></div><div class="bp-fopts">${opts}</div>`;
-  const r = e.target.getBoundingClientRect();
+  const r = e.currentTarget.getBoundingClientRect();
   pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 248)) + "px";
   pop.style.top = (r.bottom + 4) + "px";
   pop.classList.add("open");
