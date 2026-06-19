@@ -216,8 +216,8 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
 .editor input:focus,.editor select:focus,.mining input:focus,.signal input:focus,.cg-search:focus,
 .status .shipsel:focus,.tc-sel:focus,.edc-in:focus,.salv-dd-in:focus{outline:none;border-color:var(--cyan);
   box-shadow:var(--focus-ring)}
-/* shared floating-panel chrome — ship combobox, the Type filter menu, the blueprint picker */
-.shipmenu,.th-menu,.bp-dd-list,.salv-dd-list{background:var(--panel-2);border:1px solid var(--line-2);
+/* shared floating-panel chrome — ship combobox, the Type filter menu */
+.shipmenu,.th-menu,.salv-dd-list{background:var(--panel-2);border:1px solid var(--line-2);
   border-radius:3px;box-shadow:var(--panel-shadow);overflow-y:auto}
 /* shared "eyebrow" label — small uppercase display-font section/field labels. Members below
    keep only their own size / letter-spacing / margin (and color when it isn't the ink-3 default). */
@@ -832,31 +832,16 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mining input,.signal input{border-radius:2px;padding:8px 10px;font-size:13px}
 .mining input[type=number]{width:140px}
 .mining input#mf-name{min-width:200px}
-/* blueprint picker: search input + grouped (type/size) dropdown */
-/* the card normally clips descendants (clip-path corners); while the dropdown is open,
-   release the clip so the menu can overflow AND lift the whole card above the result
-   cards below it (z-index:30 on the menu alone doesn't beat later sibling .cards) */
-.card.dd-open{clip-path:none;z-index:10}
-.bp-dd{position:relative;flex:1;min-width:280px}
-.bp-dd input#mp-bp{width:100%;box-sizing:border-box}
-.bp-dd-list{display:none;position:absolute;z-index:30;top:calc(100% + 4px);left:0;right:0;
-  max-height:340px}
-.bp-dd-list.open{display:block}
-/* sticky section header; the top border is the horizontal rule between sections */
-.bp-dd-grp{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;gap:10px;
-  padding:6px 12px;background:var(--panel);
-  border-top:1px solid var(--line-2);border-bottom:1px solid var(--line);
-  font-family:var(--display);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase}
-.bp-dd-sec:first-child .bp-dd-grp{border-top:none}
-.bp-dd-lbl{display:flex;gap:7px;align-items:baseline;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.bp-dd-type{color:var(--ink-3);flex:0 0 auto}
-.bp-dd-detail{color:var(--cyan);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bp-dd-item{display:flex;align-items:baseline;gap:9px;
-  padding:5px 12px 5px 18px;font-family:var(--mono);font-size:12.5px;color:var(--ink-1);cursor:pointer}
-.bp-dd-item:hover,.bp-dd-item.bp-dd-active{background:rgba(var(--cyan-rgb),.12);color:var(--cyan)}
-.bp-dd-item.bp-dd-active{box-shadow:inset 2px 0 0 var(--cyan)}
-.bp-dd-sz{flex:0 0 auto;color:var(--ink-3);font-size:11px}
-.bp-dd-item:hover .bp-dd-sz,.bp-dd-item.bp-dd-active .bp-dd-sz{color:var(--cyan)}
+/* blueprint picker: a filter input + a filterable table of the whole catalog (replaces the
+   old dropdown). The wrap scrolls with a sticky header; clicking a row adds it to the list. */
+#bp-filter{flex:1;min-width:280px;box-sizing:border-box}
+.bp-pick{max-height:340px;overflow-y:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
+.bp-pick .logwrap{margin:0}
+.bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel)}
+.bp-prow{cursor:pointer}
+.bp-prow:hover{background:rgba(var(--cyan-rgb),.12)}
+.bp-prow:hover b{color:var(--cyan)}
+.bp-ptype{color:var(--ink-3);font-family:var(--mono);font-size:11.5px}
 /* Plan tab crafting list: qty steppers + remove/clear (buttons inherit the .mtool button base) */
 .bp-qty{display:flex;align-items:center;justify-content:flex-end;gap:7px}
 .bp-qty .bp-n{font-family:var(--mono);min-width:1.6em;text-align:center;color:var(--ink)}
@@ -1113,11 +1098,13 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 
 /* ---- salvage mode: Ship-ID panel (detected-wreck pills + removable components) ---- */
 .salvage{display:flex;flex-direction:column;gap:14px}   /* mirror .mining so the two cards aren't flush */
-/* searchable ship picker -- a combobox over a manufacturer-grouped listbox (mirrors the
-   blueprint picker's .bp-dd in mining.js); .salv-dd-in/.salv-dd-list also pull the shared
+/* searchable ship picker -- a combobox over a manufacturer-grouped listbox (the same combobox pattern); .salv-dd-in/.salv-dd-list also pull the shared
    input + floating-panel chrome (see the .editor/.mining input and .shipmenu rules above). */
 .salv-pick-row{padding:6px 16px 12px}
 .salv-dd{position:relative}
+/* the card clips descendants (clip-path corners); while this picker's dropdown is open, release
+   the clip so the floating list can overflow the card and lift above later sibling .cards */
+.card.dd-open{clip-path:none;z-index:10}
 .salv-dd-in{width:100%;box-sizing:border-box;border-radius:2px;padding:8px 10px;font-size:13px}
 .salv-dd-list{display:none;position:absolute;z-index:30;top:calc(100% + 4px);left:0;right:0;max-height:340px}
 .salv-dd-list.open{display:block}

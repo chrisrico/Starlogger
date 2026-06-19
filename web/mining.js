@@ -275,99 +275,39 @@ function indexResultHtml(minerals) {
 }
 
 // ---- Plan: blueprint → deposit coverage + sources ---- //
-// A searchable picker whose options are grouped into sections: the server tags each
-// blueprint with its main {type} and a {detail} (component size, weapon model line, FPS
-// weapon type, or armour set), and we lay those out as rule-separated sections with a
-// sticky header carrying the full "type · detail". Selecting an item plans — no button.
-const _BP_TYPE_ORDER = ["Vehicle Component", "Vehicle Weapons", "FPS Weapons", "FPS Armours"];
-// Group the catalog into ordered sections keyed by (type, detail); within a section items
-// are ordered by size then name (so a weapon model line reads S1→S6).
-function _bpSections() {
-  const byKey = new Map();
-  for (const b of MINING_BLUEPRINTS || []) {
-    const key = b.type + "\u0000" + (b.detail || "");
-    if (!byKey.has(key)) byKey.set(key, { type: b.type, detail: b.detail || "", items: [] });
-    byKey.get(key).items.push(b);
-  }
-  const ord = (t) => { const i = _BP_TYPE_ORDER.indexOf(t); return i < 0 ? 99 : i; };
-  return [...byKey.values()]
-    .sort((a, b) => ord(a.type) - ord(b.type) || a.type.localeCompare(b.type) ||
-      a.detail.localeCompare(b.detail))
-    .map(s => {
-      s.items.sort((x, y) => (x.size ?? 99) - (y.size ?? 99) || x.name.localeCompare(y.name));
-      return s;
-    });
-}
-let _bpId = 0;
-function blueprintMenuHtml() {
-  _bpId = 0;
-  return _bpSections().map(s => {
-    const items = s.items.map(b => {
-      // Vehicle weapons span sizes within a model line — tag each with its size, shown
-      // leading the name (left) so the column of sizes reads at a glance.
-      const sz = s.type === "Vehicle Weapons" && b.size != null ? `<span class="bp-dd-sz">S${b.size}</span>` : "";
-      const id = `bp-opt-${_bpId++}`;
-      return `<div class="bp-dd-item" role="option" id="${id}" data-search="${esc(b.name.toLowerCase())}"
-         onclick="bpPick(this.dataset.name)" data-name="${esc(b.name)}">${sz}<span>${esc(b.name)}</span></div>`;
-    }).join("");
-    const label = `<span class="bp-dd-type">${esc(s.type)}</span>` +
-      (s.detail ? ` <span class="bp-dd-detail">${esc(s.detail)}</span>` : "");
-    return `<div class="bp-dd-sec">
-      <div class="bp-dd-grp"><span class="bp-dd-lbl">${label}</span></div>${items}</div>`;
+// A filterable table of every craftable blueprint (the server tags each with a {type} and a
+// {detail} — component size, weapon model line, FPS type, or armour set). The whole catalog is
+// visible and scannable; the filter narrows it and clicking a row adds that blueprint to the
+// crafting list below. Rows index into MINING_BLUEPRINTS (catalog order) so the click handler
+// needs no name escaping.
+function blueprintTableHtml() {
+  const rows = (MINING_BLUEPRINTS || []).map((b, i) => {
+    const detail = [b.type, b.detail].filter(Boolean).join(" · ") +
+      (b.type === "Vehicle Weapons" && b.size != null ? ` · S${b.size}` : "");
+    const hay = `${b.name} ${b.type || ""} ${b.detail || ""}`.toLowerCase();
+    return `<tr class="bp-prow" data-search="${esc(hay)}" onclick="bpAdd(${i})" title="Add to crafting list">
+      <td><b>${esc(b.name)}</b></td><td class="bp-ptype">${esc(detail)}</td></tr>`;
   }).join("");
+  return logTable(th("Blueprint", false, "Click a row to add it to your crafting list") +
+                  th("Type", false, "Category · model line / size"), rows, "No blueprints.");
 }
 function planToolHtml() {
-  return `<div class="card mtool"><h3><span>Blueprint mining plan ${hintIcon(
-      "Pick a blueprint — grouped by type and size — to pull its required minerals straight from " +
-      "the game files. Deposits are ranked by how many of the ingredients each can yield.")}</span></h3>
+  return `<div class="card mtool"><h3><span>Blueprints ${hintIcon(
+      "Filter and click blueprints to add them to your crafting list. The materials needed are " +
+      "summed across the whole list, and deposits are ranked by how many ingredients each yields.")}</span></h3>
     <div class="mform">
-      <div class="bp-dd">
-        <input id="mp-bp" autocomplete="off" aria-label="Search blueprints"
-          role="combobox" aria-expanded="false" aria-controls="bp-dd-list" aria-autocomplete="list"
-          placeholder="Search blueprints by name…"
-          oninput="bpFilter(this.value)" onfocus="bpOpen(true)"
-          onblur="bpOpen(false)" onkeydown="bpKey(event)">
-        <div id="bp-dd-list" class="bp-dd-list" role="listbox" aria-label="Blueprints"
-          onmousedown="event.preventDefault()">${blueprintMenuHtml()}</div>
-      </div>
+      <input id="bp-filter" autocomplete="off" aria-label="Filter blueprints"
+        placeholder="Filter blueprints by name or type…" oninput="bpFilter(this.value)">
     </div>
+    <div class="bp-pick">${blueprintTableHtml()}</div>
   </div>`;
 }
-export function bpOpen(show) {
-  const el = $("bp-dd-list"); if (!el) return;
-  el.classList.toggle("open", !!show);
-  const inp = $("mp-bp"); if (inp) inp.setAttribute("aria-expanded", show ? "true" : "false");
-  // The card clips descendants via clip-path; drop it while the menu is open so the
-  // dropdown can overflow past the card edge.
-  const card = el.closest(".card"); if (card) card.classList.toggle("dd-open", !!show);
-  if (!show) _bpSetActive(null);
-}
-// Keyboard highlight for the listbox: the visible options, the active one, and a setter that
-// also drives aria-activedescendant so a screen reader follows the arrow-key cursor.
-const _bpVisible = () =>
-  [...($("bp-dd-list") || {}).querySelectorAll?.(".bp-dd-item") || []].filter(it => it.style.display !== "none");
-const _bpActive = () => ($("bp-dd-list") || {}).querySelector?.(".bp-dd-item.bp-dd-active") || null;
-function _bpSetActive(it) {
-  const list = $("bp-dd-list"); if (!list) return;
-  list.querySelectorAll(".bp-dd-item.bp-dd-active").forEach(e => e.classList.remove("bp-dd-active"));
-  const inp = $("mp-bp");
-  if (it) {
-    it.classList.add("bp-dd-active");
-    it.scrollIntoView({ block: "nearest" });
-    if (inp) inp.setAttribute("aria-activedescendant", it.id);
-  } else if (inp) {
-    inp.removeAttribute("aria-activedescendant");
-  }
-}
-export function bpPick(name) {
-  // Add to the crafting list (bump qty if already present) instead of selecting just one.
-  name = (name || "").trim(); if (!name) return;
-  const row = BP_LIST.find(r => r.name.toLowerCase() === name.toLowerCase());
-  if (row) row.qty += 1; else BP_LIST.push({ name, qty: 1 });
-  _bpSave();
-  const inp = $("mp-bp"); if (inp) { inp.value = ""; inp.focus(); }
-  bpFilter("");          // reset the filter, leaving the menu open for the next add
-  renderBpPlan();
+// Add the catalog blueprint at index i to the crafting list (bump qty if already present).
+export function bpAdd(i) {
+  const b = (MINING_BLUEPRINTS || [])[i]; if (!b) return;
+  const row = BP_LIST.find(r => r.name.toLowerCase() === b.name.toLowerCase());
+  if (row) row.qty += 1; else BP_LIST.push({ name: b.name, qty: 1 });
+  _bpSave(); renderBpPlan();
 }
 // Crafting-list row actions — by index, since the list re-renders fully after each change.
 export function bpListQty(i, delta) {
@@ -378,38 +318,11 @@ export function bpListQty(i, delta) {
 }
 export function bpListRemove(i) { BP_LIST.splice(i, 1); _bpSave(); renderBpPlan(); }
 export function bpListClear() { BP_LIST = []; _bpSave(); renderBpPlan(); }
-// Filter items by a case-insensitive substring; hide whole sections with no visible items.
+// Filter the blueprint table by a case-insensitive substring of name/type.
 export function bpFilter(q) {
-  const list = $("bp-dd-list"); if (!list) return;
-  list.classList.add("open");
   const needle = (q || "").trim().toLowerCase();
-  for (const sec of list.querySelectorAll(".bp-dd-sec")) {
-    let any = false;
-    for (const it of sec.querySelectorAll(".bp-dd-item")) {
-      const show = !needle || it.dataset.search.includes(needle);
-      it.style.display = show ? "" : "none";
-      if (show) any = true;
-    }
-    sec.classList.toggle("hide", !any);
-  }
-  _bpSetActive(null);   // the visible set changed; drop any stale arrow highlight
-}
-export function bpKey(e) {
-  if (e.key === "Escape") { bpOpen(false); return; }
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    bpOpen(true);
-    const vis = _bpVisible(); if (!vis.length) return;
-    const cur = _bpActive();
-    let i = cur ? vis.indexOf(cur) : -1;
-    i = e.key === "ArrowDown" ? (i + 1) % vis.length : (i <= 0 ? vis.length - 1 : i - 1);
-    _bpSetActive(vis[i]);
-    return;
-  }
-  if (e.key !== "Enter") return;
-  // Enter picks the arrow-highlighted option, or the first visible match when none is active.
-  const pick = _bpActive() || _bpVisible()[0];
-  if (pick) bpPick(pick.dataset.name);
+  for (const tr of document.querySelectorAll("#mining .bp-prow"))
+    tr.style.display = (!needle || tr.dataset.search.includes(needle)) ? "" : "none";
 }
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;

@@ -3,7 +3,7 @@
 import { $, val, esc, num, setHTML, logTable, th, tag, tabBar, toast } from "./dom.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 import {
-  initMining, miningSub, miningFind, miningIndex, bpOpen, bpFilter, bpPick, bpKey,
+  initMining, miningSub, miningFind, miningIndex, bpFilter, bpAdd,
   bpListQty, bpListRemove, bpListClear,
 } from "./mining.js";
 import {
@@ -1329,7 +1329,7 @@ Object.assign(window, {
   cargoSub, resetRouteOrder, rowHover, boxHover, markDelivered,
   routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,
   // mining (Find / Plan)
-  miningSub, miningFind, miningIndex, bpOpen, bpFilter, bpPick, bpKey,
+  miningSub, miningFind, miningIndex, bpFilter, bpAdd,
   bpListQty, bpListRemove, bpListClear,
   // signal id (RS reading → rock / wreck)
   signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
