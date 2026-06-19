@@ -149,6 +149,23 @@ def test_stop_turns_off_autoplay_and_halts_after_reload(page, live_server):
     assert not page.evaluate(_AUDIO_PLAYING)                    # autoplay off → stays paused
 
 
+def test_user_pause_does_not_resume_after_reload(page, live_server):
+    """A user pause (Play/Pause button, mini player, or OS media controls) drops the resume
+    intent, so an app update / reload doesn't restart it -- unlike Play (which resumes) or the
+    game auto-pause. Regression: pausing from the OS tray used to leave autoplay on and resume."""
+    page.goto(live_server)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukePlay:not([disabled])")
+    page.click("#jukePlay")                                     # Play
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)
+    page.click("#jukePlay")                                     # Pause (jukeToggle -> jukeUserPause)
+    page.wait_for_function("() => document.getElementById('jukeAudio').paused", timeout=5000)
+    assert page.evaluate("localStorage.getItem('jukeAutoplay')") == "0"   # resume intent dropped
+    page.reload()
+    page.wait_for_selector("#jukeList .juke-row")
+    assert not page.evaluate(_AUDIO_PLAYING)                    # stays paused after the reload
+
+
 def test_no_autoplay_for_a_fresh_visitor(page, live_server):
     page.goto(live_server)
     page.click("#navjukebox")

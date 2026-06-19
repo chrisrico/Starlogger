@@ -432,7 +432,7 @@ function jukeReflectShuffle() {
 function jukeToggle() {
   const a = $("jukeAudio");
   if (!JUKE_CUR) { jukeSetAutoplay(true); jukeStep(1); return; }
-  if (a.paused) { jukeSetAutoplay(true); a.play().catch(() => {}); } else a.pause();
+  if (a.paused) { jukeSetAutoplay(true); a.play().catch(() => {}); } else jukeUserPause();
 }
 
 // Stop: halt playback, rewind to the start, and turn autoplay OFF so a reload won't resume.
@@ -443,6 +443,16 @@ function jukeStop() {
   JUKE_PAUSED_BY_GAME = false;   // a deliberate Stop overrides any game auto-pause -> don't resume
   jukeSetAutoplay(false);
   jukePersist();
+}
+
+// A user-initiated pause -- the Play/Pause button, the mini player, or the OS media controls --
+// pauses AND drops the resume intent so an app update / reload won't restart it, unlike the game
+// auto-pause (which keeps the intent so it can resume on game exit).
+function jukeUserPause() {
+  jukeSetAutoplay(false);
+  JUKE_PAUSED_BY_GAME = false;   // a deliberate pause also overrides any game auto-pause claim
+  const a = $("jukeAudio");
+  if (a) a.pause();
 }
 
 // Reflect playing state onto the play/pause button + the OS media session.
@@ -463,7 +473,8 @@ function jukeInitMediaSession() {
   const ms = navigator.mediaSession, a = () => $("jukeAudio");
   const set = (act, fn) => { try { ms.setActionHandler(act, fn); } catch (_) {} };
   set("play", () => a().play().catch(() => {}));
-  set("pause", () => a().pause());
+  set("pause", () => jukeUserPause());
+  set("stop", () => jukeStop());
   set("previoustrack", () => jukeStep(-1));
   set("nexttrack", () => jukeStep(1));
   set("seekto", (d) => { if (d.seekTime != null) a().currentTime = d.seekTime; });
