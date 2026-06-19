@@ -26,7 +26,10 @@ def _fixture(root: str) -> None:
     # the crafted item's entity, carrying the localised name
     write_record(os.path.join(root, "libs/foundry/records/entities/scitem/foo_scitem.json"),
            "EntityClassDefinition.Foo_SCItem",
-           {"Components": [{"AttachDef": {"Localization": {"Name": "@item_Name_Foo"}}}]})
+           {"Components": [{"_Type_": "SAttachableComponentParams",
+                           "AttachDef": {"Grade": 1, "Size": 2,
+                                         "Localization": {"Name": "@item_Name_Foo",
+                                                          "Description": "@item_Desc_Foo"}}}]})
     # the blueprint that crafts it
     write_record(os.path.join(root, "libs/foundry/records/crafting/blueprints/crafting/weapons/bp_foo.json"),
            "CraftingBlueprintRecord.BP_Foo",
@@ -71,7 +74,8 @@ def _fixture(root: str) -> None:
 def test_build_blueprints_extracts_recipe(tmp_path):
     root = str(tmp_path)
     _fixture(root)
-    bps = scdata.build_blueprints(root, {"item_name_foo": "Foo Widget"})
+    bps = scdata.build_blueprints(root, {"item_name_foo": "Foo Widget",
+                                         "item_desc_foo": "Item Type: Cannon\\nClass: Military"})
     assert len(bps) == 1                       # the unnamed placeholder is dropped
     b = bps[0]
     assert b["name"] == "Foo Widget"
@@ -81,6 +85,9 @@ def test_build_blueprints_extracts_recipe(tmp_path):
     assert b["requirements"] == [
         {"slot": "Shell", "resource": "Borase", "scu": 0.42, "min_quality": 1},
         {"slot": "Core", "resource": "Gold", "scu": 0.68, "min_quality": 0}]
+    assert b["grade"] == "A" and b["grade_num"] == 1   # from AttachDef.Grade
+    assert b["size"] == 2                               # from AttachDef.Size
+    assert b["cls"] == "Military"                       # parsed from the description's Class: line
 
 
 def test_blueprint_sources_from_reward_pools(tmp_path):
@@ -154,6 +161,9 @@ def test_blueprint_section_derivation():
     assert blueprints._line_label(["CF-117 Bulldog Repeater", "CF-227 Badger Repeater"], "Repeater") == "CF"
     assert blueprints._armor_set("ADP Arms Black") == "ADP"
     assert blueprints._armor_set("A23 Flight Helmet Woodland") == "A23 Flight"
+    assert blueprints._armor_piece("ADP Arms Black") == "Arms"
+    assert blueprints._armor_piece("A23 Flight Helmet Woodland") == "Helmet"
+    assert blueprints._armor_piece("Untagged Thing") == ""
     # Grade A only, but keep components until a grade is present (pending p4k change)
     assert blueprints._keep_component({}) is True
     assert blueprints._keep_component({"grade": "A"}) is True
@@ -168,6 +178,26 @@ def test_mineral_name_reconciliation():
     assert _mineral_matches("gold", "Gold Ore")          # partial / case-insensitive
     assert not _mineral_matches("Tin", "Titanium Ore")   # not a false positive
     assert not _mineral_matches("", "Gold Ore")
+
+
+
+def test_blueprint_catalog_columns(tmp_path):
+    # the catalog exposes one row per blueprint with the table's six columns; Class comes from
+    # the description, Quality from the grade, Size from the AttachDef.
+    root = str(tmp_path)
+    _fixture(root)
+    bps = scdata.build_blueprints(root, {"item_name_foo": "Foo Widget",
+                                         "item_desc_foo": "Class: Military"})
+    path = str(tmp_path / "blueprints.json")
+    blueprints.save_blueprints(bps, path=path)
+    blueprints._cache["mtime"] = None
+    rows = blueprints.blueprint_catalog(path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert set(row) == {"name", "type", "subtype", "cls", "quality", "size"}
+    assert row["name"] == "Foo Widget" and row["type"] == "FPS Weapons"
+    assert row["cls"] == "Military" and row["quality"] == "A" and row["size"] == 2
+    assert isinstance(row["subtype"], str)
 
 
 if __name__ == "__main__":

@@ -198,17 +198,7 @@ def test_mining_plan_table_populates_when_catalog_loads_late(page, populated_ser
     resolved (applySub runs miningSub synchronously; the fetch can't resolve mid-stack), and the
     catalog-load path then skipped the rebuild — leaving a permanently empty table. Delay the
     catalog so the shell is built first, then assert it fills once the catalog arrives."""
-    # the isolated test data dir has no blueprint catalog — seed a couple so /api/blueprints
-    # returns rows (mirrors how the salvage test seeds ships).
-    from starlogger import blueprints, config
-    blueprints.save_blueprints([
-        {"name": "Test Rifle A", "category": "FPS Weapons", "crafts": "wep_rifle_a",
-         "minerals": ["Gold"], "requirements": [{"slot": "Core", "resource": "Gold", "scu": 1, "min_quality": 0}]},
-        {"name": "Test Pistol B", "category": "FPS Weapons", "crafts": "wep_pistol_b",
-         "minerals": ["Iron"], "requirements": [{"slot": "Core", "resource": "Iron", "scu": 1, "min_quality": 0}]},
-    ], game_version="test", path=config.BLUEPRINTS_PATH)
-    blueprints._cache["mtime"] = None
-
+    import json
     held = []
     page.route("**/api/blueprints", lambda r: held.append(r))   # hold the catalog response open
     errors = _boot(page, populated_server)
@@ -222,6 +212,45 @@ def test_mining_plan_table_populates_when_catalog_loads_late(page, populated_ser
             break
         page.wait_for_timeout(50)
     assert held, "catalog request was never intercepted"
-    held[0].continue_()
+    held[0].fulfill(status=200, content_type="application/json", body=json.dumps({"blueprints": [
+        {"name": "Stub A", "type": "FPS Weapons", "subtype": "Rifle", "cls": "", "quality": "A", "size": 1},
+        {"name": "Stub B", "type": "FPS Weapons", "subtype": "Pistol", "cls": "", "quality": "A", "size": 1},
+    ]}))
     page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length > 0")
+    assert errors == []
+
+
+def test_mining_plan_table_columns_and_filter(page, populated_server):
+    """The Plan table exposes Name/Type/Subtype/Class/Quality/Size columns, each with a
+    spreadsheet-style multi-select filter; unchecking a value hides its rows."""
+    import json
+    rows = [
+        {"name": "Mil Shield", "type": "Vehicle Component", "subtype": "Shield",
+         "cls": "Military", "quality": "A", "size": 2},
+        {"name": "Civ Shield", "type": "Vehicle Component", "subtype": "Shield",
+         "cls": "Civilian", "quality": "B", "size": 2},
+    ]
+    # stub the catalog API so the assertion doesn't depend on the shared on-disk cache
+    page.route("**/api/blueprints", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"blueprints": rows})))
+    errors = _boot(page, populated_server)
+    page.evaluate("() => window.setMode('mining')")
+    page.click('#nav a[data-tab="mining"]')
+    page.evaluate("() => window.miningSub('plan')")
+    page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length === 2")
+    heads = page.eval_on_selector_all(
+        "#mining .bp-table thead th",
+        "ths => ths.map(t => t.textContent.replace(/[\u25be\u25b2\u25bc]/g, '').trim())")
+    assert heads == ["Name", "Type", "Subtype", "Class", "Quality", "Size", "Qty"], heads
+    assert page.locator("#mining .bp-prow").count() == 2
+    # multi-select filter on Class: uncheck "Military" -> only the Civilian row remains
+    page.click('#mining th[data-col="cls"] .bp-fbtn')
+    page.wait_for_selector("#bp-fpop.open")
+    page.click('#bp-fpop .bp-fopt input[value="Military"]')
+    page.wait_for_function("() => [...document.querySelectorAll('#mining .bp-prow')]"
+                           ".filter(r => r.style.display !== 'none').length === 1")
+    shown = page.eval_on_selector_all(
+        "#mining .bp-prow",
+        "rows => rows.filter(r => r.style.display !== 'none').map(r => r.querySelector('td b').textContent)")
+    assert shown == ["Civ Shield"], shown
     assert errors == []

@@ -117,12 +117,28 @@ def _craft_seconds(bp: dict) -> int:
                + (tv.get("minutes") or 0) * 60 + (tv.get("seconds") or 0))
 
 
-def _loc_name(rv: dict, loc: dict) -> str:
-    """Crafted item's display name: the localised ``Localization.Name`` on a component."""
+def _loc_name_desc(rv: dict, loc: dict) -> "tuple[str, str]":
+    """Crafted item's localised (Name, Description) from its component Localization block --
+    the Description carries the ``Class:`` line read for the Class column."""
+    found = {"desc": ""}
     def probe(o):
         lz = o.get("Localization")
-        return _loc_text(lz.get("Name"), loc) if isinstance(lz, dict) else ""
-    return _deep_search(rv, probe) or ""
+        if isinstance(lz, dict) and lz.get("Name"):
+            found["desc"] = _loc_text(lz.get("Description"), loc) if lz.get("Description") else ""
+            return _loc_text(lz.get("Name"), loc)
+        return ""
+    return (_deep_search(rv, probe) or ""), found["desc"]
+
+
+_CLASS_RE = re.compile(r"Class:\s*(.+?)(?:\\n|\n|$)")
+
+
+def _parse_class(desc: str) -> "str | None":
+    """The item's Class -- Military/Civilian/Industrial/Stealth/Competition for vehicle
+    components, the damage type (Ballistic, Energy …) for weapons -- from its description's
+    ``Class: X`` line (descriptions store line breaks as a literal ``\\n``)."""
+    m = _CLASS_RE.search(desc or "")
+    return (m.group(1).replace("\xa0", " ").strip() or None) if m else None
 
 
 def _recipe_costs(bp: dict) -> list:
@@ -179,17 +195,21 @@ def build_blueprints(records_root: str, loc: dict) -> list:
             # The crafted item's record gives both its display name and (for components /
             # weapons) its grade, from the same SAttachableComponentParams.AttachDef.Grade
             # the ships build reads -- so resolve both in one open.
-            meta = {"name": "", "grade": None, "grade_num": None}
+            meta = {"name": "", "grade": None, "grade_num": None, "size": None, "cls": None}
             ep = ent_index.get(base)
             if ep:
                 try:
                     rv = _load_json(ep)["_RecordValue_"]
-                    meta["name"] = _loc_name(rv, loc)
-                    ad = _deep_find(rv, "_Type_", "SAttachableComponentParams")
-                    g = ((ad or {}).get("AttachDef") or {}).get("Grade")
+                    meta["name"], desc = _loc_name_desc(rv, loc)
+                    ad = ((_deep_find(rv, "_Type_", "SAttachableComponentParams") or {})
+                          .get("AttachDef") or {})
+                    g = ad.get("Grade")
                     if g is not None:
                         meta["grade_num"] = g
                         meta["grade"] = _GRADE_LETTER.get(g)
+                    if isinstance(ad.get("Size"), int):
+                        meta["size"] = ad["Size"]
+                    meta["cls"] = _parse_class(desc)
                 except (OSError, ValueError, KeyError):
                     pass
             meta_cache[base] = meta
@@ -210,11 +230,15 @@ def build_blueprints(records_root: str, loc: dict) -> list:
             "requirements": reqs,
             "minerals": sorted({r["resource"] for r in reqs}),
         }
-        # Grade only varies for vehicle components; weapons and FPS items are uniformly
-        # Grade A, so emitting it there is noise -- only the component filter consumes it.
-        if cat.startswith("Vehicle Component"):
+        # Grade (A-D), Size, and Class drive the table's Quality/Size/Class columns -- emit
+        # whatever the crafted item declares (most weapons are Grade A; many items have no Class).
+        if cmeta["grade"]:
             entry["grade"] = cmeta["grade"]
             entry["grade_num"] = cmeta["grade_num"]
+        if cmeta["size"] is not None:
+            entry["size"] = cmeta["size"]
+        if cmeta["cls"]:
+            entry["cls"] = cmeta["cls"]
         src = sources.get(os.path.basename(p)[:-5])
         if src:
             entry["sources"] = src

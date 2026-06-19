@@ -48,6 +48,9 @@ export async function initMining() {
       if (FIND_LAST) setHTML("mres-find", FIND_LAST.index
         ? indexResultHtml(FIND_LAST.index) : findResultHtml(FIND_LAST));
     });
+    document.addEventListener("click", (e) => {   // close an open column-filter dropdown
+      if (!e.target.closest("#bp-fpop") && !e.target.closest(".bp-fbtn")) _bpFclose();
+    });
     // Build the shell now the catalogs are in. Rebuild even if an early miningSub() (a deep-link
     // or reload to a #sub hash runs miningSub synchronously, before this fetch resolves) already
     // built one — that early shell has an empty blueprint table.
@@ -281,66 +284,136 @@ function indexResultHtml(minerals) {
       rows, "") + `</div>`;
 }
 
-// ---- Plan: blueprint → deposit coverage + sources ---- //
-// One table of every craftable blueprint (the server tags each with a {type} and a {detail} —
-// component size, weapon model line, FPS type, or armour set). Each column filters independently
-// and each row carries an inline qty input: the breakdown below is summed from every row whose
-// quantity > 0, so there is no separate list. Rows index into MINING_BLUEPRINTS (catalog order),
-// so the qty handler needs no name escaping.
+// ---- Plan: the blueprint build table ---- //
+// One row per craftable blueprint, columns Name/Type/Subtype/Class/Quality/Size + an inline Qty.
+// Every column has a spreadsheet-style multi-select filter and is click-to-sort; clicking a row
+// toggles its quantity on/off. The materials breakdown below sums every row with quantity > 0.
+const BP_COLS = [
+  { key: "name", label: "Name" }, { key: "type", label: "Type" }, { key: "subtype", label: "Subtype" },
+  { key: "cls", label: "Class" }, { key: "quality", label: "Quality" }, { key: "size", label: "Size" },
+];
+let BP_FILTERS = {};   // col -> Set of EXCLUDED values (unchecked in its dropdown); empty/absent = all
+let BP_SORT = null;    // { col, dir: 1 | -1 }
+const _bpNum = (k) => k === "size";
+const _bpRA = (k) => _bpNum(k) || k === "quality";   // right-align the numeric-ish columns
+const _bpCell = (b, k) => { const v = b[k]; return (v === "" || v == null) ? "" : String(v); };
+
 function blueprintTableHtml() {
+  const head = BP_COLS.map(c =>
+    `<th data-col="${c.key}"${_bpRA(c.key) ? ' class="lt-num"' : ""}><span class="bp-h" onclick="bpSort('${c.key}')">${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span><button class="bp-fbtn" title="Filter ${c.label}" onclick="bpFilterOpen(event,'${c.key}')">▾</button></th>`
+  ).join("") + `<th class="lt-num">Qty</th>`;
   const rows = (MINING_BLUEPRINTS || []).map((b, i) => {
-    const type = [b.type, b.detail].filter(Boolean).join(" · ") +
-      (b.type === "Vehicle Weapons" && b.size != null ? ` · S${b.size}` : "");
-    const qty = BP_QTY[b.name] || 0;
-    return `<tr class="bp-prow" data-n="${esc(b.name.toLowerCase())}" data-t="${esc(type.toLowerCase())}">
-      <td><b>${esc(b.name)}</b></td>
-      <td class="bp-ptype">${esc(type)}</td>
-      <td class="lt-num"><input type="number" min="0" class="bp-qin" value="${qty}"
-        aria-label="Quantity of ${esc(b.name)}" oninput="bpQty(${i}, this.value)"></td>
-    </tr>`;
+    const q = BP_QTY[b.name] || 0;
+    const cells = BP_COLS.map(c => {
+      const v = _bpCell(b, c.key);
+      return `<td${_bpRA(c.key) ? ' class="lt-num"' : ""}>${c.key === "name" ? `<b>${esc(v)}</b>` : esc(v)}</td>`;
+    }).join("");
+    return `<tr class="bp-prow${q ? " bp-on" : ""}" data-i="${i}" onclick="bpRowClick(event,${i})">${cells}<td class="bp-qcell" onclick="event.stopPropagation()"><button class="bp-step" aria-label="One fewer" onclick="bpStep(${i},-1)">−</button><input type="number" min="0" class="bp-qin" value="${q}" aria-label="Quantity of ${esc(b.name)}" oninput="bpQtyInput(${i},this.value)"><button class="bp-step" aria-label="One more" onclick="bpStep(${i},1)">+</button></td></tr>`;
   }).join("");
-  // Header carries a per-column filter: text for name/type, a "set only" toggle for qty.
-  return `<table class="logtable bp-table"><thead><tr>
-      <th>Blueprint<input id="bpf-name" class="bp-fin" placeholder="filter name…" aria-label="Filter by name" oninput="bpFilter()"></th>
-      <th>Type<input id="bpf-type" class="bp-fin" placeholder="filter type…" aria-label="Filter by type" oninput="bpFilter()"></th>
-      <th class="lt-num">Qty<label class="bp-selonly"><input type="checkbox" id="bpf-sel" onchange="bpFilter()">set</label></th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table class="logtable bp-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 function planToolHtml() {
   return `<div class="card mtool"><h3><span>Blueprints ${hintIcon(
-      "Every craftable blueprint. Filter by column, set a quantity to build, and the materials " +
-      "needed are summed below across everything with a quantity — then ranked by deposit coverage.")}</span>
+      "Every craftable blueprint. Filter any column (multi-select, like a spreadsheet), click a header " +
+      "to sort, click a row to toggle it on, and set a quantity. Materials are summed below across " +
+      "everything with a quantity, then ranked by deposit coverage.")}</span>
       <button class="bp-clear" onclick="bpClearList()" title="Reset every quantity to 0">Clear</button></h3>
     <div class="bp-pick">${blueprintTableHtml()}</div>
+    <div id="bp-fpop" class="bp-fpop"></div>
   </div>`;
 }
 let _bpTimer = 0;
-// Set the build quantity for the blueprint at catalog index i (0 clears it). Debounced so holding
-// the spinner doesn't refetch every tick; the table isn't rebuilt (its qty inputs are the source
-// of truth) — only the breakdown below repaints.
-export function bpQty(i, value) {
+// Set the blueprint at catalog index i to quantity n (0 clears it): update the row state + input in
+// place (never rebuild the table) and debounce the breakdown refresh.
+function _bpApply(i, n) {
   const b = (MINING_BLUEPRINTS || [])[i]; if (!b) return;
-  const n = Math.max(0, parseInt(value, 10) || 0);
+  n = Math.max(0, n | 0);
   if (n > 0) BP_QTY[b.name] = n; else delete BP_QTY[b.name];
   _bpSave();
+  const tr = document.querySelector(`#mining .bp-table tbody tr[data-i="${i}"]`);
+  if (tr) {
+    tr.classList.toggle("bp-on", n > 0);
+    const inp = tr.querySelector(".bp-qin"); if (inp && +inp.value !== n) inp.value = n;
+  }
   clearTimeout(_bpTimer); _bpTimer = setTimeout(renderBpPlan, 250);
 }
-// Reset every quantity to 0: clear the map, zero the inputs in place, drop the "set only" filter
-// (it would otherwise hide every row), and clear the breakdown.
+export function bpStep(i, d) { const b = (MINING_BLUEPRINTS || [])[i]; if (b) _bpApply(i, (BP_QTY[b.name] || 0) + d); }
+export function bpQtyInput(i, v) { _bpApply(i, parseInt(v, 10) || 0); }
+// Click a row (outside its qty cell) to toggle it between 0 and 1 — the easy "add one".
+export function bpRowClick(e, i) {
+  if (e.target.closest(".bp-qcell")) return;
+  const b = (MINING_BLUEPRINTS || [])[i]; if (b) _bpApply(i, (BP_QTY[b.name] || 0) > 0 ? 0 : 1);
+}
+// Reset every quantity to 0 (zero the inputs + clear row highlights in place) and the breakdown.
 export function bpClearList() {
   BP_QTY = {}; _bpSave();
-  for (const inp of document.querySelectorAll("#mining .bp-qin")) inp.value = 0;
-  const sel = $("bpf-sel"); if (sel) sel.checked = false;
-  bpFilter(); renderBpPlan();
-}
-// Per-column filter: name substring AND type substring AND (optionally) only rows with a qty set.
-export function bpFilter() {
-  const nf = val("bpf-name").trim().toLowerCase(), tf = val("bpf-type").trim().toLowerCase();
-  const selOnly = !!($("bpf-sel") && $("bpf-sel").checked);
   for (const tr of document.querySelectorAll("#mining .bp-table tbody tr")) {
-    const okSel = !selOnly || (parseInt(tr.querySelector(".bp-qin").value, 10) || 0) > 0;
-    tr.style.display = ((!nf || tr.dataset.n.includes(nf)) && (!tf || tr.dataset.t.includes(tf)) && okSel) ? "" : "none";
+    tr.classList.remove("bp-on"); const inp = tr.querySelector(".bp-qin"); if (inp) inp.value = 0;
   }
+  renderBpPlan();
+}
+// ---- click a header to sort by that column; click again to reverse ---- //
+export function bpSort(col) {
+  BP_SORT = BP_SORT && BP_SORT.col === col ? { col, dir: -BP_SORT.dir } : { col, dir: 1 };
+  const tbody = document.querySelector("#mining .bp-table tbody"); if (!tbody) return;
+  const rows = [...tbody.children];
+  rows.sort((ra, rb) => {
+    let a = (MINING_BLUEPRINTS[+ra.dataset.i] || {})[col], b = (MINING_BLUEPRINTS[+rb.dataset.i] || {})[col];
+    if (_bpNum(col)) return ((a == null ? -1 : +a) - (b == null ? -1 : +b)) * BP_SORT.dir;
+    a = (a == null ? "" : String(a)).toLowerCase(); b = (b == null ? "" : String(b)).toLowerCase();
+    return (a < b ? -1 : a > b ? 1 : 0) * BP_SORT.dir;
+  });
+  const f = document.createDocumentFragment();
+  for (const tr of rows) f.appendChild(tr);
+  tbody.appendChild(f);
+  for (const c of BP_COLS) { const el = $("bps-" + c.key); if (el) el.textContent = c.key === col ? (BP_SORT.dir > 0 ? " ▲" : " ▼") : ""; }
+}
+// ---- per-column multi-select filter (a checklist of the column's distinct values) ---- //
+const _bpDistinct = (col) => {
+  const vals = [...new Set((MINING_BLUEPRINTS || []).map(b => _bpCell(b, col)))];
+  vals.sort(_bpNum(col) ? (a, b) => (+a) - (+b) : (a, b) => a.localeCompare(b));
+  return vals;
+};
+let _bpFcol = null;
+export function bpFilterOpen(e, col) {
+  e.stopPropagation();
+  const pop = $("bp-fpop"); if (!pop) return;
+  if (_bpFcol === col && pop.classList.contains("open")) { _bpFclose(); return; }
+  _bpFcol = col;
+  const ex = BP_FILTERS[col] || new Set();
+  const opts = _bpDistinct(col).map(v =>
+    `<label class="bp-fopt"><input type="checkbox" value="${esc(v)}" ${ex.has(v) ? "" : "checked"} onchange="bpFilterToggle(this.checked,this.value)"><span>${v === "" ? "(blank)" : esc(v)}</span></label>`).join("");
+  pop.innerHTML = `<div class="bp-fhead"><input class="bp-fsearch" placeholder="search…" aria-label="search values" oninput="bpFilterSearch(this.value)"><label class="bp-fall"><input type="checkbox" ${ex.size ? "" : "checked"} onchange="bpFilterAll(this.checked)">All</label></div><div class="bp-fopts">${opts}</div>`;
+  const r = e.target.getBoundingClientRect();
+  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 248)) + "px";
+  pop.style.top = (r.bottom + 4) + "px";
+  pop.classList.add("open");
+}
+function _bpFclose() { const p = $("bp-fpop"); if (p) p.classList.remove("open"); _bpFcol = null; }
+export function bpFilterToggle(checked, value) {
+  if (!_bpFcol) return;
+  const ex = BP_FILTERS[_bpFcol] || (BP_FILTERS[_bpFcol] = new Set());
+  if (checked) ex.delete(value); else ex.add(value);
+  if (!ex.size) delete BP_FILTERS[_bpFcol];
+  _bpApplyFilter();
+}
+export function bpFilterAll(checked) {
+  if (!_bpFcol) return;
+  if (checked) delete BP_FILTERS[_bpFcol]; else BP_FILTERS[_bpFcol] = new Set(_bpDistinct(_bpFcol));
+  for (const cb of document.querySelectorAll("#bp-fpop .bp-fopts input")) cb.checked = checked;
+  _bpApplyFilter();
+}
+export function bpFilterSearch(q) {
+  q = (q || "").trim().toLowerCase();
+  for (const lab of document.querySelectorAll("#bp-fpop .bp-fopt"))
+    lab.style.display = (!q || lab.textContent.toLowerCase().includes(q)) ? "" : "none";
+}
+function _bpApplyFilter() {
+  for (const tr of document.querySelectorAll("#mining .bp-table tbody tr")) {
+    const b = MINING_BLUEPRINTS[+tr.dataset.i] || {};
+    tr.style.display = BP_COLS.every(c => { const ex = BP_FILTERS[c.key]; return !ex || !ex.has(_bpCell(b, c.key)); }) ? "" : "none";
+  }
+  for (const c of BP_COLS) { const th = document.querySelector(`#mining .bp-table th[data-col="${c.key}"]`); if (th) th.classList.toggle("bp-filtered", !!BP_FILTERS[c.key]); }
 }
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re
 import time
-from collections import Counter
 
 from .config import BLUEPRINTS_PATH
 from . import scdata
@@ -27,7 +26,8 @@ _cache = {"mtime": None, "data": {"blueprints": [], "fetched_at": None, "game_ve
 # Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
 # dropped fields), so installs rebuild the cache on update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
-EXTRACT_VERSION = 1  # v1: blueprints carry `sources` (the missions/factions that reward them)
+EXTRACT_VERSION = 2  # v2: + size/class/grade for all items (Type/Subtype/Class/Quality/Size
+                     # columns); v1 added `sources`
 
 
 def save_blueprints(blueprints: list, game_version: str | None = None,
@@ -150,47 +150,45 @@ def _keep_component(b: dict) -> bool:
     return g is None or str(g).strip().upper() in ("A", "GRADE A")
 
 
+def _armor_piece(name: str) -> str:
+    """The armour piece kind (Helmet/Torso/Arms/Legs/Backpack/Undersuit/…) from its name."""
+    for t in (name or "").split():
+        w = t.strip("'\".,").lower()
+        if w in _ARMOR_PIECES:
+            return w.title()
+    return ""
+
+
 def blueprint_catalog(path: str = BLUEPRINTS_PATH) -> list:
-    """Picker rows ``{name, type, detail, size}`` -- each blueprint tagged with the section
-    it belongs to so the dashboard can render size/model-line/set sections. Vehicle
-    components are filtered to Grade A (see :func:`_keep_component`)."""
+    """Table rows ``{name, type, subtype, cls, quality, size}`` -- one per blueprint, tagged for
+    the planner table's columns and per-column filters. All grades are included (Quality is a
+    column); ``cls``/``quality``/``size`` are blank when the crafted item doesn't declare them."""
     load_blueprints(path)
-    bps = list(_cache["by_name"].values())
-
-    # Vehicle-weapon model-line labels need the whole group (and collision disambiguation by
-    # manufacturer code), so resolve them up front: crafts stem (minus the size token) -> label.
-    groups: dict[str, list] = {}
-    for b in bps:
-        if (b.get("category") or "").startswith("Vehicle Weapons"):
-            groups.setdefault(re.sub(r"_s\d+$", "", b.get("crafts", "")), []).append(b)
-    raw = {stem: _line_label([b["name"] for b in g], _vweapon_kind(stem))
-           for stem, g in groups.items()}
-    dup = Counter(raw.values())
-    wline = {stem: (f"{lab} ({stem.split('_')[0].upper()})" if dup[lab] > 1 else lab)
-             for stem, lab in raw.items()}
-
     rows = []
-    for b in bps:
+    for b in _cache["by_name"].values():
         cat = b.get("category", "") or ""
         crafts = b.get("crafts", "") or ""
-        size = _size_num(cat)
         if cat.startswith("Vehicle Component"):
-            if not _keep_component(b):
-                continue
-            sub = _vc_subtype(crafts)
-            typ = "Vehicle Component"
-            detail = f"{sub} · S{size}" if size is not None else sub
+            typ, sub = "Vehicle Component", _vc_subtype(crafts)
         elif cat.startswith("Vehicle Weapons"):
-            typ, detail = "Vehicle Weapons", wline.get(re.sub(r"_s\d+$", "", crafts), "")
+            typ, sub = "Vehicle Weapons", _vweapon_kind(crafts)
         elif cat == "FPS Weapons":
             toks = crafts.split("_")
             tok = toks[1] if len(toks) > 1 else ""
-            typ, detail = "FPS Weapons", _FPSWEP.get(tok, tok.title() or "Other")
+            typ, sub = "FPS Weapons", _FPSWEP.get(tok, tok.title() or "")
         elif cat == "FPS Armours":
-            typ, detail = "FPS Armours", _armor_set(b.get("name", ""))
+            typ, sub = "FPS Armours", _armor_piece(b.get("name", ""))
         else:
-            typ, detail = cat or "Other", ""
-        rows.append({"name": b["name"], "type": typ, "detail": detail, "size": size})
+            typ, sub = cat or "Other", ""
+        size = b.get("size")
+        rows.append({
+            "name": b["name"],
+            "type": typ,
+            "subtype": sub,
+            "cls": b.get("cls") or "",
+            "quality": b.get("grade") or "",
+            "size": size if size is not None else _size_num(cat),
+        })
     return sorted(rows, key=lambda r: r["name"].lower())
 
 

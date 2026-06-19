@@ -832,18 +832,40 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mining input,.signal input{border-radius:2px;padding:8px 10px;font-size:13px}
 .mining input[type=number]{width:140px}
 .mining input#mf-name{min-width:200px}
-/* blueprint picker: one filterable table of the whole catalog — per-column filters in the header
-   and an inline qty input per row (no separate list); the wrap scrolls with a sticky header. */
-.bp-pick{max-height:60vh;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
+/* blueprint picker: one big table (Name/Type/Subtype/Class/Quality/Size + Qty). Columns are
+   click-to-sort with a spreadsheet-style multi-select filter; clicking a row toggles its qty. */
+.bp-pick{max-height:62vh;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
 .bp-table{width:100%}
-.bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel);vertical-align:top}
-.bp-ptype{color:var(--ink-3);font-family:var(--mono);font-size:11.5px}
-#mining .bp-fin{display:block;width:100%;box-sizing:border-box;margin-top:5px;padding:3px 6px;font-size:11px;font-weight:400}
-#mining .bp-qin{width:64px;text-align:right;padding:4px 6px}
-.bp-selonly{display:flex;gap:5px;align-items:center;justify-content:flex-end;margin-top:5px;
-  font-family:var(--display);font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);cursor:pointer}
-.bp-selonly input{cursor:pointer;margin:0}
-.bp-clear{margin-left:auto;font-size:10px;padding:3px 10px}
+.bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel);white-space:nowrap}
+.bp-h{cursor:pointer;display:inline-flex;align-items:center;gap:3px}
+.bp-h:hover{color:var(--cyan)}
+.bp-sort{color:var(--cyan);font-size:9px}
+#mining .bp-fbtn{margin-left:6px;padding:0 4px;font-size:10px;line-height:1.4;background:none;
+  border:1px solid transparent;color:var(--ink-3)}
+#mining .bp-fbtn:hover{color:var(--cyan);border-color:var(--cyan)}
+#mining .bp-filtered .bp-fbtn{color:var(--cyan);border-color:var(--cyan)}
+.bp-prow{cursor:pointer}
+.bp-prow:hover{background:rgba(var(--cyan-rgb),.07)}
+.bp-prow.bp-on{background:rgba(var(--cyan-rgb),.14)}
+.bp-prow.bp-on:hover{background:rgba(var(--cyan-rgb),.2)}
+/* qty cell: external − / + steppers around the input, native spinners hidden */
+.bp-qcell{display:flex;align-items:center;justify-content:flex-end;gap:4px;cursor:default}
+#mining .bp-step{padding:1px 8px;font-size:14px;line-height:1.2}
+#mining .bp-qin{width:44px;text-align:center;padding:3px 4px;-moz-appearance:textfield}
+.bp-qin::-webkit-outer-spin-button,.bp-qin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+/* column-filter dropdown (fixed so it escapes the table's scroll clip) */
+.bp-fpop{display:none;position:fixed;z-index:60;width:230px;background:var(--panel-2);
+  border:1px solid var(--line-2);border-radius:3px;box-shadow:var(--panel-shadow)}
+.bp-fpop.open{display:block}
+.bp-fhead{display:flex;gap:8px;align-items:center;padding:8px;border-bottom:1px solid var(--line)}
+.bp-fpop .bp-fsearch{flex:1;min-width:0;padding:4px 6px;font-size:11px}
+.bp-fall{display:flex;gap:5px;align-items:center;font-family:var(--display);font-size:9.5px;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);cursor:pointer;white-space:nowrap}
+.bp-fopts{max-height:260px;overflow-y:auto;padding:4px 0}
+.bp-fopt{display:flex;gap:7px;align-items:center;padding:4px 10px;font-family:var(--mono);
+  font-size:12px;color:var(--ink-1);cursor:pointer}
+.bp-fopt:hover{background:rgba(var(--cyan-rgb),.1)}
+.bp-fopt input,.bp-fall input{cursor:pointer;margin:0;flex:0 0 auto}
 /* prominent "scan for" band on the Find-mineral results */
 .mscan{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 16px;
   border-bottom:1px solid var(--line)}
