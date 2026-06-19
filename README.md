@@ -40,6 +40,10 @@ Then just launch Star Citizen as usual: the tracker rides along with the game an
 - If the [LUG Helper](https://github.com/starcitizen-lug/lug-helper) ever reverts the
   `.desktop` launcher, **re-run the install command** — it re-asserts the launcher
   (and doubles as a manual update/repair).
+- **Prefer an always-on dashboard?** Run the installer with `--service` to manage Starlogger
+  as a systemd **user service** instead of a game-launch shim — see
+  [Run it as a systemd service](#run-it-as-a-systemd-service-linux-optional). Run plain
+  `install.sh` on a terminal and it **asks** which mode.
 
 The only runtime dependency is Flask. The ship cargo-grid database (`ships.json`) is
 generated locally from your game install on first run (it is **not** bundled with the
@@ -125,6 +129,33 @@ re-run the install command to restore it.)
 **Windows:** run `run-tracker.bat` in a terminal (or make a desktop shortcut to it);
 Ctrl-C stops it. `STARLOGGER_DATA_DIR` defaults to `%LOCALAPPDATA%\starlogger`.
 
+### Run it as a systemd service (Linux, optional)
+
+Want the dashboard **always up** — whenever you're logged in, whether or not the game is
+running — instead of riding along with each launch? Switch the install to **service mode**:
+
+```bash
+~/.local/share/starlogger/install.sh --service   # always-on systemd user service
+~/.local/share/starlogger/install.sh --shim      # switch back to the launch shim (default)
+```
+
+(Plain `install.sh` on a terminal **asks** which mode; a later plain re-run — e.g. an update —
+keeps whichever you chose.) Service mode installs a systemd **user** unit at
+`~/.config/systemd/user/starlogger.service` running `tracker.py --service` (persistent: no
+browser, and the idle-exit watchdog is disabled), and reverts your Star Citizen `.desktop` to
+the stock LUG `sc-launch.sh` — a persistent service and the launch shim can't both own
+`:8765`, so here you launch the game normally and the service serves the dashboard alongside
+it. The tracker still self-updates (the re-exec keeps the same PID, so systemd doesn't notice).
+Logs go to the journal:
+
+```bash
+journalctl --user -u starlogger -f      # follow the logs
+systemctl --user status starlogger      # state / restart / stop
+```
+
+It runs **while you're logged in** (no `loginctl enable-linger`) — the screen-lock auto-pause
+needs the live session bus, so linger is deliberately off.
+
 ## Dashboard
 
 The tabs are **mode-aware** (and deep-linked via the URL hash). In **hauling**
@@ -189,8 +220,8 @@ Two common gaps:
 ## Project layout
 
 ```
-install.sh        Linux: one-shot installer (clone + venv + patch .desktop)
-tracker.py        CLI entry point
+install.sh        Linux: one-shot installer + mode switch (shim ⇄ systemd service)
+tracker.py        CLI entry point (--service runs persistently; --print-systemd-unit)
 lib/sc-run.sh     Linux: game launcher — prompts to update, starts tracker, execs sc-launch.sh
 run-tracker.sh    Linux: start the tracker for a play session (sc-launch hook)
 run-tracker.bat   Windows: start the tracker for a play session
@@ -201,7 +232,8 @@ starlogger/       package:
                     refresh loop) · reference · contracts · mineables ·
                     blueprints · music (p4k-derived catalogs) · archive · replay ·
                     replay_edit (session replay + ephemeral edits) ·
-                    maintenance · tailer · settings · server (Flask)
+                    maintenance · tailer · settings · service (systemd unit
+                    renderer) · server (Flask)
 web/              dashboard front-end:
                     index.html · styles.css · app.js · cargogrid.js (3-D grid
                     renderer) · grids.html (all-ships reference) ·

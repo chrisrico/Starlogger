@@ -27,7 +27,7 @@ import time
 import urllib.request
 import webbrowser
 
-from starlogger import catalogs, contracts, ignition, scdata, screenlock, settings
+from starlogger import catalogs, contracts, ignition, scdata, screenlock, service, settings
 from starlogger.archive import (
     ARCHIVE_SCHEMA,
     archive_session,
@@ -35,7 +35,7 @@ from starlogger.archive import (
     load_sessions,
     save_backfill_index,
 )
-from starlogger.config import BASE_DIR, IS_WINDOWS, find_log, find_log_backups
+from starlogger.config import BASE_DIR, DATA_DIR, IS_WINDOWS, find_log, find_log_backups
 from starlogger.maintenance import run_cleanup
 from starlogger.server import create_app
 from starlogger.snapshot import build_snapshot
@@ -757,7 +757,8 @@ class MusicState:
                     "total": self.total, "error": self.error}
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """The CLI surface (extracted so tests can assert flags exist without running main)."""
     ap = argparse.ArgumentParser(description="Starlogger -- Star Citizen cargo/flight logger + dashboard")
     ap.add_argument("--log", help="path to Game.log (auto-detected if omitted)")
     ap.add_argument("--host", default=None,
@@ -778,13 +779,39 @@ def main() -> None:
     ap.add_argument("--launch", action="store_true",
                     help="spawn the LUG sc-launch.sh as a child and tie its lifetime to ours "
                          "(the dashboard drives the game; Linux only)")
-    args = ap.parse_args()
+    ap.add_argument("--service", action="store_true",
+                    help="run persistently as a background service: no browser, and the "
+                         "idle-exit watchdog is skipped (used by the systemd user unit)")
+    ap.add_argument("--print-systemd-unit", action="store_true",
+                    help="print a systemd user-service unit (with resolved paths) to stdout, then exit")
+    return ap
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+
+    # Render the systemd unit BEFORE the log requirement below: you may install the service
+    # before the game has ever produced a Game.log, and a missing log just omits STARLOGGER_LOG
+    # (runtime auto-detection then takes over). Paths are resolved here so install.sh can bake
+    # them in verbatim. find_log() honors STARLOGGER_LOG / WINEPREFIX.
+    if args.print_systemd_unit:
+        print(service.systemd_unit_text(
+            python_path=sys.executable,
+            script_path=os.path.abspath(__file__),
+            data_dir=DATA_DIR,
+            log_path=args.log or find_log(),
+        ), end="")
+        return
 
     # Bind address: an explicit --host wins; otherwise fall to the configurable setting
     # (env STARLOGGER_HOST > settings.json > 127.0.0.1). 0.0.0.0 exposes the dashboard to
     # the local network.
     if args.host is None:
         args.host = settings.resolve_str("bind_host")
+
+    # Service mode is a headless background process: never auto-open a browser.
+    if args.service:
+        args.no_browser = True
 
     log_path = args.log or find_log()
     if not log_path or not os.path.isfile(log_path):
@@ -878,7 +905,8 @@ def main() -> None:
     print("Starlogger -- Star Citizen cargo/flight logger")
     print(f"  log:       {log_path}")
     print(f"  dashboard: {url}")
-    print("  Ctrl-C to stop")
+    print("  (service mode: persistent; stop via `systemctl --user stop starlogger`)"
+          if args.service else "  Ctrl-C to stop")
 
     # Auto-open the dashboard only on a fresh start. On a relaunch we replaced the previous
     # instance (above), so its tab's SSE stream auto-reconnects to the same URL -- opening
@@ -896,6 +924,22 @@ def main() -> None:
     httpd = make_server(args.host, args.port, app, threaded=True)
     # Let a newer launch replace us via POST /api/quit (see _ask_existing_to_quit).
     app.config["QUIT_FN"] = httpd.shutdown
+    # SIGTERM (systemctl --user stop, or any plain `kill`) -> graceful shutdown so the finally
+    # block below runs (terminate the screen-lock watcher, sweep scratch, release the port);
+    # the default disposition is a hard kill that skips all of it. shutdown() blocks until
+    # serve_forever() returns, so it MUST run OFF the serving (main) thread -- calling it inline
+    # from the handler would deadlock (same reason make_server is used; see above). The flag
+    # stops a double-stop (systemd's SIGTERM then SIGKILL race, a repeated kill) spawning two.
+    # restart.clear(): an explicit stop wins over a self-update re-exec that may be in flight --
+    # otherwise the finally would _reexec() instead of exiting, leaving systemd's stop hanging
+    # until TimeoutStopSec (the update just re-applies on the next start anyway).
+    term_seen = threading.Event()
+    def _on_term(signum, frame) -> None:   # main thread; keep trivial
+        if not term_seen.is_set():
+            term_seen.set()
+            restart.clear()
+            threading.Thread(target=httpd.shutdown, daemon=True).start()
+    signal.signal(signal.SIGTERM, _on_term)
     # Restart = re-exec into freshly-applied code: flag it, then stop the server cleanly
     # (shutdown returns serve_forever -> the finally below -> _reexec). The apply endpoint
     # and the settings-driven apply run on_apply OFF-thread so their HTTP response returns
@@ -916,10 +960,14 @@ def main() -> None:
     app.config["ON_CHECK_NOW"] = lambda: _manual_check(ustate, state, trigger_restart)
     # Validate a new update remote/branch on save (the branch must exist upstream).
     app.config["ON_VALIDATE_SOURCE"] = _validate_update_source
-    threading.Thread(target=shutdown_watchdog,
-                     args=(presence, stop, has_launcher_detection, _idle_timeout(),
-                           time.monotonic(), httpd.shutdown, 2.0, _close_timeout()),
-                     daemon=True).start()
+    # Service mode is persistent: skip the idle-exit watchdog entirely so the dashboard stays
+    # up whether or not the game (or any tab) is running. (Stopped only via SIGTERM/Ctrl-C, a
+    # newer launch's /api/quit, or a self-update re-exec.) Otherwise wire the usual watchdog.
+    if not args.service:
+        threading.Thread(target=shutdown_watchdog,
+                         args=(presence, stop, has_launcher_detection, _idle_timeout(),
+                               time.monotonic(), httpd.shutdown, 2.0, _close_timeout()),
+                         daemon=True).start()
     # The tracker owns updating: poll upstream, prompt the dashboard (or auto-apply).
     threading.Thread(target=update_loop, args=(stop, ustate, state, trigger_restart),
                      daemon=True).start()
