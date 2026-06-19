@@ -10,20 +10,34 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from starlogger import screenlock
 
 
-def test_feed_parses_activechanged():
-    # dbus-monitor emits a signal header line then its boolean value on the next line.
+def _hdr(iface):
+    return ("signal time=1 sender=:1.20 -> destination=(null) serial=9 "
+            f"path=/{iface.replace('.', '/')}; interface={iface}; member=ActiveChanged")
+
+
+def test_feed_accepts_any_screensaver_interface():
+    # KDE (freedesktop) + GNOME / Cinnamon / MATE (their own org.<de>.ScreenSaver) all parse.
     out = []
     screenlock._feed([
-        "signal time=1 sender=:1.20 -> destination=(null) serial=9 path=/org/freedesktop/ScreenSaver;"
-        " interface=org.freedesktop.ScreenSaver; member=ActiveChanged",
-        "   boolean true",
-        "signal time=2 sender=:1.20 ... member=ActiveChanged",
-        "   boolean false",
+        _hdr("org.freedesktop.ScreenSaver"), "   boolean true",
+        _hdr("org.gnome.ScreenSaver"), "   boolean false",
+        _hdr("org.cinnamon.ScreenSaver"), "   boolean true",
+        _hdr("org.mate.ScreenSaver"), "   boolean false",
     ], out.append)
-    assert out == [True, False]
+    assert out == [True, False, True, False]
 
 
-def test_feed_ignores_unrelated_and_orphan_lines():
+def test_feed_ignores_non_screensaver_activechanged():
+    # A broad member='ActiveChanged' match can deliver other interfaces' signals -> keep only
+    # the *.ScreenSaver ones.
+    out = []
+    screenlock._feed([
+        "signal ... interface=org.example.Widget; member=ActiveChanged", "   boolean true",
+    ], out.append)
+    assert out == []
+
+
+def test_feed_ignores_orphan_boolean():
     out = []
     screenlock._feed([
         "Monitoring connection on the session bus.",

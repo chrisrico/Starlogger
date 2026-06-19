@@ -2,9 +2,10 @@
 screen is locked -- the same way it pauses while the game runs (web/jukebox.js). This lets a locked
 screen (e.g. left overnight) actually sleep instead of being held awake by playing audio.
 
-Watches the freedesktop ScreenSaver ``ActiveChanged`` D-Bus signal via ``dbus-monitor`` with an
-*interface* match rule -- matching by interface rather than bus name, so it catches the signal
-whichever service emits it (KDE, GNOME, …) without an extra Python dependency. It's a no-op on
+Watches for the screensaver ``ActiveChanged`` D-Bus signal via ``dbus-monitor``, accepting it from
+ANY ``org.*.ScreenSaver`` interface -- so it works across desktops without an interface list to
+maintain (KDE uses org.freedesktop.ScreenSaver; GNOME/Cinnamon/MATE each use org.<de>.ScreenSaver)
+and with no extra Python dependency. It's a no-op on
 Windows, headless sessions, or when dbus-monitor / the session bus isn't available, so it never
 blocks startup. (active == screensaver/lock engaged.)
 """
@@ -19,9 +20,12 @@ import threading
 from .config import IS_WINDOWS
 
 # dbus-monitor prints each signal as a header line then its argument(s), e.g.:
-#   signal ... interface=org.freedesktop.ScreenSaver; member=ActiveChanged
+#   signal ... interface=org.cinnamon.ScreenSaver; member=ActiveChanged
 #      boolean true
-_MATCH = "type='signal',interface='org.freedesktop.ScreenSaver',member='ActiveChanged'"
+# Match ActiveChanged broadly and keep only headers whose interface is some org.*.ScreenSaver, so
+# every desktop works without enumerating them: KDE uses org.freedesktop.ScreenSaver; GNOME /
+# Cinnamon / MATE each emit on their own org.<de>.ScreenSaver.
+_MATCH = "type='signal',member='ActiveChanged'"
 
 
 def _feed(lines, on_change):
@@ -30,7 +34,7 @@ def _feed(lines, on_change):
     testable with a list and reused verbatim as the watcher loop with the live stdout iterator."""
     pending = False
     for line in lines:
-        if "member=ActiveChanged" in line:
+        if "member=ActiveChanged" in line and "screensaver" in line.lower():
             pending = True
         elif pending:
             s = line.strip().lower()
