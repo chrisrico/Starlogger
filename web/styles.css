@@ -834,7 +834,9 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mining input#mf-name{min-width:200px}
 /* blueprint picker: one big table (Name/Type/Subtype/Class/Quality/Size + Qty). Columns are
    click-to-sort with a spreadsheet-style multi-select filter; clicking a row toggles its qty. */
-.bp-pick{max-height:62vh;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
+/* cap the whole Blueprints card at 400px; its h3 stays fixed and the table area scrolls within */
+#msub-plan>.mtool{max-height:400px;display:flex;flex-direction:column}
+.bp-pick{flex:1;min-height:0;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
 .bp-table{width:100%}
 .bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel);white-space:nowrap}
 .bp-h{cursor:pointer;display:inline-flex;align-items:center;gap:3px}

@@ -300,7 +300,7 @@ const _bpCell = (b, k) => { const v = b[k]; return (v === "" || v == null) ? "" 
 
 function blueprintTableHtml() {
   const head = BP_COLS.map(c =>
-    `<th data-col="${c.key}"${_bpRA(c.key) ? ' class="lt-num"' : ""}><span class="bp-h" onclick="bpSort('${c.key}')">${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span><button class="bp-fbtn" title="Filter ${c.label}" onclick="bpFilterOpen(event,'${c.key}')"><svg viewBox="0 0 12 12" width="9" height="9" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg></button></th>`
+    `<th data-col="${c.key}"${_bpRA(c.key) ? ' class="lt-num"' : ""}><span class="bp-h" onclick="bpSort('${c.key}')">${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span>${c.key === "name" ? "" : `<button class="bp-fbtn" title="Filter ${c.label}" onclick="bpFilterOpen(event,'${c.key}')"><svg viewBox="0 0 12 12" width="9" height="9" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg></button>`}</th>`
   ).join("") + `<th class="lt-num">Qty</th>`;
   const rows = (MINING_BLUEPRINTS || []).map((b, i) => {
     const q = BP_QTY[b.name] || 0;
