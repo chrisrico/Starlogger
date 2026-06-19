@@ -25,11 +25,12 @@ let MINING_MINERALS = null;        // cached mineral names for the autocomplete
 let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the picker
 let FIND_LAST = null;              // last mineral-lookup result — re-ranked on loadout change
 let MINING_INIT = false;
-// Plan sub's crafting list: the blueprints to build, each with a quantity. Persisted so a
-// planned crafting run survives a reload (same localStorage convention as the route order and
-// jukebox). Picking from the combobox adds to this list rather than replacing one selection.
-let BP_LIST = (() => { try { return JSON.parse(localStorage.getItem("bpList") || "[]"); } catch (_) { return []; } })();
-const _bpSave = () => { try { localStorage.setItem("bpList", JSON.stringify(BP_LIST)); } catch (_) {} };
+// Plan sub: the per-blueprint build quantity, keyed by blueprint name. Persisted so a planned
+// crafting run survives a reload. The whole catalog is one table with an inline qty input per row;
+// the materials breakdown is summed from the rows whose quantity > 0 — no separate list, and Clear
+// resets every quantity to 0.
+let BP_QTY = (() => { try { return JSON.parse(localStorage.getItem("bpQty") || "{}"); } catch (_) { return {}; } })();
+const _bpSave = () => { try { localStorage.setItem("bpQty", JSON.stringify(BP_QTY)); } catch (_) {} };
 
 export async function initMining() {
   if (!MINING_INIT) {
@@ -47,9 +48,14 @@ export async function initMining() {
       if (FIND_LAST) setHTML("mres-find", FIND_LAST.index
         ? indexResultHtml(FIND_LAST.index) : findResultHtml(FIND_LAST));
     });
+    // Build the shell now the catalogs are in. Rebuild even if an early miningSub() (a deep-link
+    // or reload to a #sub hash runs miningSub synchronously, before this fetch resolves) already
+    // built one — that early shell has an empty blueprint table.
+    renderMiningShell();
+    return;
   }
-  // Build once, only after the catalogs have loaded; switching subs then just toggles.
-  if (MINING_BLUEPRINTS !== null && !$("msub-find")) renderMiningShell();
+  // Re-entry (tab re-opened): build once if the shell is gone, else keep it and its state.
+  if (!$("msub-find")) renderMiningShell();
 }
 // Switch sub-tabs by toggling visibility — never rebuild, so each sub keeps its state.
 export function miningSub(sub) {
@@ -83,8 +89,9 @@ function renderMiningShell() {
     ${bar}
     ${sections}
   </div>`);
-  // Repaint the persisted crafting list now the Plan sub's results div exists.
-  if (BP_LIST.length) renderBpPlan();
+  // Paint the materials breakdown now the Plan sub's results div exists (empty-state until a
+  // quantity is set).
+  renderBpPlan();
 }
 
 // small shared bits ---------------------------------------------------------- //
@@ -275,99 +282,91 @@ function indexResultHtml(minerals) {
 }
 
 // ---- Plan: blueprint → deposit coverage + sources ---- //
-// A filterable table of every craftable blueprint (the server tags each with a {type} and a
-// {detail} — component size, weapon model line, FPS type, or armour set). The whole catalog is
-// visible and scannable; the filter narrows it and clicking a row adds that blueprint to the
-// crafting list below. Rows index into MINING_BLUEPRINTS (catalog order) so the click handler
-// needs no name escaping.
+// One table of every craftable blueprint (the server tags each with a {type} and a {detail} —
+// component size, weapon model line, FPS type, or armour set). Each column filters independently
+// and each row carries an inline qty input: the breakdown below is summed from every row whose
+// quantity > 0, so there is no separate list. Rows index into MINING_BLUEPRINTS (catalog order),
+// so the qty handler needs no name escaping.
 function blueprintTableHtml() {
   const rows = (MINING_BLUEPRINTS || []).map((b, i) => {
-    const detail = [b.type, b.detail].filter(Boolean).join(" · ") +
+    const type = [b.type, b.detail].filter(Boolean).join(" · ") +
       (b.type === "Vehicle Weapons" && b.size != null ? ` · S${b.size}` : "");
-    const hay = `${b.name} ${b.type || ""} ${b.detail || ""}`.toLowerCase();
-    return `<tr class="bp-prow" data-search="${esc(hay)}" onclick="bpAdd(${i})" title="Add to crafting list">
-      <td><b>${esc(b.name)}</b></td><td class="bp-ptype">${esc(detail)}</td></tr>`;
+    const qty = BP_QTY[b.name] || 0;
+    return `<tr class="bp-prow" data-n="${esc(b.name.toLowerCase())}" data-t="${esc(type.toLowerCase())}">
+      <td><b>${esc(b.name)}</b></td>
+      <td class="bp-ptype">${esc(type)}</td>
+      <td class="lt-num"><input type="number" min="0" class="bp-qin" value="${qty}"
+        aria-label="Quantity of ${esc(b.name)}" oninput="bpQty(${i}, this.value)"></td>
+    </tr>`;
   }).join("");
-  return logTable(th("Blueprint", false, "Click a row to add it to your crafting list") +
-                  th("Type", false, "Category · model line / size"), rows, "No blueprints.");
+  // Header carries a per-column filter: text for name/type, a "set only" toggle for qty.
+  return `<table class="logtable bp-table"><thead><tr>
+      <th>Blueprint<input id="bpf-name" class="bp-fin" placeholder="filter name…" aria-label="Filter by name" oninput="bpFilter()"></th>
+      <th>Type<input id="bpf-type" class="bp-fin" placeholder="filter type…" aria-label="Filter by type" oninput="bpFilter()"></th>
+      <th class="lt-num">Qty<label class="bp-selonly"><input type="checkbox" id="bpf-sel" onchange="bpFilter()">set</label></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
 }
 function planToolHtml() {
   return `<div class="card mtool"><h3><span>Blueprints ${hintIcon(
-      "Filter and click blueprints to add them to your crafting list. The materials needed are " +
-      "summed across the whole list, and deposits are ranked by how many ingredients each yields.")}</span></h3>
-    <div class="mform">
-      <input id="bp-filter" autocomplete="off" aria-label="Filter blueprints"
-        placeholder="Filter blueprints by name or type…" oninput="bpFilter(this.value)">
-    </div>
+      "Every craftable blueprint. Filter by column, set a quantity to build, and the materials " +
+      "needed are summed below across everything with a quantity — then ranked by deposit coverage.")}</span>
+      <button class="bp-clear" onclick="bpClearList()" title="Reset every quantity to 0">Clear</button></h3>
     <div class="bp-pick">${blueprintTableHtml()}</div>
   </div>`;
 }
-// Add the catalog blueprint at index i to the crafting list (bump qty if already present).
-export function bpAdd(i) {
+let _bpTimer = 0;
+// Set the build quantity for the blueprint at catalog index i (0 clears it). Debounced so holding
+// the spinner doesn't refetch every tick; the table isn't rebuilt (its qty inputs are the source
+// of truth) — only the breakdown below repaints.
+export function bpQty(i, value) {
   const b = (MINING_BLUEPRINTS || [])[i]; if (!b) return;
-  const row = BP_LIST.find(r => r.name.toLowerCase() === b.name.toLowerCase());
-  if (row) row.qty += 1; else BP_LIST.push({ name: b.name, qty: 1 });
-  _bpSave(); renderBpPlan();
+  const n = Math.max(0, parseInt(value, 10) || 0);
+  if (n > 0) BP_QTY[b.name] = n; else delete BP_QTY[b.name];
+  _bpSave();
+  clearTimeout(_bpTimer); _bpTimer = setTimeout(renderBpPlan, 250);
 }
-// Crafting-list row actions — by index, since the list re-renders fully after each change.
-export function bpListQty(i, delta) {
-  const row = BP_LIST[i]; if (!row) return;
-  row.qty += delta;
-  if (row.qty < 1) BP_LIST.splice(i, 1);
-  _bpSave(); renderBpPlan();
+// Reset every quantity to 0: clear the map, zero the inputs in place, drop the "set only" filter
+// (it would otherwise hide every row), and clear the breakdown.
+export function bpClearList() {
+  BP_QTY = {}; _bpSave();
+  for (const inp of document.querySelectorAll("#mining .bp-qin")) inp.value = 0;
+  const sel = $("bpf-sel"); if (sel) sel.checked = false;
+  bpFilter(); renderBpPlan();
 }
-export function bpListRemove(i) { BP_LIST.splice(i, 1); _bpSave(); renderBpPlan(); }
-export function bpListClear() { BP_LIST = []; _bpSave(); renderBpPlan(); }
-// Filter the blueprint table by a case-insensitive substring of name/type.
-export function bpFilter(q) {
-  const needle = (q || "").trim().toLowerCase();
-  for (const tr of document.querySelectorAll("#mining .bp-prow"))
-    tr.style.display = (!needle || tr.dataset.search.includes(needle)) ? "" : "none";
+// Per-column filter: name substring AND type substring AND (optionally) only rows with a qty set.
+export function bpFilter() {
+  const nf = val("bpf-name").trim().toLowerCase(), tf = val("bpf-type").trim().toLowerCase();
+  const selOnly = !!($("bpf-sel") && $("bpf-sel").checked);
+  for (const tr of document.querySelectorAll("#mining .bp-table tbody tr")) {
+    const okSel = !selOnly || (parseInt(tr.querySelector(".bp-qin").value, 10) || 0) > 0;
+    tr.style.display = ((!nf || tr.dataset.n.includes(nf)) && (!tf || tr.dataset.t.includes(tf)) && okSel) ? "" : "none";
+  }
 }
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;
   return m ? `${m}m${sec ? " " + sec + "s" : ""}` : `${sec}s`;
 };
-// Sum the crafting list's materials (server) → one deposit-coverage plan for the whole list,
-// and repaint the Plan sub: the editable list, the merged shopping list, then the best deposits.
+// Sum the materials of every blueprint with a quantity (server) → one deposit-coverage plan,
+// painted into the Plan sub's results div below the table.
 async function renderBpPlan() {
   const out = "mres-plan";
-  if (!BP_LIST.length) {
-    setHTML(out, `<div class="empty">Add blueprints to build a crafting list — the materials you'll need are summed across all of them.</div>`);
+  const items = Object.entries(BP_QTY).filter(([, q]) => q > 0).map(([name, qty]) => ({ name, qty }));
+  if (!items.length) {
+    setHTML(out, `<div class="empty">Set a quantity on one or more blueprints to see the materials you'll need.</div>`);
     return;
   }
-  setHTML(out, bpListHtml() + `<div class="empty">summing materials…</div>`);
+  setHTML(out, `<div class="empty">summing materials…</div>`);
   try {
     const agg = await fetch("/api/blueprints-plan", {
-      method: "POST", headers: writeHeaders(), body: JSON.stringify({ items: BP_LIST }),
+      method: "POST", headers: writeHeaders(), body: JSON.stringify({ items }),
     }).then(r => r.json());
     const plan = await fetch("/api/mining-plan", {
       method: "POST", headers: writeHeaders(), body: JSON.stringify({ minerals: agg.minerals || [] }),
     }).then(r => r.json());
-    setHTML(out, bpListHtml() + breakdownHtml(agg) + planResultHtml(plan));
-  } catch (e) { setHTML(out, bpListHtml() + `<div class="empty">plan failed</div>`); }
+    setHTML(out, breakdownHtml(agg) + planResultHtml(plan));
+  } catch (e) { setHTML(out, `<div class="empty">plan failed</div>`); }
 }
-// The editable crafting list: a row per blueprint with a − qty + stepper and a remove ✕.
-function bpListHtml() {
-  const rows = BP_LIST.map((r, i) => `<tr>
-    <td><b>${esc(r.name)}</b></td>
-    <td class="bp-qty">
-      <button class="bp-step" aria-label="One fewer" onclick="bpListQty(${i},-1)">−</button>
-      <span class="bp-n">${r.qty}</span>
-      <button class="bp-step" aria-label="One more" onclick="bpListQty(${i},1)">+</button>
-    </td>
-    <td class="lt-num"><button class="bp-rm" aria-label="Remove" onclick="bpListRemove(${i})">✕</button></td>
-  </tr>`).join("");
-  return `<div class="card mtool"><h3><span>Crafting list</span>
-      <button class="bp-clear" onclick="bpListClear()">Clear</button></h3>
-    ${logTable(
-      th("Blueprint", false, "A blueprint you want to craft") +
-      th("Qty", true, "How many to craft — the material totals scale with this") +
-      th("", true, ""),
-      rows, "No blueprints yet.")}
-  </div>`;
-}
-// The merged shopping list: every recipe's materials summed by resource across the whole list.
+// The merged shopping list: every chosen recipe's materials summed by resource.
 function breakdownHtml(agg) {
   const rows = (agg.requirements || []).map(r => `<tr>
     <td><b>${esc(r.resource)}</b></td>
@@ -382,9 +381,9 @@ function breakdownHtml(agg) {
   return `<div class="card"><h3><span>Materials needed</span><span class="scu">${meta}</span></h3>
     ${logTable(
       th("Material", false, "The mineral or resource to mine and refine") +
-      th("Qty", true, "Total amount across the whole list, in SCU") +
-      th("Min quality", true, "Strictest refined quality any blueprint in the list requires (— = any)") +
-      th("For", false, "Which blueprints in the list need this material"),
+      th("Qty", true, "Total amount across all chosen blueprints, in SCU") +
+      th("Min quality", true, "Strictest refined quality any chosen blueprint requires (— = any)") +
+      th("For", false, "Which blueprints need this material"),
       rows, "No materials.")}
   </div>`;
 }

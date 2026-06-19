@@ -191,3 +191,37 @@ def test_cargo_subtab_toggle_via_interpolated_handler(page, populated_server):
         "() => document.querySelector('#cargo .arch-tab.active') "
         "&& /unload/i.test(document.querySelector('#cargo .arch-tab.active').textContent)")
     assert errors == [], errors
+
+
+def test_mining_plan_table_populates_when_catalog_loads_late(page, populated_server):
+    """Regression: deep-linking to the Plan sub built the blueprint table before /api/blueprints
+    resolved (applySub runs miningSub synchronously; the fetch can't resolve mid-stack), and the
+    catalog-load path then skipped the rebuild — leaving a permanently empty table. Delay the
+    catalog so the shell is built first, then assert it fills once the catalog arrives."""
+    # the isolated test data dir has no blueprint catalog — seed a couple so /api/blueprints
+    # returns rows (mirrors how the salvage test seeds ships).
+    from starlogger import blueprints, config
+    blueprints.save_blueprints([
+        {"name": "Test Rifle A", "category": "FPS Weapons", "crafts": "wep_rifle_a",
+         "minerals": ["Gold"], "requirements": [{"slot": "Core", "resource": "Gold", "scu": 1, "min_quality": 0}]},
+        {"name": "Test Pistol B", "category": "FPS Weapons", "crafts": "wep_pistol_b",
+         "minerals": ["Iron"], "requirements": [{"slot": "Core", "resource": "Iron", "scu": 1, "min_quality": 0}]},
+    ], game_version="test", path=config.BLUEPRINTS_PATH)
+    blueprints._cache["mtime"] = None
+
+    held = []
+    page.route("**/api/blueprints", lambda r: held.append(r))   # hold the catalog response open
+    errors = _boot(page, populated_server)
+    page.evaluate("() => window.setMode('mining')")
+    page.click('#nav a[data-tab="mining"]')              # initMining() fires the (held) catalog fetch
+    page.evaluate("() => window.miningSub('plan')")      # builds the shell while the catalog is held
+    page.wait_for_selector("#mining .bp-table")          # table built...
+    assert page.locator("#mining .bp-prow").count() == 0  # ...but empty: exactly the regression's state
+    for _ in range(60):                                  # let the intercept fire, then release it
+        if held:
+            break
+        page.wait_for_timeout(50)
+    assert held, "catalog request was never intercepted"
+    held[0].continue_()
+    page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length > 0")
+    assert errors == []
