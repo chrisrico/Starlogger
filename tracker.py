@@ -79,6 +79,7 @@ class Presence:
         self.lock = threading.Lock()
         self.streams = 0
         self.last_empty: float | None = None   # monotonic when streams last hit 0
+        self.game_launched = False             # the tracker started/adopted a game process
         self.launcher_dead = False
         self.launcher_dead_at: float | None = None  # monotonic when the launcher exit was seen
         self.closing = False                   # a tab beaconed a deliberate close
@@ -832,7 +833,11 @@ def main() -> None:
     # did): a wedged old instance must never prevent the game from starting, and the new game's
     # `wineserver -k` helps the old session release :8765 sooner.
     if args.launch and not IS_WINDOWS:
-        ignition.launch_game(log_path, on_exit=presence.mark_launcher_dead)
+        # A returned PID means we own (or adopted) a game process -> its launcher death is the
+        # authoritative game-exit signal, so /api/state reports game_running from it (parent
+        # model). With no launcher, game_launched stays False and the snapshot uses the log flag.
+        if ignition.launch_game(log_path, on_exit=presence.mark_launcher_dead) is not None:
+            presence.game_launched = True
 
     # Only the live-serving path takes over + auto-opens; the one-shot/maintenance modes
     # above have already returned. A new launch REPLACES any instance already on the port:

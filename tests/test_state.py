@@ -250,6 +250,33 @@ def test_fastshutdown_archives_once_not_twice():
     assert archived == [1]
 
 
+def test_game_running_tracks_session_boundaries():
+    """game_running is the log-derived 'is the game process up' flag driving the jukebox
+    auto-pause: True at the main menu (SC_Frontend) AND in the PU (SC_Default) -- so it stays
+    True across a quit-to-menu, unlike logged_in -- and only False on FastShutdown."""
+    st = State()
+    assert st.game_running is False                   # nothing seen yet
+    st.feed(_frontend("2026-06-06T01:00:00.000Z"))   # launched to the main menu
+    assert st.game_running is True
+    assert st.logged_in is False                      # ...but not yet in the PU
+    st.feed(_pu("2026-06-06T01:01:00.000Z"))          # loaded into the universe
+    assert st.game_running is True and st.logged_in is True
+    st.feed(_frontend("2026-06-06T02:00:00.000Z"))   # quit to menu -> game still running
+    assert st.game_running is True and st.logged_in is False
+    st.feed(_shutdown("2026-06-06T03:00:00.000Z"))   # quit to desktop -> game gone
+    assert st.game_running is False
+
+
+def test_game_running_resets_on_new_log_file():
+    """A full reset (new log file) clears game_running; the next session boundary re-establishes
+    it. Guards against a stale True surviving a fresh start before any boundary is parsed."""
+    st = State()
+    st.feed(_pu("2026-06-06T01:00:00.000Z"))
+    assert st.game_running is True
+    st.reset(full=True)
+    assert st.game_running is False
+
+
 def test_oversized_line_is_skipped():
     """A line larger than the cap is corrupt/hostile -> skipped before any pattern runs, so it
     can't amplify a regex DoS. A normal line still parses. Locks the audit fix (log-line DoS)."""

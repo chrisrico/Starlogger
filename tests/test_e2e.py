@@ -12,7 +12,14 @@ Run: python -m pytest tests/test_e2e.py
 """
 from __future__ import annotations
 
+import os
+import threading
+
 import pytest
+from werkzeug.serving import make_server
+
+import starlogger.server as server
+from starlogger.state import State
 
 pytestmark = pytest.mark.browser
 
@@ -148,3 +155,66 @@ def test_no_autoplay_for_a_fresh_visitor(page, live_server):
     page.wait_for_selector("#jukeList .juke-row")
     # nothing auto-started: no track loaded into the player
     assert page.evaluate("!document.getElementById('jukeAudio').currentSrc")
+
+
+# --- pause-while-the-game-runs -------------------------------------------------------- #
+# The jukebox auto-pauses while the SC game is running so it doesn't fight the game's audio,
+# and resumes on exit only what it paused. game_running rides the live snapshot; here we drive
+# it through the REAL SSE path by flipping it on a State the test owns and bumping the version.
+
+@pytest.fixture
+def game_server(live_server):
+    """A real app on its own port over a State the TEST holds, so it can flip game_running and
+    push it over the live SSE stream. Depends on live_server only to seed the music tracks into
+    the shared temp data dir. Yields (base_url, state)."""
+    st = State()
+    app = server.create_app(st, log_path=os.environ["STARLOGGER_LOG"])
+    httpd = make_server("127.0.0.1", 0, app, threaded=True)
+    port = httpd.socket.getsockname()[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{port}", st
+    finally:
+        httpd.shutdown()
+
+
+def _set_game_running(st, val):
+    """Flip game_running and push the new snapshot to every open SSE stream (as a parsed log
+    line would). Set under the lock the snapshot builder reads, then bump to wake the streamers."""
+    with st.lock:
+        st.game_running = val
+    st.bump_version()
+
+
+def test_jukebox_pauses_on_game_launch_and_resumes_on_exit(page, game_server):
+    url, st = game_server
+    page.goto(url)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukePlay:not([disabled])")
+    page.click("#jukePlay")                                     # user gesture -> playback starts
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)
+
+    _set_game_running(st, True)                                 # game launches -> auto-pause
+    page.wait_for_function("() => document.getElementById('jukeAudio').paused", timeout=5000)
+
+    _set_game_running(st, False)                                # game exits -> resume what we paused
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)
+
+
+def test_manual_stop_during_game_is_not_auto_resumed(page, game_server):
+    """The '(if it was paused)' contract: a deliberate Stop while the game runs clears our
+    auto-pause claim, so the game exiting must NOT restart playback."""
+    url, st = game_server
+    page.goto(url)
+    page.click("#navjukebox")
+    page.wait_for_selector("#jukePlay:not([disabled])")
+    page.click("#jukePlay")
+    page.wait_for_function(_AUDIO_PLAYING, timeout=5000)
+
+    _set_game_running(st, True)
+    page.wait_for_function("() => document.getElementById('jukeAudio').paused", timeout=5000)
+    page.click("#jukeStop")                                     # user overrides while auto-paused
+    _set_game_running(st, False)                                # game exits
+    # give any erroneous resume a chance to fire, then assert it stayed stopped
+    page.wait_for_timeout(500)
+    assert not page.evaluate(_AUDIO_PLAYING)

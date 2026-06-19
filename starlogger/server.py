@@ -214,6 +214,16 @@ def create_app(state: State, log_path: str | None = None, presence=None,
             snap["update"] = update_state.as_dict()
         if music_state is not None:
             snap["music"] = music_state.as_dict()
+        # When the tracker launched the game (parent model), the launcher PROCESS is the
+        # authoritative "is the game running" signal: it flips at the literal launch (before any
+        # log line, so it covers launcher/menu music), survives quit-to-menu, and catches a crash
+        # (no FastShutdown). Otherwise fall back to the log-derived flag from build_snapshot.
+        # Bare bool reads on purpose (no presence.lock): game_launched is set once at startup and
+        # launcher_dead flips once (first-writer-wins) -- there's no multi-field invariant to read
+        # atomically, and mark_launcher_dead runs in a SIGUSR1 handler that must stay lock-free,
+        # so locking these would add a deadlock risk for no consistency gain.
+        if presence is not None and presence.game_launched:
+            snap["game_running"] = not presence.launcher_dead
         return snap
 
     @app.get("/")

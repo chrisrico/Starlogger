@@ -372,6 +372,10 @@ def build_snapshot(state: State, trade_only: bool = False, overlay: dict | None 
             "in_seat": state.in_seat,
             "session_started_at": state.session_started_at,
             "logged_in": state.logged_in,
+            # Is the SC game process up? Log-derived fallback; the server overrides it with the
+            # authoritative launcher-process state when the tracker launched the game. Drives the
+            # jukebox auto-pause (web/jukebox.js jukeOnGameRunning).
+            "game_running": state.game_running,
             "session_gamerules": state.session_gamerules,
             "last_event_ts": state.last_event_ts,
             "total_awarded": earned,

@@ -41,6 +41,12 @@ class State:
         self.session_gamerules: str | None = None
         self.session_boundary_ts: str | None = None
         self.logged_in: bool = False
+        # True while the game process is up (any session boundary -- menu OR PU -- means the
+        # game is running; cleared on FastShutdown). A log-derived fallback for "is the game
+        # running": the launcher process is authoritative when the tracker launched the game
+        # (see server `_snap`), but this covers externally-launched/standalone sessions. Drives
+        # the jukebox auto-pause-while-playing. Unlike logged_in it stays True at the main menu.
+        self.game_running: bool = False
         self.game_version: str | None = None  # e.g. "4.8.0"
         self.game_build: str | None = None    # changelist
         self.last_event_ts: str | None = None
@@ -122,6 +128,7 @@ class State:
                 self.session_gamerules = None
                 self.session_boundary_ts = None
                 self.logged_in = False
+                self.game_running = False
 
     # -- ingest ---------------------------------------------------------- #
     # Real Game.log lines are a single event, far under this; a longer line is corrupt or
@@ -200,6 +207,9 @@ class State:
             return False
         gr = m.group("gr")
         self.session_gamerules = gr
+        # Any session boundary -- main menu (SC_Frontend) or PU (SC_Default) -- means the game
+        # process is up. Stays True across a quit-to-menu; only FastShutdown clears it.
+        self.game_running = True
         if gr == "SC_Frontend":
             # back to main menu == logged out == all missions abandoned. Reset
             # ONLY here (dedup by ts so an establisher burst counts once). The
@@ -230,6 +240,7 @@ class State:
         if self.logged_in or self.missions or self.total_awarded or self.trades:
             self.reset()  # keeps player name; fires the session-end (archive) hook
         self.logged_in = False
+        self.game_running = False  # clean quit-to-desktop: the game process is gone
         self.session_started_at = None
         return True
 

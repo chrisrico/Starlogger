@@ -30,6 +30,11 @@ let JUKE_AUTOPLAY = (() => { try { return localStorage.getItem("jukeAutoplay") =
 let _jukeDragId = null;       // id of the row being dragged
 let _jukeRestoreTime = null;  // pending seek (sec) to apply once the track's metadata loads
 let _jukeSavedAt = 0;         // last currentTime (sec) we persisted, to throttle timeupdate saves
+// Game-presence auto-pause: while the SC game is running, pause the jukebox so it doesn't fight
+// the game's own audio, and resume on exit ONLY what we paused (never override a manual Stop or a
+// track the user deliberately started during the game). Driven by the snapshot's game_running.
+let JUKE_GAME_RUNNING = null;   // last game_running seen (null until the first snapshot)
+let JUKE_PAUSED_BY_GAME = false; // our auto-pause is in effect (so the game-exit should resume it)
 
 // Transport icons as inline SVG (currentColor) so they sit at one size and inherit the theme,
 // instead of platform media glyphs that render at odd sizes / colors. 15px via .juke-ic.
@@ -116,7 +121,9 @@ export function initJukebox() {
     jukeReflectShuffle();
     const a = $("jukeAudio");
     a.onended = () => jukeStep(1);
-    a.onplay = () => { jukeSetPlaying(true); jukePersist(); };
+    // Any play (manual or our game-exit resume) clears the auto-pause claim, so a track the user
+    // deliberately starts during the game isn't re-paused/double-resumed by jukeOnGameRunning.
+    a.onplay = () => { JUKE_PAUSED_BY_GAME = false; jukeSetPlaying(true); jukePersist(); };
     a.onpause = () => { jukeSetPlaying(false); jukePersist(); };
     a.onloadedmetadata = () => {
       const s = $("jukeSeek");
@@ -238,13 +245,17 @@ async function jukeLoad() {
 // track if none); with it off, the saved track is restored paused. Autoplay may be blocked until
 // a gesture — then play() rejects and we just stay paused at the restored spot.
 function jukeRestore() {
+  // If the game is already running when this tab restores playback (mid-game reload), load the
+  // track PAUSED and mark it ours so the game-exit resumes it — don't autoplay over the game.
+  const hold = JUKE_GAME_RUNNING === true;
   let st;
   try { st = JSON.parse(localStorage.getItem("jukeState") || "null"); } catch (_) { st = null; }
   if (st && st.id && JUKE_TRACKS.some(t => t.id === st.id)) {
-    jukeLoadTrack(st.id, { time: +st.time || 0, autoplay: JUKE_AUTOPLAY });
+    jukeLoadTrack(st.id, { time: +st.time || 0, autoplay: JUKE_AUTOPLAY && !hold });
+    if (JUKE_AUTOPLAY && hold) JUKE_PAUSED_BY_GAME = true;
   } else if (JUKE_AUTOPLAY) {
     const first = jukeOrderedIds().find(id => !jukeSkipped(id));   // nothing saved → start the playlist
-    if (first) jukeLoadTrack(first, { time: 0, autoplay: true });
+    if (first) { jukeLoadTrack(first, { time: 0, autoplay: !hold }); if (hold) JUKE_PAUSED_BY_GAME = true; }
   }
 }
 
@@ -429,6 +440,7 @@ function jukeStop() {
   const a = $("jukeAudio");
   a.pause();
   a.currentTime = 0;
+  JUKE_PAUSED_BY_GAME = false;   // a deliberate Stop overrides any game auto-pause -> don't resume
   jukeSetAutoplay(false);
   jukePersist();
 }
@@ -503,6 +515,27 @@ export function jukeApplyMusicState(m) {
     else st.textContent = "";
   }
   if (m.phase === "done" && wasExtracting) jukeLoad();   // finished just now → pull the fresh list in
+}
+
+// React to the game launching/exiting (snapshot.game_running, pushed every snapshot from the
+// stream). On launch: pause the jukebox if it's playing so it doesn't fight the game's audio,
+// remembering we did so. On exit: resume ONLY if our auto-pause is still in effect — a manual
+// Stop/play during the game clears it (jukeStop / the onplay handler), so we never fight the user.
+// Edge-triggered, but the launch branch also catches the "already running on first snapshot" case
+// (it pauses whatever is currently playing); jukeRestore covers the inverse load-order.
+export function jukeOnGameRunning(running) {
+  running = !!running;
+  if (running === JUKE_GAME_RUNNING) return;   // unchanged (or a same-valued re-delivery)
+  const first = JUKE_GAME_RUNNING === null;
+  JUKE_GAME_RUNNING = running;
+  const a = $("jukeAudio");
+  if (running) {
+    if (a && JUKE_CUR && !a.paused) { a.pause(); JUKE_PAUSED_BY_GAME = true; }
+  } else {
+    // game exited (ignore the first-ever snapshot reporting "not running" — nothing to resume)
+    if (!first && JUKE_PAUSED_BY_GAME && a && JUKE_CUR) a.play().catch(() => {});
+    JUKE_PAUSED_BY_GAME = false;
+  }
 }
 
 // Apply a freshly-received live snapshot — from the SSE push or a manual refresh().
