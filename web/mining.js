@@ -31,6 +31,9 @@ let MINING_INIT = false;
 // resets every quantity to 0.
 let BP_QTY = (() => { try { return JSON.parse(localStorage.getItem("bpQty") || "{}"); } catch (_) { return {}; } })();
 const _bpSave = () => { try { localStorage.setItem("bpQty", JSON.stringify(BP_QTY)); } catch (_) {} };
+// Plan sub: the table viewport's user-dragged height (resize:vertical on .bp-pick), persisted so a
+// taller/shorter table survives a reload. 0 = unset → CSS default (400px).
+let BP_H = (() => { const v = parseInt(localStorage.getItem("bpPickH"), 10); return v > 0 ? v : 0; })();
 
 export async function initMining() {
   if (!MINING_INIT) {
@@ -95,6 +98,20 @@ function renderMiningShell() {
   // Paint the materials breakdown now the Plan sub's results div exists (empty-state until a
   // quantity is set).
   renderBpPlan();
+  _bpWatchHeight();
+}
+// Persist the blueprint table's user-dragged height (resize:vertical). The element is rebuilt on
+// every shell render, so re-observe the current one each time; ResizeObserver fires on drag.
+let _bpRO = null;
+function _bpWatchHeight() {
+  const el = document.querySelector("#mining .bp-pick");
+  if (!el) return;
+  if (_bpRO) _bpRO.disconnect();
+  _bpRO = new ResizeObserver(() => {
+    const h = Math.round(el.getBoundingClientRect().height);
+    if (h && h !== BP_H) { BP_H = h; try { localStorage.setItem("bpPickH", h); } catch (_) {} }
+  });
+  _bpRO.observe(el);
 }
 
 // small shared bits ---------------------------------------------------------- //
@@ -318,7 +335,7 @@ function planToolHtml() {
       "to sort, click a row to toggle it on, and set a quantity. Materials are summed below across " +
       "everything with a quantity, then ranked by deposit coverage.")}</span>
       <button class="bp-clear" onclick="bpClearList()" title="Reset every quantity to 0">Clear</button></h3>
-    <div class="bp-pick">${blueprintTableHtml()}</div>
+    <div class="bp-pick"${BP_H ? ` style="height:${BP_H}px"` : ""}>${blueprintTableHtml()}</div>
   </div>`;
 }
 let _bpTimer = 0;
