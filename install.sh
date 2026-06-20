@@ -73,6 +73,30 @@ unit_path="$unit_dir/starlogger.service"
 
 die() { echo "install: $*" >&2; exit 1; }
 
+# Resolve the clone's update source the SAME way the tracker's self-update does
+# (starlogger/settings.py update_remote/update_branch, default origin/main), expanding a leading ~
+# like the tracker does. This is what keeps install.sh and a self-updating tracker from resetting
+# the clone to DIFFERENT commits: on a dev box update_remote points at a local checkout that can be
+# AHEAD of GitHub's origin/main, so a hardcoded `reset --hard origin/main` here would DOWNGRADE the
+# clone the tracker just advanced -- and then run that now-stale tracker.py. Prints "<remote>\n
+# <branch>"; falls back to origin/main when there's no settings.json (a fresh box) or it won't parse.
+read_update_source() {
+    python3 - "$dir/settings.json" <<'PY'
+import json, os, sys
+remote, branch = "origin", "main"
+try:
+    with open(sys.argv[1]) as f:
+        s = json.load(f)
+    remote = os.path.expanduser(str(s.get("update_remote") or "")) or remote
+    branch = str(s.get("update_branch") or "") or branch
+except Exception:
+    pass
+# Refuse option-injection shapes (a leading - would be read by git as a flag) -> safe defaults.
+print("origin" if remote.startswith("-") else remote)
+print("main" if branch.startswith("-") else branch)
+PY
+}
+
 # --- .desktop helpers ------------------------------------------------------
 find_desktop() {
     local f="$apps_dir/star-citizen-lug.desktop"
@@ -170,10 +194,10 @@ configure_shim() {
 configure_service() {
     command -v systemctl >/dev/null 2>&1 || die "systemctl not found -- systemd is required for --service"
     [ -x "$py" ] || die "venv python missing: $py"
-    # Revert the .desktop to the stock launcher so it can't fight the always-on service for
-    # :8765 (a `tracker --launch` would POST /api/quit and stop the service). Only touch it if
-    # it currently points at our sc-run.sh; a custom Exec is left alone.
-    set_desktop_exec "${WINEPREFIX:-$HOME/Games/star-citizen}/sc-launch.sh" guard-ours
+    # Bring the service up FIRST and only retire the shim once it's actually running. The reverse
+    # order is destructive: reverting the .desktop before a step that can fail (e.g. an old clone
+    # whose tracker.py lacks --print-systemd-unit) strands the user with NEITHER mode -- no shim on
+    # game launch and no service. Ordered this way, any failure below is a no-op: the shim stands.
     mkdir -p "$unit_dir" || die "could not create $unit_dir"
     # Render to a temp file in the same dir, then mv atomically -- a redirect into $unit_path
     # truncates the live unit BEFORE Python runs, so a failed render would leave it empty/corrupt.
@@ -181,10 +205,14 @@ configure_service() {
     if "$py" "$dir/tracker.py" --print-systemd-unit > "$tmp"; then
         mv "$tmp" "$unit_path"
     else
-        rm -f "$tmp"; die "could not render the systemd unit"
+        rm -f "$tmp"; die "could not render the systemd unit (is $dir/tracker.py up to date? it needs --print-systemd-unit)"
     fi
     systemctl --user daemon-reload || die "systemctl --user daemon-reload failed"
     systemctl --user enable --now starlogger.service || die "could not enable starlogger.service"
+    # Service is up -- now it's safe to revert the .desktop to the stock launcher so it can't fight
+    # the always-on service for :8765 (a `tracker --launch` would POST /api/quit and stop the
+    # service). Only touch it if it currently points at our sc-run.sh; a custom Exec is left alone.
+    set_desktop_exec "${WINEPREFIX:-$HOME/Games/star-citizen}/sc-launch.sh" guard-ours
     echo "install: enabled starlogger.service (systemctl --user)"
 }
 
@@ -195,9 +223,20 @@ command -v python3 >/dev/null 2>&1 || die "python3 is required"
 # --- clone or update -------------------------------------------------------
 if [ -d "$dir/.git" ]; then
     echo "install: updating existing clone at $dir"
-    git -C "$dir" fetch --quiet --depth 1 origin main \
-        && git -C "$dir" reset --hard --quiet origin/main \
-        || die "could not update $dir"
+    # Pull from the tracker's configured update source (origin/main by default), NOT a hardcoded
+    # origin/main, so this installer and a self-updating tracker agree on which commit the clone
+    # should sit at. fetch -> reset to FETCH_HEAD mirrors tracker.py's _apply(); --depth 1 only on
+    # an already-shallow clone (a normal fetch into a full clone would graft it shallow).
+    u_remote=""; u_branch=""
+    { IFS= read -r u_remote && IFS= read -r u_branch; } < <(read_update_source)
+    [ -n "$u_remote" ] && [ -n "$u_branch" ] || die "could not resolve the update source"
+    if [ -f "$dir/.git/shallow" ]; then
+        git -C "$dir" fetch --quiet --depth 1 "$u_remote" "$u_branch" || die "could not fetch from $u_remote ($u_branch)"
+    else
+        git -C "$dir" fetch --quiet "$u_remote" "$u_branch" || die "could not fetch from $u_remote ($u_branch)"
+    fi
+    git -C "$dir" reset --hard --quiet FETCH_HEAD || die "could not update $dir"
+    echo "install: clone now at $(git -C "$dir" rev-parse --short HEAD) (source: $u_remote $u_branch)"
 else
     echo "install: cloning into $dir"
     mkdir -p "$(dirname "$dir")" || die "could not create $(dirname "$dir")"
