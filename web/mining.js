@@ -253,12 +253,16 @@ export function locChips(locations, extra = "") {
     const sys = l.system ? ` · ${esc(l.system)}` : "";
     const field = l.kind === "field";
     const rar = field && l.rarity ? ` <span class="mn-dim">${esc(l.rarity)}</span>` : "";
-    // Archetype fields (Lagrange A..G) spawn at several real points — list them so the chip
-    // names a place you can actually fly to, not just the archetype label.
-    const pts = field && l.points && l.points.length
-      ? ` <span class="mloc-pts">${l.points.map(esc).join(" ")}</span>` : "";
-    const tip = pts ? ` title="${esc(l.place)} → ${esc(l.points.join(", "))}"` : "";
-    return `<span class="lt-tag mloc-chip${field ? " mloc-field" : ""}"${tip}>${esc(l.place)}${sys}${rar}${pts}</span>`;
+    const head = `<span class="lt-tag mloc-chip${field ? " mloc-field" : ""}">${esc(l.place)}${sys}${rar}</span>`;
+    // Archetype fields (Lagrange A..G) spawn at several real points — break each out as its own
+    // small tag (a flyable target) after the archetype head, instead of a long inline list.
+    if (field && l.points && l.points.length) {
+      const pts = l.points
+        .map((p) => `<span class="lt-tag mloc-chip mloc-field mloc-pt">${esc(p)}</span>`)
+        .join(" ");
+      return `${head} ${pts}`;
+    }
+    return head;
   };
   // `extra` is an optional trailing element (e.g. the mining-contract card's "+N more" chip).
   return `<div class="mloc"><span class="mloc-k">Mined on</span>${locations.map(chip).join(" ")}${extra}</div>`;
