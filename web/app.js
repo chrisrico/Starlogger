@@ -3,7 +3,7 @@
 import { $, val, esc, num, setHTML, logTable, th, tag, tabBar, toast } from "./dom.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 import {
-  initMining, miningSub, miningFind, miningIndex, locChips,
+  initMining, miningSub, miningFind, miningIndex, locChips, locKey,
   bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList, bpBuildShip, bpQtyFilter,
 } from "./mining.js";
 import { registerCombo, comboInputHtml, comboOpen, comboFilter, comboKey, comboBlur, comboPick } from "./combobox.js";
@@ -895,7 +895,7 @@ function miningLegs(m) {
   const ores = m.ores || [];
   if (!ores.length) return '<span class="sub">—</span>';
   const head = `<div class="ore-head">collect ${m.ore_any ? "any <b>one</b> of" : "all of"}</div>`;
-  return `${head}<div class="orelegs">${ores.map(oreRow).join("")}</div>`;
+  return `${head}<div class="orelegs">${ores.map(oreRow).join("")}</div>${locKey()}`;
 }
 
 function editorRow(m) {

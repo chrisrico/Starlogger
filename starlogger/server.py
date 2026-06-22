@@ -148,10 +148,11 @@ def _host_allowed(host_header: str) -> bool:
 
 
 def _mine_locations(name: str) -> list:
-    """Unified inline "where to mine this" list for a mineral (ship-mining context: surface
-    bodies + asteroid fields). Thin wrapper over the shared ``mine_locations`` join so the
-    mineral-lookup / mining-plan endpoints and the per-mission snapshot stay consistent."""
-    return mine_locations(name)
+    """Unified inline "where to mine this" list for a mineral across ALL methods (ship + hand +
+    ROC/ground surface bodies, plus ship-only asteroid fields), each location tagged with its
+    method -- so the Find / Plan tools surface hand-only gems and ROC spots too, not just ship.
+    Thin wrapper over the shared ``mine_locations`` join (contracts pass their own method)."""
+    return mine_locations(name, method="any")
 
 
 def create_app(state: State, log_path: str | None = None, presence=None,

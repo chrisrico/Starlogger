@@ -55,16 +55,29 @@ def _mission(snap, mid):
 # --- the where-to-mine join (method-aware) --------------------------------- #
 def test_mine_locations_method_aware():
     _seed()
-    # hand gem: surface bodies only, no asteroid fields
+    # hand gem: surface bodies only, no asteroid fields; each tagged with the method
     hand = mine_locations("Aphorite", "hand")
     assert {l["place"] for l in hand} == {"Hurston", "Daymar"}
-    assert all(l["kind"] == "body" for l in hand)
+    assert all(l["kind"] == "body" and l["method"] == "hand" for l in hand)
     assert mine_locations("Aphorite", "ship") == []          # not ship-mineable
-    # ship ore: bodies + asteroid fields (field carries a rarity)
+    # ship ore: bodies + asteroid fields (field carries a rarity), all method "ship"
     ship = mine_locations("Copper", "ship")
     assert {l["kind"] for l in ship} == {"body", "field"}
+    assert all(l["method"] == "ship" for l in ship)
     field = next(l for l in ship if l["kind"] == "field")
     assert field["place"] == "Aaron Halo" and field["rarity"] == "Common"
+
+
+def test_mine_locations_any_tags_each_method():
+    _seed()
+    # "any" lists every method, each location tagged with the one that mines it
+    cu = mine_locations("Copper", "any")
+    assert {(l["place"], l["method"]) for l in cu if l["kind"] == "body"} == {
+        ("Hurston", "ship"), ("Daymar", "ship")}
+    assert any(l["kind"] == "field" and l["method"] == "ship" for l in cu)   # Aaron Halo (ship)
+    ap = mine_locations("Aphorite", "any")                                   # hand-only gem
+    assert {(l["place"], l["method"]) for l in ap} == {
+        ("Hurston", "hand"), ("Daymar", "hand")}
 
 
 # --- snapshot serialization the Contracts section consumes ------------------ #

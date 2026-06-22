@@ -243,43 +243,76 @@ export async function miningFind() {
     setHTML(mres(), findResultHtml(r));
   } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
 }
-// "Mined on" chips: where a mineral is ship-mineable, attached by the server to mineral-lookup
-// + mining-plan as `locations:[{place,system,kind,rarity?,points?}]` — surface bodies (kind
-// "body") and space asteroid fields (kind "field", with a rarity tier). Archetype fields
-// (Lagrange A..F, Pyro Warm/Cool) carry `points` as the real Lagrange points grouped by planet,
-// `[{planet, lpoints:["L1",…]}]`. Returns "" when nothing is known.
+// Location tags share ONE theme across two axes: colour = WHERE (cyan = planetary surface,
+// amber = space asteroid field / belt / Lagrange), and the row lead = HOW (Ship / Hand / ROC).
+// Attached by the server to mineral-lookup + mining-plan as
+// `locations:[{place,system,kind,method,rarity?,points?}]`. `locKey()` renders the legend.
+const METHOD_LABEL = { ship: "Ship", hand: "Hand", ground: "ROC" };
+const METHOD_ORDER = ["ship", "hand", "ground"];
+
+// One location -> chip HTML. A surface body / plain field is a single chip; an archetype field
+// (Lagrange A..F, Pyro Warm/Cool) carrying grouped `points` renders one head chip per PLANET
+// (with the rarity) + that planet's small L# tags, each planet on its own `.mloc-group` row — so
+// you see places you can fly to (Crusader L1/L2, Hurston L3) not the opaque archetype label.
+function _locChip(l) {
+  const field = l.kind === "field";
+  const rar = field && l.rarity ? ` <span class="mn-dim">${esc(l.rarity)}</span>` : "";
+  const groups = field && Array.isArray(l.points) ? l.points.filter((g) => g && g.planet) : [];
+  if (groups.length) {
+    const tip = l.place ? ` title="${esc(l.place)}"` : "";
+    return groups.map((g) => {
+      const ls = (g.lpoints || [])
+        .map((p) => `<span class="lt-tag mloc-chip mloc-field mloc-pt">${esc(p)}</span>`)
+        .join(" ");
+      return `<span class="mloc-group"><span class="lt-tag mloc-chip mloc-field"${tip}>` +
+        `${esc(g.planet)}${rar}</span>${ls}</span>`;
+    }).join("");
+  }
+  const sys = l.system ? ` · ${esc(l.system)}` : "";
+  return `<span class="lt-tag mloc-chip${field ? " mloc-field" : ""}">${esc(l.place)}${sys}${rar}</span>`;
+}
+
 export function locChips(locations, extra = "") {
   if (!locations || !locations.length) return extra ? `<div class="mloc">${extra}</div>` : "";
-  const chip = (l) => {
-    const field = l.kind === "field";
-    const rar = field && l.rarity ? ` <span class="mn-dim">${esc(l.rarity)}</span>` : "";
-    // A field placed at real Lagrange points renders one head chip per PLANET (carrying the
-    // rarity) followed by that planet's L# tags — the opaque archetype label is dropped, so you
-    // see places you can fly to (Crusader L1/L2, Hurston L3) instead of "Lagrange E"/"Warm 01".
-    const groups = field && Array.isArray(l.points)
-      ? l.points.filter((g) => g && g.planet) : [];
-    if (groups.length) {
-      const tip = l.place ? ` title="${esc(l.place)}"` : "";
-      // Each planet is its own row (a `.mloc-group` that breaks to a full line): its head chip
-      // carries the rarity, then its L# tags — so a planet + its points stay together and the
-      // groups don't run into one long wrapping line.
-      return groups.map((g) => {
-        const ls = (g.lpoints || [])
-          .map((p) => `<span class="lt-tag mloc-chip mloc-field mloc-pt">${esc(p)}</span>`)
-          .join(" ");
-        return `<span class="mloc-group"><span class="lt-tag mloc-chip mloc-field"${tip}>` +
-          `${esc(g.planet)}${rar}</span>${ls}</span>`;
-      }).join("");
-    }
-    // surface body, plain field (belt/halo), or a pre-rebuild field without grouped points yet
-    const sys = l.system ? ` · ${esc(l.system)}` : "";
-    return `<span class="lt-tag mloc-chip${field ? " mloc-field" : ""}">${esc(l.place)}${sys}${rar}</span>`;
-  };
+  // Group by mining method into its own labelled row (Ship / Hand / ROC), in canonical order;
+  // colour still distinguishes planetary vs space within each row. See `locKey()`.
+  const byMethod = new Map();
+  for (const l of locations) {
+    const m = l.method || "ship";
+    (byMethod.get(m) || byMethod.set(m, []).get(m)).push(l);
+  }
+  const order = [...METHOD_ORDER.filter((m) => byMethod.has(m)),
+                 ...[...byMethod.keys()].filter((m) => !METHOD_ORDER.includes(m))];
+  const rows = order.map((m) => {
+    const chips = byMethod.get(m).map(_locChip).join(" ");
+    return `<div class="mloc-method"><span class="mloc-method-k">${esc(METHOD_LABEL[m] || m)}</span>${chips}</div>`;
+  }).join("");
   // `extra` is an optional trailing element (e.g. the mining-contract card's "+N more" chip).
-  return `<div class="mloc"><span class="mloc-k">Mined on</span>${locations.map(chip).join(" ")}${extra}</div>`;
+  return `<div class="mloc"><span class="mloc-k">Mined on</span>${rows}${extra}</div>`;
+}
+
+// The legend decoding the location tags: colour = where, row lead = how. Rendered once per view
+// that shows `locChips` (Find result, Plan sources, mining-contract section).
+export function locKey() {
+  const sw = (cls, label) => `<span class="mloc-kc"><i class="mloc-sw ${cls}"></i>${label}</span>`;
+  const how = Object.values(METHOD_LABEL)
+    .map((l) => `<span class="mloc-method-k">${l}</span>`).join("");
+  return `<div class="mloc-key"><span class="mloc-key-k">Key</span>` +
+    sw("mloc-sw-body", "Planetary surface") +
+    sw("mloc-sw-field", "Space — field / Lagrange") +
+    `<span class="mloc-kc mloc-key-how">${how}<span class="mn-dim">mining method</span></span></div>`;
 }
 function findResultHtml(r) {
-  if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
+  // No ship-mineable source rock — but it may still be mined directly (hand cave gem / ROC ore).
+  // Show where it IS mineable + the key, instead of a dead "no rock" message.
+  if (!r.rocks || !r.rocks.length) {
+    if (!r.locations || !r.locations.length)
+      return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
+    return `<div class="card">
+      <div class="mscan-note mn-dim">No ship-mineable rock yields ${esc(r.mineral)} — it's mined directly:</div>
+      ${locChips(r.locations)}
+      ${locKey()}</div>`;
+  }
   const sigs = (r.signatures || []).map(s => `<span class="mscan-rs">${num(s)}</span>`).join("");
   // With the current ship's gear, judge each source rock's minability and rank by it (best
   // first), then by yield score; without gear, fall back to the server's yield ranking.
@@ -299,6 +332,7 @@ function findResultHtml(r) {
       <div class="mscan-vals">${sigs || '<span class="mn-dim">—</span>'}</div></div>
     ${note}
     ${locChips(r.locations)}
+    ${r.locations && r.locations.length ? locKey() : ""}
     ${logTable(
       (lo ? th("Mine", false, "Minability with your current ship's mining gear") : "") +
       th("RS", true, "Radar signature a single rock of this type reads") +
@@ -638,5 +672,5 @@ function planResultHtml(r) {
         th("RS", false, "Radar signature value(s) to scan for to find this deposit"),
         covRows, "No deposit yields any of these minerals.")}
     </div>
-    <div class="card"><h3><span>Per-ingredient sources</span></h3><div class="mplan-srcs">${srcs}</div></div>`;
+    <div class="card"><h3><span>Per-ingredient sources</span></h3>${locKey()}<div class="mplan-srcs">${srcs}</div></div>`;
 }
