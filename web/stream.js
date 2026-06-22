@@ -4,7 +4,8 @@
 // via applySnapshot, and runs the "new build available" banner + the served-asset-hash
 // reload. Calls back into the core render dispatch (renderAll) and the archive/jukebox
 // modules; refresh() is the one-shot pull the editor and archive reach for after a write.
-import { $, esc, toast } from "./dom.js";
+import { $, toast } from "./dom.js";
+import { html, render, nothing } from "./lit.js";
 import { postJSON, getJSON } from "./net.js";
 import { S, curData } from "./state.js";
 import { renderAll } from "./app.js";
@@ -50,15 +51,11 @@ function renderUpdateBar(u) {
   const el = $("updatebar");
   if (!el) return;
   if (_updBusy) return;   // an apply is in flight: stay dismissed until the restart reloads us
-  if (!u || !u.available) { el.classList.add("hide"); el.innerHTML = ""; _updBusy = false; return; }
+  if (!u || !u.available) { el.classList.add("hide"); render(nothing, el); _updBusy = false; return; }
   const view = u.compare_url
-    ? `<button class="sp-btn" onclick="window.open('${esc(u.compare_url)}','_blank','noopener')">View changes</button>`
-    : "";
-  el.innerHTML =
-    `<span class="ub-msg">⟳ New build available <code>${esc(u.current || "?")}</code> → ` +
-    `<code>${esc(u.latest || "?")}</code></span>` +
-    `<span class="ub-actions"><button class="sp-btn primary" onclick="applyUpdate()">Update now</button>` +
-    `${view}<button class="sp-btn" onclick="dismissUpdate()">Dismiss</button></span>`;
+    ? html`<button class="sp-btn" @click=${() => window.open(u.compare_url, "_blank", "noopener")}>View changes</button>`
+    : nothing;
+  render(html`<span class="ub-msg">⟳ New build available <code>${u.current || "?"}</code> → <code>${u.latest || "?"}</code></span><span class="ub-actions"><button class="sp-btn primary" @click=${applyUpdate}>Update now</button>${view}<button class="sp-btn" @click=${dismissUpdate}>Dismiss</button></span>`, el);
   el.classList.remove("hide");
 }
 async function applyUpdate() {
@@ -99,10 +96,9 @@ function applySnapshot(d) {
   if ("screen_locked" in d) jukeOnScreenLocked(d.screen_locked);   // ...and while the screen is locked
   notifyIfUpdated(d.app_version);   // toast once when the running build changed under us
   if (S.REPLAY_MODE) return;   // keep S.LAST fresh underneath; the replay view owns the screen
-  // Skip the whole render pass when the snapshot is byte-identical to the last one
-  // rendered: setHTML already no-ops the DOM, this also skips building the HTML strings +
-  // cargo packing. User interactions call renderAll() directly (unguarded), so an open
-  // editor/drag still repaints immediately.
+  // Skip the whole render pass when the snapshot is byte-identical to the last one rendered:
+  // lit already diffs to a no-op, but this also skips building the templates + cargo packing.
+  // User interactions call renderAll() directly, so an open editor/drag still repaints at once.
   const sig = JSON.stringify(d);
   if (sig !== _lastRenderSig) {
     _lastRenderSig = sig;
@@ -112,14 +108,14 @@ function applySnapshot(d) {
   const last = d.last_event_ts ? ("log " + d.last_event_ts) : "";
   // App build: the short git hash of the running code (logged-in state already
   // lives in the header status pill, so the footer shows the version instead).
-  const build = "build " + esc(d.app_version || "?");
+  const build = "build " + (d.app_version || "?");
   // RSI's patch-notes page is what the launcher links to pre-update (then hides) —
   // make the parsed game version a link back to it. Index URL always lists the
   // current LIVE build first, so it needs no per-patch upkeep.
   const ver = d.game_version
-    ? ` · game <a class="pn-link" href="https://robertsspaceindustries.com/en/patch-notes" target="_blank" rel="noopener">${esc(d.game_version)} ↗</a>`
+    ? html` · game <a class="pn-link" href="https://robertsspaceindustries.com/en/patch-notes" target="_blank" rel="noopener">${d.game_version} ↗</a>`
     : "";
-  $("foot").innerHTML = `synced ${esc(new Date().toLocaleTimeString())} · ${build}${ver} · ${esc(last)} · cargo db @ ${esc(d.ship_cargo_version || "?")}`;
+  render(html`synced ${new Date().toLocaleTimeString()} · ${build}${ver} · ${last} · cargo db @ ${d.ship_cargo_version || "?"}`, $("foot"));
 }
 
 // One-shot pull used by action handlers to reflect a change immediately. (The mutating
@@ -186,8 +182,6 @@ window.addEventListener("online", ensureStream);
 window.addEventListener("pageshow", ensureStream);
 
 export { connectStream };
-
-// ---- window bridge (update-banner inline handlers) ---- //
 // (refresh is exported above for the editor/archive; the bootstrap in app.js calls
-// connectStream once everything is wired.)
-Object.assign(window, { applyUpdate, dismissUpdate });
+// connectStream once everything is wired. The update-banner buttons bind via lit @click
+// now — no window bridge.)

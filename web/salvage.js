@@ -6,10 +6,11 @@
 // one up directly. Either way the ship expands to its removable-component breakdown, grouped by
 // category, with non-pullable items (currently un-strippable: non-weapons over size 2) greyed.
 
-import { $, esc, setHTML } from "./dom.js";
+import { $, esc, mount } from "./dom.js";
+import { html, nothing, repeat, unsafeHTML } from "./lit.js";
 import { getJSON } from "./net.js";
 import { curData } from "./state.js";
-import { shipDetailPanel } from "./shipcard.js";   // shared removable-components breakdown
+import { shipDetailPanel } from "./shipcard.js";   // shared removable-components breakdown (still a string helper → unsafeHTML)
 
 // Detected-wreck pills currently expanded (by ship_class), so a live re-render keeps them open.
 const OPEN = new Set();
@@ -22,30 +23,31 @@ let PICKED = "";
 // The removable-components breakdown (CATS / compRow / componentsHtml / pullSummary /
 // shipDetailPanel) now lives in shipcard.js, shared with the Signal ID page.
 
-function pill(shipClass, name, count, open, resolved, fn) {
+function pillTpl(shipClass, name, count, open, resolved, fn) {
   const mult = count > 1 ? ` ×${count}` : "";
   const cls = "salv-pill" + (open ? " open" : "") + (resolved === false ? " unresolved" : "");
-  return `<button class="${cls}" aria-expanded="${open}" `
-    + `onclick="${fn}('${esc(shipClass)}')">${esc(name)}${mult}</button>`;
+  return html`<button class=${cls} aria-expanded=${open}
+    @click=${() => fn(shipClass)}>${name}${mult}</button>`;
 }
 
 // ---- auto-detected wrecks (from the live snapshot) ----
-function autoHtml(d) {
+function autoTpl(d) {
   const list = (d && d.detected_salvage) || [];
   if (!list.length)
-    return `<div class="empty">No salvageable wrecks detected yet this session. `
-      + `Fly to a salvage site — each wreck that spawns appears here.</div>`;
-  const pills = list.map(s => pill(s.ship_class, s.name, s.count, OPEN.has(s.ship_class),
-                                   s.resolved, "salvageToggle")).join("");
+    return html`<div class="empty">No salvageable wrecks detected yet this session. Fly to a salvage site — each wreck that spawns appears here.</div>`;
+  const pills = list.map(s => pillTpl(s.ship_class, s.name, s.count, OPEN.has(s.ship_class),
+                                      s.resolved, salvageToggle));
+  // shipDetailPanel is still a string helper (shipcard.js not yet converted) → unsafeHTML; the
+  // header label carries trusted markup (name · manufacturer) so it's assembled as a string too.
   const detail = list.filter(s => OPEN.has(s.ship_class)).map(s =>
-    shipDetailPanel(`${esc(s.name)}${s.manufacturer ? ` · ${esc(s.manufacturer)}` : ""}`,
-                    s.components, s.resolved)).join("");
-  return `<div class="salv-pills">${pills}</div>${detail}`;
+    unsafeHTML(shipDetailPanel(`${esc(s.name)}${s.manufacturer ? ` · ${esc(s.manufacturer)}` : ""}`,
+                               s.components, s.resolved)));
+  return html`<div class="salv-pills">${pills}</div>${detail}`;
 }
 
 export function renderSalvage(d) {
   if (!$("salv-auto")) return;   // shell not built yet (Salvage tab never opened)
-  setHTML("salv-auto", autoHtml(d || curData()));
+  mount("salv-auto", autoTpl(d || curData()));
 }
 
 export function salvageToggle(shipClass) {
@@ -71,44 +73,48 @@ function shipSections() {
 }
 
 let _salvId = 0;
-function shipMenuHtml() {
+function shipMenuTpl() {
   _salvId = 0;
   return shipSections().map(sec => {
-    const items = sec.ships.map(s =>
-      `<div class="salv-dd-item" role="option" id="salv-opt-${_salvId++}" data-key="${esc(s.key)}"`
-      + ` data-search="${esc(s.name.toLowerCase())}" aria-selected="${s.key === PICKED}"`
-      + ` onclick="salvagePick(this.dataset.key)"><span>${esc(s.name)}</span></div>`).join("");
-    return `<div class="salv-dd-sec"><div class="salv-dd-grp">`
-      + `<span class="salv-dd-mfr">${esc(sec.mfr)}</span>`
-      + `<span class="salv-dd-n">${sec.ships.length}</span></div>${items}</div>`;
-  }).join("");
+    // data-key / data-search stay as attributes: the picker reads them off the live DOM
+    // (salvageDdFilter via dataset.search; salvageDdKey/the click via dataset.key, also the e2e
+    // test's [data-key='…'] selector). The id is consumed by aria-activedescendant.
+    const items = sec.ships.map(s => {
+      const id = `salv-opt-${_salvId++}`;
+      return html`<div class="salv-dd-item" role="option" id=${id} data-key=${s.key}
+        data-search=${s.name.toLowerCase()} aria-selected=${s.key === PICKED}
+        @click=${() => salvagePick(s.key)}><span>${s.name}</span></div>`;
+    });
+    return html`<div class="salv-dd-sec"><div class="salv-dd-grp"><span class="salv-dd-mfr">${sec.mfr}</span><span class="salv-dd-n">${sec.ships.length}</span></div>${items}</div>`;
+  });
 }
 
-function pickerHtml() {
-  if (CATALOG == null) return `<div class="empty">loading…</div>`;
+function pickerTpl() {
+  if (CATALOG == null) return html`<div class="empty">loading…</div>`;
   if (!Object.keys(CATALOG).length)
-    return `<div class="empty">No salvageable-ship catalog yet (still building from the game files).</div>`;
+    return html`<div class="empty">No salvageable-ship catalog yet (still building from the game files).</div>`;
   // The combobox already shows the picked ship's name, so the detail header says "Removable
   // components" (+ the pullable summary) rather than repeating it.
   const e = PICKED ? CATALOG[PICKED] : null;
-  const detail = e ? shipDetailPanel("Removable components", e.components, true) : "";
-  return `<div class="salv-pick-row">
+  // shipDetailPanel returns an HTML string (shipcard.js not yet converted) → unsafeHTML.
+  const detail = e ? unsafeHTML(shipDetailPanel("Removable components", e.components, true)) : nothing;
+  return html`<div class="salv-pick-row">
       <div class="salv-dd">
         <input id="salv-pick" class="salv-dd-in" autocomplete="off" role="combobox"
           aria-expanded="false" aria-controls="salv-dd-list" aria-autocomplete="list"
           aria-label="Salvageable ship" placeholder="Search salvageable ships…"
-          value="${e ? esc(e.name) : ""}"
-          oninput="salvageDdFilter(this.value)" onfocus="salvageDdOpen(true)"
-          onblur="salvageDdOpen(false)" onkeydown="salvageDdKey(event)">
+          value=${e ? e.name : ""}
+          @input=${e2 => salvageDdFilter(e2.target.value)} @focus=${() => salvageDdOpen(true)}
+          @blur=${() => salvageDdOpen(false)} @keydown=${salvageDdKey}>
         <div id="salv-dd-list" class="salv-dd-list" role="listbox" aria-label="Salvageable ships"
-          onmousedown="event.preventDefault()">${shipMenuHtml()}</div>
+          @mousedown=${e2 => e2.preventDefault()}>${shipMenuTpl()}</div>
       </div>
     </div>${detail}`;
 }
 
 export function salvagePick(key) {
   PICKED = key || "";
-  setHTML("salv-pick-wrap", pickerHtml());   // closes the menu + renders the breakdown
+  mount("salv-pick-wrap", pickerTpl());   // closes the menu + renders the breakdown
 }
 
 // ---- combobox open / filter / keyboard (mirrors mining.js's blueprint picker) ----
@@ -175,14 +181,14 @@ async function renderPicker() {
     try { CATALOG = (await getJSON("/api/salvage-ship")).ships || {}; }
     catch (e) { CATALOG = {}; }
   }
-  setHTML("salv-pick-wrap", pickerHtml());
+  mount("salv-pick-wrap", pickerTpl());
 }
 
 // ---- shell ----
 function shell() {
   // Wrap the cards in .salvage (a gap'd flex column, like .mining) so they don't sit flush;
   // <span>-wrapped titles pick up the shared .card h3 cyan accent bar every other card has.
-  setHTML("salvage", `
+  mount("salvage", html`
     <div class="salvage">
       <div class="card">
         <h3><span>Detected wrecks</span><small>this session</small></h3>

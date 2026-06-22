@@ -4,7 +4,8 @@
 // chrome. Each instance registers a config keyed by its input id; the inline on* handlers in the
 // rendered markup dispatch back here by id, so a single set of logic drives every dropdown
 // (matches the codebase's "regenerated HTML + inline handlers" pattern — no listener re-binding).
-import { $, val, esc } from "./dom.js";
+import { $, val } from "./dom.js";
+import { html, render } from "./lit.js";
 
 // id -> { entries(filter) -> [{name, mfr} | {clear, label}], onPick(name), reset() -> string, active }
 const COMBOS = {};
@@ -16,34 +17,35 @@ export function registerCombo(id, { entries, onPick, reset }) {
   COMBOS[id] = { entries, onPick, reset, active: -1 };
 }
 
-// The input + (empty) menu markup. The `.shipsel` width/chrome come from styles.css; pass `cls`
-// to scope per-instance overrides onto the wrapper.
+// The input + (empty) menu, as a lit template. The `.shipsel` width/chrome come from styles.css;
+// pass `cls` to scope per-instance overrides onto the wrapper. Handlers bind via lit @event (no
+// window bridge); the menu element is populated imperatively by _render on focus/input/key.
 export function comboInputHtml(id, { value = "", placeholder = "search…", label = "", cls = "" } = {}) {
-  return `<span class="shipbox${cls ? " " + cls : ""}">
-    <input id="${id}" class="shipsel" type="text" autocomplete="off" aria-label="${esc(label)}"
-      role="combobox" aria-expanded="false" aria-controls="${id}-menu" aria-autocomplete="list" aria-activedescendant=""
-      placeholder="${esc(placeholder)}" value="${esc(value)}"
-      onfocus="comboOpen('${id}')" oninput="comboFilter('${id}')" onkeydown="comboKey('${id}',event)" onblur="comboBlur('${id}')">
-    <div id="${id}-menu" class="shipmenu" role="listbox" aria-label="${esc(label)}"></div></span>`;
+  return html`<span class="shipbox${cls ? " " + cls : ""}">
+    <input id=${id} class="shipsel" type="text" autocomplete="off" aria-label=${label}
+      role="combobox" aria-expanded="false" aria-controls=${id + "-menu"} aria-autocomplete="list" aria-activedescendant=""
+      placeholder=${placeholder} value=${value}
+      @focus=${() => comboOpen(id)} @input=${() => comboFilter(id)} @keydown=${(e) => comboKey(id, e)} @blur=${() => comboBlur(id)}>
+    <div id=${id + "-menu"} class="shipmenu" role="listbox" aria-label=${label}></div></span>`;
 }
 
-function _menuHtml(c, id, filter) {
+function _menuTpl(c, id, filter) {
   const ents = c.entries(filter) || [];
   const real = ents.filter(e => !e.clear).length;
   const rows = ents.map((e, i) => {
     const act = i === c.active ? " active" : "";
-    const aria = `role="option" id="${id}-opt-${i}" aria-selected="${i === c.active}"`;
+    const sel = i === c.active;
     if (e.clear)
-      return `<div class="shipopt clear${act}" ${aria} onmousedown="comboPick(event,'${id}','')">${esc(e.label || "— clear —")}</div>`;
-    return `<div class="shipopt${act}" ${aria} data-name="${esc(e.name)}" onmousedown="comboPick(event,'${id}',this.dataset.name)"><span class="sn">${esc(e.name)}</span><span class="om">${esc(e.mfr || "")}</span></div>`;
-  }).join("");
-  return real ? rows : rows + `<div class="shipopt empty">no match</div>`;
+      return html`<div class="shipopt clear${act}" role="option" id=${id + "-opt-" + i} aria-selected=${sel} @mousedown=${(ev) => comboPick(ev, id, "")}>${e.label || "— clear —"}</div>`;
+    return html`<div class="shipopt${act}" role="option" id=${id + "-opt-" + i} aria-selected=${sel} data-name=${e.name} @mousedown=${(ev) => comboPick(ev, id, e.name)}><span class="sn">${e.name}</span><span class="om">${e.mfr || ""}</span></div>`;
+  });
+  return real ? html`${rows}` : html`${rows}<div class="shipopt empty">no match</div>`;
 }
 
 function _render(id, filter) {
   const c = COMBOS[id], inp = $(id), menu = $(id + "-menu");
   if (!c || !inp || !menu) return;
-  menu.innerHTML = _menuHtml(c, id, filter);
+  render(_menuTpl(c, id, filter), menu);
   menu.classList.add("open");
   inp.setAttribute("aria-expanded", "true");
   inp.setAttribute("aria-activedescendant", c.active >= 0 ? `${id}-opt-${c.active}` : "");

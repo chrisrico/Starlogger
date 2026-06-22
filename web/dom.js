@@ -3,6 +3,8 @@
 // here — just the helpers that read the DOM, escape/format values, and the small render
 // building blocks (logTable/th/tag) the table views are assembled from.
 
+import { render, html, nothing } from "./lit.js";
+
 export const $ = (id) => document.getElementById(id);
 
 // Defensive read of an input's value by id ("" when the element isn't in the DOM yet).
@@ -16,17 +18,18 @@ export const esc = (s) => (s == null ? "" : String(s)).replace(/[&<>"']/g,
 
 export const num = (n) => (n == null ? "" : Number(n).toLocaleString());
 
-// Only touch the DOM when the rendered HTML actually changes. Kills repaint flicker and
-// means entrance animations replay only on real updates.
-const _rendered = {};
-const _seen = {};
-export function setHTML(id, html) {
-  if (_rendered[id] === html) return;
-  _rendered[id] = html;
+// Render a lit template (html`…`) into a container by id. lit diffs against the existing DOM
+// instead of replacing innerHTML, so it preserves node identity + input focus across
+// re-renders — which is what lets the cargo-ops editors survive a live snapshot landing
+// mid-edit (the reason this app used to carry render-suppression guard flags). The first-paint
+// `noanim` behaviour plays the entrance animation once, not on every snapshot.
+const _mounted = {};
+export function mount(id, tpl) {
   const el = $(id);
-  el.classList.toggle("noanim", !!_seen[id]);  // entrance animation on first paint only
-  el.innerHTML = html;
-  _seen[id] = true;
+  if (!el) return;
+  el.classList.toggle("noanim", !!_mounted[id]);
+  render(tpl, el);
+  _mounted[id] = true;
 }
 
 // ---- small render helpers (DRY the repeated table/log markup) ---- //
@@ -77,15 +80,10 @@ export function toast(msg, kind) {
   setTimeout(kill, 7000);
 }
 
-// Build an .arch-tabs segmented control: `items` is [[key,label],...]; `active` the
-// selected key; `fn` the handler NAME invoked with the key (resolved off window — must be
-// in the bridge). opts.attr(key) adds per-button attributes (e.g. data-sub); opts.tail is
-// extra HTML appended inside the bar. Shared by every secondary-nav strip (cargo/plan/
-// archive/mining).
-export function tabBar(items, active, fn, opts = {}) {
-  const btns = items.map(([k, t]) => {
-    const attr = opts.attr ? " " + opts.attr(k) : "";
-    return `<button class="arch-tab${k === active ? " active" : ""}"${attr} onclick="${fn}('${k}')">${t}</button>`;
-  }).join("");
-  return `<div class="arch-tabs">${btns}${opts.tail || ""}</div>`;
+// Build an .arch-tabs segmented control: `items` is [[key,label],...]; `active` the selected
+// key; `cb(key)` runs on click. opts.tail is an optional extra lit template appended inside the
+// bar. Shared by every secondary-nav strip (cargo/mining).
+export function tabBarTpl(items, active, cb, opts = {}) {
+  return html`<div class="arch-tabs">${items.map(([k, t]) =>
+      html`<button class="arch-tab${k === active ? " active" : ""}" @click=${() => cb(k)}>${t}</button>`)}${opts.tail || nothing}</div>`;
 }

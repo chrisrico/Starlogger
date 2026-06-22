@@ -5,7 +5,8 @@
 // "Identify rock" tool, promoted out of the Mining tab so mining and salvage teams share one
 // "what is that contact?" readout. Rock rendering reuses mining.js's helpers; a wreck-hull
 // reading slots the shared removable-component breakdown (shipcard.js) under hull pills.
-import { $, esc, num, val, tag, setHTML, hintIcon, logTable, th } from "./dom.js";
+import { $, num, val, tag, mount, hintIcon, logTable, th } from "./dom.js";
+import { html, nothing, unsafeHTML } from "./lit.js";
 import { getJSON } from "./net.js";
 import { S } from "./state.js";
 import { ensureGear } from "./shipequip.js";
@@ -47,31 +48,32 @@ export function syncSignalSession() {
     HIST_SESSION = cur;
     HISTORY = [];
     persistHistory();
-    if ($("signal-hist")) setHTML("signal-hist", histHtml());
+    if ($("signal-hist")) mount("signal-hist", histTpl());
   }
 }
 loadHistory();
 
 // ---- the reading tool ---- //
-function signalToolHtml() {
-  return `<div class="card mtool"><h3><span>Signal ID — RS reading ${hintIcon(
+function signalToolTpl() {
+  // hintIcon returns a trusted HTML string (combobox.js's dom helper) → unsafeHTML.
+  return html`<div class="card mtool"><h3><span>Signal ID — RS reading ${unsafeHTML(hintIcon(
       "Punch in a Radar Signature (RS) reading to identify the contact: a mineable rock " +
       "<b>class</b> (with its likely minerals) and/or a salvageable ship hull. The number is " +
-      "<code>base RS × number of rocks</code>; bases can be shared, so a reading can be ambiguous.")}</span></h3>
+      "<code>base RS × number of rocks</code>; bases can be shared, so a reading can be ambiguous."))}</span></h3>
     <div class="mform">
       <input id="signal-rs" type="text" inputmode="numeric" autocomplete="off"
         placeholder="e.g. 9400" aria-label="Radar signature reading"
-        oninput="signalPredict(event)" onkeydown="signalKey(event)">
-      <button class="primary" onclick="signalIdentify()">Identify</button>
+        @input=${signalPredict} @keydown=${signalKey}>
+      <button class="primary" @click=${() => signalIdentify()}>Identify</button>
     </div>
-    <div id="signal-hist" class="mi-hist">${histHtml()}</div>
+    <div id="signal-hist" class="mi-hist"></div>
   </div>`;
 }
-function histHtml() {
-  if (!HISTORY.length) return "";
+function histTpl() {
+  if (!HISTORY.length) return nothing;
   return HISTORY.map(h =>
-    `<button class="mi-chip" onclick="signalAgain(${h.rs})"
-       title="RS ${num(h.rs)} — ${esc(h.summary)}"><b>${num(h.rs)}</b><span>${esc(h.summary)}</span></button>`).join("");
+    html`<button class="mi-chip" @click=${() => signalAgain(h.rs)}
+       title=${`RS ${num(h.rs)} — ${h.summary}`}><b>${num(h.rs)}</b><span>${h.summary}</span></button>`);
 }
 function summaryOf(candidates, combos, salvage = []) {
   if (candidates.length) {
@@ -110,9 +112,9 @@ export function signalKey(e) {
 }
 export async function signalIdentify() {
   const v = parseFloat(val("signal-rs"));
-  if (!(v > 0)) { setHTML("signal-result", `<div class="empty">Enter a positive RS reading.</div>`); return; }
+  if (!(v > 0)) { mount("signal-result", html`<div class="empty">Enter a positive RS reading.</div>`); return; }
   syncSignalSession();   // a new session clears the strip first, so this reading opens it
-  setHTML("signal-result", `<div class="empty">scanning…</div>`);
+  mount("signal-result", html`<div class="empty">scanning…</div>`);
   try {
     const [look, dec] = await Promise.all([
       getJSON(`/api/rock-lookup?rs=${v}`),
@@ -128,79 +130,89 @@ export async function signalIdentify() {
       if (at >= 0) HISTORY[at] = entry;
       else HISTORY = [entry, ...HISTORY].slice(0, HIST_MAX);
       persistHistory();
-      setHTML("signal-hist", histHtml());
+      mount("signal-hist", histTpl());
     }
     const inp = $("signal-rs"); if (inp) { inp.value = ""; inp.focus(); }
     HULL = hullNames(salvage)[0] || null;   // default-select the first hull so its breakdown shows
     LAST = { v, candidates, combos, salvage };
     renderResult();
-  } catch (e) { setHTML("signal-result", `<div class="empty">lookup failed</div>`); }
+  } catch (e) { mount("signal-result", html`<div class="empty">lookup failed</div>`); }
 }
 
 // ---- result rendering ---- //
 function renderResult() {
   if (!LAST || !$("signal-result")) return;
   const { v, candidates, combos, salvage } = LAST;
-  setHTML("signal-result", resultHtml(v, candidates, combos, salvage));
+  mount("signal-result", resultTpl(v, candidates, combos, salvage));
 }
-function resultHtml(v, candidates, combos, salvage = []) {
+function resultTpl(v, candidates, combos, salvage = []) {
   if (!candidates.length && !combos.length && !salvage.length)
-    return `<div class="empty">Nothing reads RS ${num(v)} as a clean cluster.</div>`;
-  let html = "";
+    return html`<div class="empty">Nothing reads RS ${num(v)} as a clean cluster.</div>`;
+  const parts = [];
   if (candidates.length) {
-    html += `<div class="mres-h">Single-class readings</div>`;
-    html += candidates.map(c => {
+    parts.push(html`<div class="mres-h">Single-class readings</div>`);
+    parts.push(candidates.map(c => {
       const deps = [...new Set(c.rocks.map(r => r.deposit_name || r.name))];
       const minerals = mineralUnion(c.rocks);
-      const extra = deps.length > 1 ? ` <span class="mn-dim">+${deps.length - 1} more</span>` : "";
-      return `<div class="card mcand">
-        <h3><span>${c.count} × <b>${esc(deps[0])}</b>${extra}</span>
+      const extra = deps.length > 1 ? html` <span class="mn-dim">+${deps.length - 1} more</span>` : nothing;
+      // elBadge/mechHtml are trusted HTML-string helpers (mining.js) → unsafeHTML; feasibilityHtml
+      // returns a lit template now → rendered directly.
+      const badges = minerals.map(elBadge).join("");
+      return html`<div class="card mcand">
+        <h3><span>${c.count} × <b>${deps[0]}</b>${extra}</span>
             <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>
         <div class="mcand-body">
-          ${deps.length > 1 ? `<div class="mrow"><span class="mk">reads as</span>
-             <div class="mels">${deps.map(d => tag(d)).join(" ")}</div></div>` : ""}
+          ${deps.length > 1 ? html`<div class="mrow"><span class="mk">reads as</span>
+             <div class="mels">${deps.map(d => unsafeHTML(tag(d)))}</div></div>` : nothing}
           <div class="mrow"><span class="mk">possible minerals</span>
-            <div class="mels">${minerals.map(elBadge).join("") || '<span class="mn-dim">—</span>'}</div></div>
-          ${mechHtml(c.rocks)}
+            <div class="mels">${badges ? unsafeHTML(badges) : html`<span class="mn-dim">—</span>`}</div></div>
+          ${unsafeHTML(mechHtml(c.rocks))}
           ${feasibilityHtml(c.rocks)}
         </div></div>`;
-    }).join("");
+    }));
   }
   const mixed = combos.filter(c => c.parts.length > 1);
   if (mixed.length) {
-    html += `<div class="mres-h">Mixed-cluster interpretations</div><div class="card">` + logTable(
+    // logTable/th return trusted HTML strings (dom.js) → unsafeHTML the assembled table.
+    const table = logTable(
       th("Cluster") + th("Total RS", true) + th("Rocks", true),
       mixed.slice(0, 12).map(c =>
-        `<tr><td>${c.parts.map(p => `${p.count}× ${esc(p.names[0] || ("RS " + p.base_rs))}`).join(" + ")}</td>` +
+        `<tr><td>${c.parts.map(p => `${p.count}× ${escTag(p.names[0] || ("RS " + p.base_rs))}`).join(" + ")}</td>` +
         `<td class="lt-num">${num(c.total)}</td><td class="lt-num">${c.count}</td></tr>`).join(""),
-      "") + `</div>`;
+      "");
+    parts.push(html`<div class="mres-h">Mixed-cluster interpretations</div><div class="card">${unsafeHTML(table)}</div>`);
   }
-  if (salvage.length) html += salvageSectionHtml(salvage);
-  return html;
+  if (salvage.length) parts.push(salvageSectionTpl(salvage));
+  return html`${parts}`;
 }
+// The mixed-cluster table is built as a trusted HTML string (it goes through unsafeHTML), so a
+// part name interpolated into it must still be HTML-escaped here — lit's auto-escaping doesn't
+// reach inside an unsafeHTML payload. (Inline same as dom.js's esc, kept local now esc is gone.)
+const escTag = (s) => (s == null ? "" : String(s)).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // A wreck has no mineral composition, only an identity (a whole-ship hull, or n flat-2000 debris
 // panels), so it gets its own labelled section. A ship hull names itself in the card title and
 // renders its strippable components directly into the card — no repeated name, no nested panel;
 // picker pills appear only when the reading is ambiguous (several hulls share the base RS).
-function salvageSectionHtml(salvage) {
-  return `<div class="mres-h">Salvage targets</div>`
-    + salvage.map(c => (c.kind === "ship" ? hullCardHtml(c) : panelCardHtml(c))).join("");
+function salvageSectionTpl(salvage) {
+  return html`<div class="mres-h">Salvage targets</div>${
+    salvage.map(c => (c.kind === "ship" ? hullCardTpl(c) : panelCardTpl(c)))}`;
 }
-function panelCardHtml(c) {
+function panelCardTpl(c) {
   // Debris panels: the part is noise (all read 2000), so just name the distinct donor ships.
   const ships = [...new Set((c.targets || []).map(t => t.ship || t.name))];
-  const more = (c.targets || []).length >= 12 ? ' <span class="mn-dim">…</span>' : "";
-  return `<div class="card mcand salv">
-    <h3><span><b>${esc(c.label)}</b></span>
+  const more = (c.targets || []).length >= 12 ? html` <span class="mn-dim">…</span>` : nothing;
+  return html`<div class="card mcand salv">
+    <h3><span><b>${c.label}</b></span>
         <span class="scu">RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}</span></h3>
     <div class="mcand-body"><div class="mrow">
       <span class="mk">any of</span>
-      <div class="mels">${ships.map(n => tag(n)).join(" ")}${more}</div>
+      <div class="mels">${ships.map(n => unsafeHTML(tag(n)))}${more}</div>
     </div></div></div>`;
 }
 // One salvageable-hull card. The title names the (selected) hull once; components render straight
 // into the card (no nested breakdown panel). Pills show only when >1 hull shares this base RS.
-function hullCardHtml(c) {
+function hullCardTpl(c) {
   const hulls = [], seen = new Set();
   for (const t of c.targets || []) { const nm = t.name; if (nm && !seen.has(nm)) { seen.add(nm); hulls.push(nm); } }
   const multi = hulls.length > 1;
@@ -208,24 +220,25 @@ function hullCardHtml(c) {
   const e = sel ? hullEntry(sel) : null;
 
   const title = multi
-    ? `<b>${esc(sel || c.label)}</b> <span class="mn-dim">+${hulls.length - 1} more</span>`
-    : e ? `<b>${esc(e.name)}</b>${e.manufacturer ? ` · ${esc(e.manufacturer)}` : ""}`
-        : `<b>${esc(sel || c.label)}</b>`;
-  const sum = e ? pullSummary(e.components) : "";
+    ? html`<b>${sel || c.label}</b> <span class="mn-dim">+${hulls.length - 1} more</span>`
+    : e ? html`<b>${e.name}</b>${e.manufacturer ? ` · ${e.manufacturer}` : ""}`
+        : html`<b>${sel || c.label}</b>`;
+  const sum = e ? pullSummary(e.components) : "";   // plain text → interpolated directly
   const scu = `RS ${num(c.base_rs)}${c.count > 1 ? ` × ${c.count}` : ""}${sum ? ` · ${sum}` : ""}`;
 
   const picker = multi
-    ? `<div class="mcand-body"><div class="mrow"><span class="mk">ship hull</span>
+    ? html`<div class="mcand-body"><div class="mrow"><span class="mk">ship hull</span>
         <div class="mels">${hulls.map(nm =>
-          `<button class="salv-pill${nm === sel ? " open" : ""}" data-hull="${esc(nm)}"
-             aria-expanded="${nm === sel}" onclick="signalHull(this.dataset.hull)">${esc(nm)}</button>`).join("")}</div>
+          html`<button class="salv-pill${nm === sel ? " open" : ""}"
+             aria-expanded=${nm === sel} @click=${() => signalHull(nm)}>${nm}</button>`)}</div>
       </div></div>`
-    : "";
-  const body = e ? componentsHtml(e.components)
-    : CATALOG === null ? `<div class="empty">Loading component data…</div>`
-    : `<div class="empty">No stock-salvage component data for this hull yet.</div>`;
+    : nothing;
+  // componentsHtml returns a trusted HTML string (shipcard.js) → unsafeHTML.
+  const body = e ? unsafeHTML(componentsHtml(e.components))
+    : CATALOG === null ? html`<div class="empty">Loading component data…</div>`
+    : html`<div class="empty">No stock-salvage component data for this hull yet.</div>`;
 
-  return `<div class="card mcand salv">
+  return html`<div class="card mcand salv">
     <h3><span>${title}</span><span class="scu">${scu}</span></h3>
     ${picker}${body}</div>`;
 }
@@ -252,7 +265,11 @@ export function signalHull(name) {
 
 // ---- shell + init ---- //
 function shell() {
-  setHTML("signal", `<div class="signal">${signalToolHtml()}<div id="signal-result" class="mres"></div></div>`);
+  mount("signal", html`<div class="signal">${signalToolTpl()}<div id="signal-result" class="mres"></div></div>`);
+  // #signal-hist is a plain child of the lit-rendered #signal shell; lit owns its parent but has
+  // no binding inside it, so the history strip is rendered into it on its own (mount) — the same
+  // independent container that signalIdentify/syncSignalSession refresh later.
+  mount("signal-hist", histTpl());
 }
 async function ensureCatalogs() {
   if (INIT) return;

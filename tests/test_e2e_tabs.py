@@ -1,14 +1,13 @@
 """End-to-end coverage of the data-driven tabs (Contracts / Cargo / Plan / Archive /
-Mining) and their inline handlers — the surface the jukebox/settings e2e in test_e2e.py
+Mining) and their interactions — the surface the jukebox/settings e2e in test_e2e.py
 doesn't touch.
 
-Why this exists: app.js is being split into ES modules. Under <script type="module">
-top-level functions are module-scoped, so every inline-handler name must be re-exposed on
-window (see test_window_bridge.py for the static guard). This suite is the RUNTIME guard:
-it boots the real dashboard over a State seeded with a few missions (built directly from
-the model, never parsed from a log — same approach as test_snapshot.py), visits every tab,
-asserts no console/page errors, confirms every statically-referenced handler actually
-resolved onto window, and drives a representative handler per area.
+The dashboard is lit-html now: every handler binds via lit @event (no window bridge), so
+this suite boots the real dashboard over a State seeded with a few missions (built directly
+from the model, never parsed from a log — same approach as test_snapshot.py), visits every
+tab, asserts no console/page errors, and drives a representative interaction per area
+(opening the contract editor, toggling a sub-tab, the ship combobox, the mining filter, …)
+by clicking the real UI.
 
 Marked `browser`; run with `pytest -m browser`, skipped gracefully without Chromium.
 """
@@ -23,9 +22,6 @@ from werkzeug.serving import make_server
 import starlogger.server as server
 from starlogger.model import Leg, Mission
 from starlogger.state import State
-
-# Reuse the static bridge parser so the runtime check tracks the same handler set.
-from test_window_bridge import _all_js, _referenced_names
 
 pytestmark = pytest.mark.browser
 
@@ -72,10 +68,32 @@ def populated_server():
         httpd.shutdown()
 
 
+@pytest.fixture
+def server_with_state():
+    """Like populated_server, but yields (url, State) so a test can mutate state + bump the
+    version to push a real live SSE snapshot to the open dashboard (function-scoped: its own
+    fresh state per test)."""
+    st = _seeded_state()
+    app = server.create_app(st, log_path=os.environ["STARLOGGER_LOG"])
+    httpd = make_server("127.0.0.1", 0, app, threaded=True)
+    port = httpd.socket.getsockname()[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{port}", st
+    finally:
+        httpd.shutdown()
+
+
 @pytest.fixture(autouse=True)
 def _fast_timeouts(page):
     page.set_default_timeout(7000)
     page.set_default_navigation_timeout(15000)
+
+
+def _set_mode(page, label):
+    """Pin a view mode by clicking the header mode switch (was window.setMode — the switch is
+    lit-rendered and binds via @click now). label is the button text: Auto/Cargo/Mining/Salvage."""
+    page.click(f"#modeswitch button:has-text('{label}')")
 
 
 def _boot(page, url):
@@ -87,18 +105,6 @@ def _boot(page, url):
     page.wait_for_function("() => document.querySelector('#contracts') "
                            "&& document.querySelector('#contracts').children.length > 0")
     return errors
-
-
-def test_every_inline_handler_resolves_on_window(page, populated_server):
-    """The whole point of the window bridge: after the module loads, every name reachable
-    from an inline handler must actually be a function on window."""
-    errors = _boot(page, populated_server)
-    names = sorted(_referenced_names(_all_js()))
-    assert names, "parser found no handler names — guard is mis-wired"
-    missing = page.evaluate(
-        "(names) => names.filter(n => typeof window[n] !== 'function')", names)
-    assert missing == [], f"handlers not on window at runtime: {missing}"
-    assert errors == [], errors
 
 
 def test_each_tab_renders_without_errors(page, populated_server):
@@ -128,7 +134,7 @@ def test_mining_tab_renders_in_mining_mode(page, populated_server):
     handler) — effectiveMining() honours the override without needing a mining ship — then
     confirm the tab and its tools shell render with no errors."""
     errors = _boot(page, populated_server)
-    page.evaluate("window.setMode('mining')")
+    _set_mode(page, 'Mining')
     page.wait_for_selector('#nav a[data-tab="mining"]:not(.hide)')
     page.click('#nav a[data-tab="mining"]')
     page.wait_for_function("() => document.querySelector('#mining:not(.hide)') "
@@ -156,7 +162,7 @@ def test_salvage_tab_dropdown_lists_ships(page, populated_server):
     }, path=config.SALVAGE_SHIPS_PATH)
 
     errors = _boot(page, populated_server)
-    page.evaluate("window.setMode('salvage')")
+    _set_mode(page, 'Salvage')
     page.wait_for_selector('#nav a[data-tab="salvage"]:not(.hide)')
     page.click('#nav a[data-tab="salvage"]')
     page.wait_for_selector("#salvage #salv-auto")                       # auto-detected wreck container
@@ -171,22 +177,62 @@ def test_salvage_tab_dropdown_lists_ships(page, populated_server):
     assert errors == [], errors
 
 
-def test_contracts_editor_opens_via_inline_handler(page, populated_server):
-    """Drives editMission (a bridged inline handler) and confirms the editor renders."""
+def test_contracts_editor_opens(page, populated_server):
+    """The Contracts tab is lit-rendered: the Edit button binds via @click (no window bridge),
+    so drive the real user path — click Edit — and confirm the editor renders its inputs."""
     errors = _boot(page, populated_server)
     page.click('#nav a[data-tab="contracts"]')
-    page.evaluate("window.editMission('mA')")
+    page.locator("#contracts button", has_text="Edit").first.click()
     page.wait_for_selector("#contracts input")   # the inline editor exposes input fields
     assert errors == [], errors
 
 
-def test_cargo_subtab_toggle_via_interpolated_handler(page, populated_server):
-    """cargoSub is referenced only through tabBar's interpolated onclick=\"${fn}(…)\" —
-    the case static analysis is most likely to miss. Exercise it for real."""
+def test_open_editor_survives_a_live_snapshot(page, server_with_state):
+    """The lit-html maintainability win this POC set out to prove: the Contracts tab repaints on
+    EVERY SSE snapshot (renderAll no longer guards it behind EDIT) — yet an open editor's
+    typed-but-unsaved value AND focus survive the repaint, because lit reuses the editor's DOM
+    nodes and skips bindings whose value is unchanged. This is the regression guard for dropping
+    the EDIT render-suppression flag; if it fails, the guard was load-bearing after all."""
+    url, st = server_with_state
+    errors = _boot(page, url)
+    page.click('#nav a[data-tab="contracts"]')
+    page.locator("#contracts button", has_text="Edit").first.click()
+    page.wait_for_selector("#contracts #ed_title")
+    page.fill("#contracts #ed_title", "SENTINEL_UNSAVED")
+    page.focus("#contracts #ed_title")
+    # Push a REAL live snapshot that changes other data, forcing a Contracts repaint underneath
+    # the open editor (a new mission → a new row appears).
+    st.missions["mNEW"] = _haul("mNEW", {
+        "mNEWd": Leg("mNEWd", "dropoff", cargo="Quartz", qty=10, zone_host_id="Z2")})
+    st.bump_version()
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('#contracts tbody tr')]"
+        ".some(tr => /Quartz/.test(tr.textContent))")   # repaint happened (new row rendered)
+    # ...and the open editor came through it intact: uncommitted value preserved, still focused.
+    assert page.input_value("#contracts #ed_title") == "SENTINEL_UNSAVED"
+    assert page.evaluate("() => document.activeElement && document.activeElement.id") == "ed_title"
+    assert errors == [], errors
+
+
+def test_header_ship_combobox_opens(page, populated_server):
+    """The header ship picker (combobox.js — lit now, @focus/@input/@keydown/@blur, menu
+    rendered via lit render()) opens its listbox on focus. The seeded state has no detected
+    ship, so the searchable picker renders."""
+    errors = _boot(page, populated_server)
+    page.wait_for_selector("#shipSel")
+    page.focus("#shipSel")
+    page.wait_for_selector("#shipSel-menu.shipmenu.open")   # @focus → comboOpen → menu rendered+open
+    page.wait_for_selector("#shipSel-menu .shipopt.clear")  # the "clear (use detected)" sentinel option
+    assert errors == [], errors
+
+
+def test_cargo_subtab_toggle(page, populated_server):
+    """The Cargo Loading⇄Unloading sub-tab (lit tabBarTpl now, @click — was tabBar's
+    interpolated onclick): click Unloading and confirm it becomes the active sub."""
     errors = _boot(page, populated_server)
     page.click('#nav a[data-tab="cargo"]')
     page.wait_for_selector("#cargo .arch-tabs")
-    page.evaluate("window.cargoSub('dropoff')")
+    page.click("#cargo .arch-tabs button:has-text('Unloading')")
     page.wait_for_function(
         "() => document.querySelector('#cargo .arch-tab.active') "
         "&& /unload/i.test(document.querySelector('#cargo .arch-tab.active').textContent)")
@@ -195,24 +241,26 @@ def test_cargo_subtab_toggle_via_interpolated_handler(page, populated_server):
 
 def test_mining_plan_table_populates_when_catalog_loads_late(page, populated_server):
     """Regression: deep-linking to the Plan sub built the blueprint table before /api/blueprints
-    resolved (applySub runs miningSub synchronously; the fetch can't resolve mid-stack), and the
-    catalog-load path then skipped the rebuild — leaving a permanently empty table. Delay the
-    catalog so the shell is built first, then assert it fills once the catalog arrives."""
+    resolved — activateTab runs applySub→miningSub('plan') synchronously while initMining still
+    awaits the catalog, so the shell builds EMPTY — and the catalog-load path then skipped the
+    rebuild, leaving a permanently empty table. Reproduce via the real deep-link (/mining#plan,
+    mining mode pinned) with the catalog held, then assert the table fills once it arrives."""
     import json
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
     held = []
     page.route("**/api/blueprints", lambda r: held.append(r))   # hold the catalog response open
-    errors = _boot(page, populated_server)
-    page.evaluate("() => window.setMode('mining')")
-    page.click('#nav a[data-tab="mining"]')              # initMining() fires the (held) catalog fetch
-    page.evaluate("() => window.miningSub('plan')")      # builds the shell while the catalog is held
-    page.wait_for_selector("#mining .bp-table")          # table built...
+    page.goto(populated_server)
+    page.evaluate("() => localStorage.setItem('modeOverride', 'mining')")   # make /mining reachable
+    page.goto(populated_server + "/mining#plan")         # deep-link: activateTab→applySub→miningSub('plan')
+    page.wait_for_selector("#mining .bp-table")          # shell built synchronously (catalog still held)...
     assert page.locator("#mining .bp-prow").count() == 0  # ...but empty: exactly the regression's state
-    for _ in range(60):                                  # let the intercept fire, then release it
+    for _ in range(60):                                  # let the (held) catalog request register
         if held:
             break
         page.wait_for_timeout(50)
     assert held, "catalog request was never intercepted"
-    held[0].fulfill(status=200, content_type="application/json", body=json.dumps({"blueprints": [
+    held[-1].fulfill(status=200, content_type="application/json", body=json.dumps({"blueprints": [
         {"name": "Stub A", "type": "FPS Weapons", "subtype": "Rifle", "cls": "", "quality": "A", "size": 1},
         {"name": "Stub B", "type": "FPS Weapons", "subtype": "Pistol", "cls": "", "quality": "A", "size": 1},
     ]}))
@@ -234,9 +282,9 @@ def test_mining_plan_table_columns_and_filter(page, populated_server):
     page.route("**/api/blueprints", lambda r: r.fulfill(
         status=200, content_type="application/json", body=json.dumps({"blueprints": rows})))
     errors = _boot(page, populated_server)
-    page.evaluate("() => window.setMode('mining')")
+    _set_mode(page, 'Mining')
     page.click('#nav a[data-tab="mining"]')
-    page.evaluate("() => window.miningSub('plan')")
+    page.click("#mining .arch-tabs button:has-text('Plan')")  # the Plan sub-tab (lit @click)
     page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length === 2")
     heads = page.eval_on_selector_all(
         "#mining .bp-table thead th",
@@ -276,11 +324,11 @@ def test_reward_contracts_card_renders_per_blueprint(page, populated_server):
         status=200, content_type="application/json",
         body=json.dumps({"targets": [], "per_mineral": [], "coverage": []})))
     errors = _boot(page, populated_server)
-    page.evaluate("() => window.setMode('mining')")
+    _set_mode(page, 'Mining')
     page.click('#nav a[data-tab="mining"]')
-    page.evaluate("() => window.miningSub('plan')")
+    page.click("#mining .arch-tabs button:has-text('Plan')")   # the Plan sub-tab (lit @click)
     page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length === 1")
-    page.evaluate("() => window.bpStep(0, 1)")            # qty 1 -> schedules renderBpPlan
+    page.click("#mining .bp-prow .bp-step[aria-label='One more']")   # qty 0->1 (lit @click bpStep)
     page.wait_for_function(
         "() => [...document.querySelectorAll('#mres-plan .card h3 span')]"
         ".some(s => /Reward contracts/i.test(s.textContent))")

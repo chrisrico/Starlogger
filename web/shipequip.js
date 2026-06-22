@@ -6,7 +6,8 @@
 // radar is a prospecting quality-of-life pick, tracked but not part of the crack math).
 // Self-contained: owns the gear catalog cache + the saved-selection map, renders its own
 // overlay, and bridges its own inline handlers. Imported for side effects (wires close/Esc).
-import { $, esc, num, toast, hintIcon } from "./dom.js";
+import { $, num, toast, hintIcon, mount } from "./dom.js";
+import { html, nothing, unsafeHTML } from "./lit.js";
 import { getJSON, postJSON } from "./net.js";
 import { curData } from "./state.js";
 
@@ -90,9 +91,9 @@ export async function openShipEquip() {
   if (!ov) return;
   $("seTitle").textContent = ship ? `Ship equipment — ${ship}` : "Ship equipment";
   $("seMsg").textContent = ""; $("seMsg").className = "sp-msg";
-  $("seBody").innerHTML = `<div class="sp-row"><span class="h">loading…</span></div>`;
+  mount("seBody", html`<div class="sp-row"><span class="h">loading…</span></div>`);
   ov.classList.remove("hide"); ov.setAttribute("aria-hidden", "false");
-  if (!ship) { $("seBody").innerHTML = `<div class="sp-row"><span class="h">No ship selected.</span></div>`; return; }
+  if (!ship) { mount("seBody", html`<div class="sp-row"><span class="h">No ship selected.</span></div>`); return; }
   try {
     await ensureGear();                                  // keep the global cache fresh too
     const r = await getJSON(`/api/mining-gear?ship=${encodeURIComponent(ship)}`);
@@ -109,7 +110,7 @@ export async function openShipEquip() {
     };
     renderEquip();
   } catch (e) {
-    $("seBody").innerHTML = `<div class="sp-row"><span class="h">couldn't load gear: ${esc(e)}</span></div>`;
+    mount("seBody", html`<div class="sp-row"><span class="h">couldn't load gear: ${String(e)}</span></div>`);
   }
 }
 
@@ -129,11 +130,10 @@ function _hardpointSummary(hp) {
 }
 
 function _headOption(h, best) {
-  const sel = h.class === EDIT.head ? " selected" : "";
   const star = _headScore(h) >= best - 1e-9 ? "★ " : "";
   const res = (h.modifiers || {}).resistance;
   const resTxt = res ? `, ${res > 0 ? "+" : ""}${res}% resist` : "";
-  return `<option value="${esc(h.class)}"${sel}>${star}${esc(h.name)} — S${h.size}, ${num(h.power)} power${resTxt}, ${h.module_slots} slot${h.module_slots === 1 ? "" : "s"}</option>`;
+  return html`<option value=${h.class} ?selected=${h.class === EDIT.head}>${star}${h.name} — S${h.size}, ${num(h.power)} power${resTxt}, ${h.module_slots} slot${h.module_slots === 1 ? "" : "s"}</option>`;
 }
 
 function _moduleOptions(picked, head) {
@@ -143,25 +143,24 @@ function _moduleOptions(picked, head) {
     .sort((a, b) => (a.active ? 1 : 0) - (b.active ? 1 : 0) || score(b) - score(a));
   const passiveScores = cat.filter(m => !m.active).map(score);
   const best = passiveScores.length ? Math.max(...passiveScores) : -Infinity;
-  const opts = [`<option value="">— none —</option>`];
+  const opts = [html`<option value="">— none —</option>`];
   for (const m of cat) {
     const star = (!m.active && best > 0 && score(m) >= best - 1e-9) ? "★ " : "";
-    opts.push(`<option value="${esc(m.class)}"${m.class === picked ? " selected" : ""}>${star}${esc(m.name)} (${esc(m.manufacturer_code || "")})</option>`);
+    opts.push(html`<option value=${m.class} ?selected=${m.class === picked}>${star}${m.name} (${m.manufacturer_code || ""})</option>`);
   }
-  return opts.join("");
+  return opts;
 }
 
 function _radarOption(r, bestRs, stock) {
-  const sel = r.class === EDIT.radar ? " selected" : "";
   const star = r.rs >= bestRs - 1e-9 ? "★ " : "";
   const isStock = stock && r.class.toLowerCase() === stock ? " · stock" : "";
-  return `<option value="${esc(r.class)}"${sel}>${star}${esc(r.name)} (${esc(r.manufacturer_code || "")}) — RS ${Math.round((r.rs || 0) * 100)}%${isStock}</option>`;
+  return html`<option value=${r.class} ?selected=${r.class === EDIT.radar}>${star}${r.name} (${r.manufacturer_code || ""}) — RS ${Math.round((r.rs || 0) * 100)}%${isStock}</option>`;
 }
 
 function renderEquip() {
   if (!EDIT.hardpoints.length) {
-    $("seBody").innerHTML = `<div class="sp-row"><span class="h">This ship has no
-      ship-mounted mining-laser hardpoints — its mining gear isn't configurable here.</span></div>`;
+    mount("seBody", html`<div class="sp-row"><span class="h">This ship has no
+      ship-mounted mining-laser hardpoints — its mining gear isn't configurable here.</span></div>`);
     return;
   }
   EDIT.modules_catalog = GEAR.modules;
@@ -169,50 +168,54 @@ function renderEquip() {
   const slots = head ? head.module_slots : 0;
   // Trim any saved modules beyond the current head's slot count.
   EDIT.modules = EDIT.modules.slice(0, slots);
-  // One equipment category for now (Mining); the popup is generic so others can follow.
-  let html = `<h3 class="se-cat">Mining</h3>`;
-  html += `<div class="se-rec"><button type="button" class="se-rec-btn" onclick="applyRecommendedGear()">★ Apply recommended</button>
-    <span class="mn-dim">best head, modules &amp; radar for this ship</span></div>`;
-  html += `<div class="se-hp">Mining hardpoints: <b>${_hardpointSummary(EDIT.hardpoints)}</b></div>`;
   // Heads ranked by effective extraction power (best first; ★ = top).
   const heads = [...EDIT.heads].sort((a, b) => _headScore(b) - _headScore(a));
   const headBest = heads.length ? _headScore(heads[0]) : -Infinity;
-  html += `<div class="sp-row"><div class="sp-label"><span class="t">Mining laser ${hintIcon("The head fitted to your mining turret. Ranked by effective extraction power.")}</span></div>
-    <div class="sp-ctl"><select id="se-head" onchange="seHeadChange()">
-      <option value="">— none —</option>${heads.map(h => _headOption(h, headBest)).join("")}</select></div></div>`;
-  if (EDIT.fixed_head) {
-    html += `<div class="se-note mn-dim">This ship has a <b>bespoke, non-swappable</b> mining head${
-      heads[0] ? ` (${esc(heads[0].name)})` : ""} — modules &amp; radar are still your choice.</div>`;
-  }
+  // Module slot rows (one <select> per slot the fitted head exposes).
+  const moduleRows = [];
   for (let i = 0; i < slots; i++) {
-    html += `<div class="sp-row"><div class="sp-label"><span class="t">Module ${i + 1} ${hintIcon("A gadget slotted into the head. Ranked by how much it helps THIS head (a tight-window head favours window modules; a wide-window head favours power).")}</span></div>
-      <div class="sp-ctl"><select id="se-mod-${i}" onchange="seModuleChange()">
-        ${_moduleOptions(EDIT.modules[i] || "", head)}</select></div></div>`;
+    moduleRows.push(html`<div class="sp-row"><div class="sp-label"><span class="t">Module ${i + 1} ${unsafeHTML(hintIcon("A gadget slotted into the head. Ranked by how much it helps THIS head (a tight-window head favours window modules; a wide-window head favours power)."))}</span></div>
+      <div class="sp-ctl"><select id="se-mod-${i}" @change=${seModuleChange}>
+        ${_moduleOptions(EDIT.modules[i] || "", head)}</select></div></div>`);
   }
   // Radar slot: ranked by resource-signature (RS); only shown when the ship has a radar slot
   // and the catalog has matching radars.
+  let radarBlock = nothing;
   if (EDIT.radars && EDIT.radars.length) {
     const radars = [...EDIT.radars].sort(_radarSort);
     const bestRs = radars[0].rs;
     const stock = ((EDIT.radar_slot || {}).stock || "").toLowerCase();
     const tied = radars.filter(r => r.rs >= bestRs - 1e-9).length;
-    html += `<div class="sp-row"><div class="sp-label"><span class="t">Radar ${hintIcon("Sets how far off you can read a deposit's composition (resource signature, RS). Minor for mining.")}</span></div>
-      <div class="sp-ctl"><select id="se-radar" onchange="seRadarChange()">
-        <option value="">— none —</option>${radars.map(r => _radarOption(r, bestRs, stock)).join("")}</select></div></div>`;
-    html += `<div class="se-note mn-dim">Radar barely affects mining — it only sets how far off a deposit's
+    radarBlock = html`<div class="sp-row"><div class="sp-label"><span class="t">Radar ${unsafeHTML(hintIcon("Sets how far off you can read a deposit's composition (resource signature, RS). Minor for mining."))}</span></div>
+      <div class="sp-ctl"><select id="se-radar" @change=${seRadarChange}>
+        <option value="">— none —</option>${radars.map(r => _radarOption(r, bestRs, stock))}</select></div></div>
+    <div class="se-note mn-dim">Radar barely affects mining — it only sets how far off a deposit's
       composition is readable (RS). ${tied > 1 ? `${tied} radars tie at the top (RS ${Math.round(bestRs * 100)}%); pick any.` : ""}
       The head + modules drive yield.</div>`;
   }
+  // Per-loadout stat lines: the laser's own modifiers, then each fitted module's additions
+  // stacked beneath it, so the combined effect of the loadout is readable at a glance.
+  let statLines = nothing;
   if (head) {
-    // The laser's own modifiers, then each fitted module's additions stacked beneath it,
-    // so the combined effect of the loadout is readable at a glance.
-    html += _statLine(head.name, head.modifiers, "no inherent modifiers");
+    statLines = [_statLine(head.name, head.modifiers, "no inherent modifiers")];
     for (const cls of EDIT.modules) {
       const mod = _moduleByClass(cls);
-      if (mod) html += _statLine(mod.name, mod.modifiers, "no effect");
+      if (mod) statLines.push(_statLine(mod.name, mod.modifiers, "no effect"));
     }
   }
-  $("seBody").innerHTML = html;
+  // One equipment category for now (Mining); the popup is generic so others can follow.
+  mount("seBody", html`<h3 class="se-cat">Mining</h3>
+    <div class="se-rec"><button type="button" class="se-rec-btn" @click=${applyRecommendedGear}>★ Apply recommended</button>
+      <span class="mn-dim">best head, modules & radar for this ship</span></div>
+    <div class="se-hp">Mining hardpoints: <b>${_hardpointSummary(EDIT.hardpoints)}</b></div>
+    <div class="sp-row"><div class="sp-label"><span class="t">Mining laser ${unsafeHTML(hintIcon("The head fitted to your mining turret. Ranked by effective extraction power."))}</span></div>
+      <div class="sp-ctl"><select id="se-head" @change=${seHeadChange}>
+        <option value="">— none —</option>${heads.map(h => _headOption(h, headBest))}</select></div></div>
+    ${EDIT.fixed_head ? html`<div class="se-note mn-dim">This ship has a <b>bespoke, non-swappable</b> mining head${
+      heads[0] ? ` (${heads[0].name})` : ""} — modules & radar are still your choice.</div>` : nothing}
+    ${moduleRows}
+    ${radarBlock}
+    ${statLines}`);
 }
 
 // One "Name: stat +x% · stat -y%" line for a head or module's modifier map.
@@ -221,7 +224,7 @@ function _statLine(name, modifiers, emptyText) {
   const body = Object.keys(mods).length
     ? Object.entries(mods).map(([k, v]) => `${k.replace(/_/g, " ")} ${v > 0 ? "+" : ""}${v}%`).join(" · ")
     : emptyText;
-  return `<div class="se-note mn-dim"><b>${esc(name)}</b>: ${esc(body)}</div>`;
+  return html`<div class="se-note mn-dim"><b>${name}</b>: ${body}</div>`;
 }
 
 // Head change: re-read the pick, reset modules that no longer fit, re-render the slot rows.
@@ -289,7 +292,5 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && $("shipEquipOverlay") && !$("shipEquipOverlay").classList.contains("hide")) closeShipEquip();
 });
 
-// Self-bridge inline handlers (matches the jukebox/archive convention; the static
-// tests/test_window_bridge.py guard unions every Object.assign(window,…) block).
-Object.assign(window, { openShipEquip, closeShipEquip, seHeadChange, seModuleChange,
-  seRadarChange, applyRecommendedGear, saveShipEquip });
+// No window bridge: this popup's handlers are lit @-bindings, and openShipEquip is now
+// imported + @click-bound by its callers (app.js header, mining.js feasibility row).

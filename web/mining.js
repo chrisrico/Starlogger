@@ -5,10 +5,11 @@
 // it still imports (mineralUnion/elBadge/mechHtml/feasibilityHtml) are exported from here. The
 // rest of the dashboard only calls initMining() (on tab open) and the bridged inline handlers
 // (miningSub + the find/plan/bp actions).
-import { $, esc, num, val, th, tag, setHTML, logTable, tabBar, hintIcon } from "./dom.js";
+import { $, esc, num, val, th, tag, mount, logTable, tabBarTpl, hintIcon } from "./dom.js";
+import { html, render, nothing, unsafeHTML } from "./lit.js";
 import { getJSON, writeHeaders } from "./net.js";
 import { registerCombo, comboInputHtml } from "./combobox.js";
-import { ensureGear, currentLoadout, gearCatalog } from "./shipequip.js";
+import { ensureGear, currentLoadout, gearCatalog, openShipEquip } from "./shipequip.js";
 // feasibility()/suggestCrack() are globals from the classic /feasibility.js script (loaded
 // before app.js), shared with the Node unit test — same pattern as cargogrid.js's window.*.
 const { feasibility, suggestCrack } = window;
@@ -63,8 +64,8 @@ export async function initMining() {
     // Re-rank the current Find results when the ship loadout changes (popup save) — it surfaces
     // the minability of the equipped ship.
     document.addEventListener("loadout-changed", () => {
-      if (FIND_LAST) setHTML("mres-find", FIND_LAST.index
-        ? indexResultHtml(FIND_LAST.index) : findResultHtml(FIND_LAST));
+      if (FIND_LAST) mount(mresId("find"), FIND_LAST.index
+        ? indexResultTpl(FIND_LAST.index) : findResultTpl(FIND_LAST));
     });
     document.addEventListener("click", (e) => {   // close an open column-filter dropdown
       if (!e.target.closest("#bp-fpop") && !e.target.closest(".bp-fbtn")) _bpFclose();
@@ -87,26 +88,28 @@ export function miningSub(sub) {
   // sole place this runs.)
   if (location.hash.slice(1) !== sub) history.replaceState(null, "", location.pathname + "#" + sub);
   if (!$("msub-" + sub)) { renderMiningShell(); return; }
-  document.querySelectorAll("#mining .arch-tab").forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
+  // The bar buttons are rendered in SUB_ORDER; mark the active one (tabBarTpl emits no
+  // data-sub, so match by index — the strip is mounted once, then toggled imperatively).
+  const i = SUB_ORDER.indexOf(sub);
+  document.querySelectorAll("#mining .arch-tabs .arch-tab").forEach((b, j) => b.classList.toggle("active", j === i));
   document.querySelectorAll("#mining .msub").forEach(el => el.classList.toggle("hide", el.id !== "msub-" + sub));
 }
 // The active sub's results container — every tool repaints into its own #mres-<sub>.
-const mres = () => "mres-" + MINING_SUB;
+const mresId = (sub) => "mres-" + sub;
+const mres = () => mresId(MINING_SUB);
 
 const _pct = (x) => (x == null ? "?" : Math.round(x));
 const _chance = (p) => (p == null ? "" : Math.round(p * 100) + "%");
 
+const SUB_ORDER = ["find", "plan"];
 function renderMiningShell() {
-  const subs = [["find", "Find mineral", findToolHtml], ["plan", "Blueprint plan", planToolHtml]];
-  // Same underlined sub-tab strip as the Archive tab, with a data-sub on each button so
-  // miningSub() can toggle .active without a rebuild.
-  const bar = tabBar(subs, MINING_SUB, "miningSub", { attr: k => `data-sub="${k}"` });
+  const subs = [["find", "Find mineral", findToolTpl], ["plan", "Blueprint plan", planToolTpl]];
+  // Same underlined sub-tab strip as the Archive tab; miningSub() toggles .active without a rebuild.
+  const bar = tabBarTpl(subs.map(([k, t]) => [k, t]), MINING_SUB, miningSub);
   // Each sub-tool + its own results live in a .msub section; only the active one shows.
-  const sections = subs.map(([k, , toolFn]) =>
-    `<div class="msub${MINING_SUB === k ? "" : " hide"}" id="msub-${k}">${toolFn()}<div id="mres-${k}" class="mres"></div></div>`).join("");
-  const datalist = `<datalist id="dl_mineral">${(MINING_MINERALS || [])
-      .map(m => `<option value="${esc(m)}">`).join("")}</datalist>`;
-  setHTML("mining", `${datalist}<div class="mining">
+  const sections = subs.map(([k, , toolFn]) => html`<div class="msub${MINING_SUB === k ? "" : " hide"}" id="msub-${k}">${toolFn()}<div id="mres-${k}" class="mres"></div></div>`);
+  const datalist = html`<datalist id="dl_mineral">${(MINING_MINERALS || []).map(m => html`<option value=${m}></option>`)}</datalist>`;
+  mount("mining", html`${datalist}<div class="mining">
     ${bar}
     ${sections}
   </div>`);
@@ -180,21 +183,22 @@ function equippedLoadout() {
 // The feasibility row for an Identify candidate card: "" when the current ship isn't a miner
 // or has no rock mechanics; a "set up gear" nudge when it's a miner with nothing fitted; else
 // a coloured verdict pill + the contributing factors. Uses the first rock that carries mechanics.
+// Returns a lit template (signal.js renders it directly). feasPill/suggestHtml are still
+// handler-free string helpers → unsafeHTML; the ⚙ button binds @click=${openShipEquip} now.
 export function feasibilityHtml(rocks) {
   const lo = currentLoadout();
-  if (!lo || !lo.isMiningShip) return "";          // only meaningful for the equipped mining ship
+  if (!lo || !lo.isMiningShip) return nothing;       // only meaningful for the equipped mining ship
   const m = (rocks || []).map(r => r.mechanics).find(Boolean);
-  if (!m) return "";
+  if (!m) return nothing;
   if (!lo.head) {
-    return `<div class="mrow"><span class="mk">your ship</span>
-      <div class="mels"><button class="feas-setup" onclick="openShipEquip()">⚙ set up mining gear</button></div></div>`;
+    return html`<div class="mrow"><span class="mk">your ship</span>
+      <div class="mels"><button class="feas-setup" @click=${openShipEquip}>⚙ set up mining gear</button></div></div>`;
   }
   const f = feasibility(m, lo.head, lo.modules);
-  if (!f) return "";
-  return `<div class="mrow"><span class="mk">your ship</span>
-    <div class="mels">${feasPill(f)}
-      <span class="mn-dim feas-factors">${esc(f.factors.join(" · "))}</span></div></div>`
-    + (f.tier === "no" ? suggestHtml(m, lo) : "");
+  if (!f) return nothing;
+  return html`<div class="mrow"><span class="mk">your ship</span>
+    <div class="mels">${unsafeHTML(feasPill(f))}
+      <span class="mn-dim feas-factors">${f.factors.join(" · ")}</span></div></div>${f.tier === "no" ? unsafeHTML(suggestHtml(m, lo)) : nothing}`;
 }
 
 // When the equipped gear can't crack a rock, suggest a laser/module combo that would (within
@@ -222,31 +226,33 @@ function suggestHtml(mech, lo) {
 }
 
 // ---- Find: mineral → RS to scan for + ranked source rocks (+ browse all) ---- //
-function findToolHtml() {
-  return `<div class="card mtool"><h3><span>Mineral → where to mine ${hintIcon(
-      "Shows the RS value(s) to scan for and the richest source rocks, ranked by probability × yield.")}</span></h3>
+function findToolTpl() {
+  return html`<div class="card mtool"><h3><span>Mineral → where to mine ${unsafeHTML(hintIcon(
+      "Shows the RS value(s) to scan for and the richest source rocks, ranked by probability × yield."))}</span></h3>
     <div class="mform">
       <input id="mf-name" list="dl_mineral" placeholder="e.g. Bexalite" autocomplete="off"
-        aria-label="Mineral name" onkeydown="if(event.key==='Enter')miningFind()">
-      <button class="primary" onclick="miningFind()">Find</button>
-      <button onclick="miningIndex()">Browse all</button>
+        aria-label="Mineral name" @keydown=${e => { if (e.key === "Enter") miningFind(); }}>
+      <button class="primary" @click=${() => miningFind()}>Find</button>
+      <button @click=${() => miningIndex()}>Browse all</button>
     </div>
   </div>`;
 }
 export async function miningFind() {
   const name = val("mf-name").trim();
-  if (!name) { setHTML(mres(), `<div class="empty">Enter or pick a mineral.</div>`); return; }
-  setHTML(mres(), `<div class="empty">searching…</div>`);
+  if (!name) { mount(mres(), html`<div class="empty">Enter or pick a mineral.</div>`); return; }
+  mount(mres(), html`<div class="empty">searching…</div>`);
   try {
     const r = await fetch(`/api/mineral-lookup?name=${encodeURIComponent(name)}`).then(x => x.json());
     FIND_LAST = r;
-    setHTML(mres(), findResultHtml(r));
-  } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
+    mount(mres(), findResultTpl(r));
+  } catch (e) { mount(mres(), html`<div class="empty">lookup failed</div>`); }
 }
 // Location tags share ONE theme across two axes: colour = WHERE (cyan = planetary surface,
 // amber = space asteroid field / belt / Lagrange), and the row lead = HOW (Ship / Hand / ROC).
 // Attached by the server to mineral-lookup + mining-plan as
 // `locations:[{place,system,kind,method,rarity?,points?}]`. `locKey()` renders the legend.
+// Kept as STRING helpers (pure markup, no event handlers): app.js consumes them via unsafeHTML,
+// and inside this module they're wrapped in unsafeHTML(...) wherever they land in a lit template.
 const METHOD_LABEL = { ship: "Ship", hand: "Hand", ground: "ROC" };
 const METHOD_ORDER = ["ship", "hand", "ground"];
 
@@ -302,16 +308,16 @@ export function locKey() {
     sw("mloc-sw-field", "Space — field / Lagrange") +
     `<span class="mloc-kc mloc-key-how">${how}<span class="mn-dim">mining method</span></span></div>`;
 }
-function findResultHtml(r) {
+function findResultTpl(r) {
   // No ship-mineable source rock — but it may still be mined directly (hand cave gem / ROC ore).
   // Show where it IS mineable + the key, instead of a dead "no rock" message.
   if (!r.rocks || !r.rocks.length) {
     if (!r.locations || !r.locations.length)
-      return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
-    return `<div class="card">
-      <div class="mscan-note mn-dim">No ship-mineable rock yields ${esc(r.mineral)} — it's mined directly:</div>
-      ${locChips(r.locations)}
-      ${locKey()}</div>`;
+      return html`<div class="empty">No rock yields “${r.mineral}”.</div>`;
+    return html`<div class="card">
+      <div class="mscan-note mn-dim">No ship-mineable rock yields ${r.mineral} — it's mined directly:</div>
+      ${unsafeHTML(locChips(r.locations))}
+      ${unsafeHTML(locKey())}</div>`;
   }
   const sigs = (r.signatures || []).map(s => `<span class="mscan-rs">${num(s)}</span>`).join("");
   // With the current ship's gear, judge each source rock's minability and rank by it (best
@@ -325,31 +331,32 @@ function findResultHtml(r) {
     <td class="lt-num">${_pct(x.min_pct)}–${_pct(x.max_pct)}%</td>
     <td class="lt-num">${_chance(x.probability)}</td><td class="lt-num">${x.score}</td></tr>`).join("");
   const note = lo
-    ? `<div class="mscan-note mn-dim">Ranked by minability with <b>${esc(lo.ship)}</b> — ${esc(lo.head.name)}${lo.modules.length ? " + " + lo.modules.map(m => esc(m.name)).join(", ") : ""}</div>`
-    : `<div class="mscan-note mn-dim">Pick a mining ship + gear (⚙) to rank these by minability.</div>`;
-  return `<div class="card">
+    ? html`<div class="mscan-note mn-dim">Ranked by minability with <b>${lo.ship}</b> — ${lo.head.name}${lo.modules.length ? " + " + lo.modules.map(m => m.name).join(", ") : ""}</div>`
+    : html`<div class="mscan-note mn-dim">Pick a mining ship + gear (⚙) to rank these by minability.</div>`;
+  const table = logTable(
+    (lo ? th("Mine", false, "Minability with your current ship's mining gear") : "") +
+    th("RS", true, "Radar signature a single rock of this type reads") +
+    th("Rock", false, "The mineable rock / deposit type") +
+    th("Yield %", true, `Percentage of ${esc(r.mineral)} in the rock (min–max)`) +
+    th("Chance", true, "Probability a rock of this type actually contains it") +
+    th("Score", true, "Source ranking = probability × yield (higher is a better source)"),
+    rows, "");
+  return html`<div class="card">
     <div class="mscan"><span class="mscan-k">Scan for</span>
-      <div class="mscan-vals">${sigs || '<span class="mn-dim">—</span>'}</div></div>
+      <div class="mscan-vals">${sigs ? unsafeHTML(sigs) : html`<span class="mn-dim">—</span>`}</div></div>
     ${note}
-    ${locChips(r.locations)}
-    ${r.locations && r.locations.length ? locKey() : ""}
-    ${logTable(
-      (lo ? th("Mine", false, "Minability with your current ship's mining gear") : "") +
-      th("RS", true, "Radar signature a single rock of this type reads") +
-      th("Rock", false, "The mineable rock / deposit type") +
-      th("Yield %", true, `Percentage of ${esc(r.mineral)} in the rock (min–max)`) +
-      th("Chance", true, "Probability a rock of this type actually contains it") +
-      th("Score", true, "Source ranking = probability × yield (higher is a better source)"),
-      rows, "")}
+    ${unsafeHTML(locChips(r.locations))}
+    ${r.locations && r.locations.length ? unsafeHTML(locKey()) : nothing}
+    ${unsafeHTML(table)}
   </div>`;
 }
 export async function miningIndex() {
-  setHTML(mres(), `<div class="empty">loading…</div>`);
+  mount(mres(), html`<div class="empty">loading…</div>`);
   try {
     const r = await fetch("/api/mineral-index").then(x => x.json());
     FIND_LAST = { index: r.minerals || [] };           // re-rank on loadout change
-    setHTML(mres(), indexResultHtml(r.minerals || []));
-  } catch (e) { setHTML(mres(), `<div class="empty">load failed</div>`); }
+    mount(mres(), indexResultTpl(r.minerals || []));
+  } catch (e) { mount(mres(), html`<div class="empty">load failed</div>`); }
 }
 // A mineral's minability = the feasibility of its EASIEST source. Sources now differ in
 // break difficulty (a mixed asteroid is harder than the pure surface deposit of the same
@@ -362,8 +369,8 @@ function mineralFeas(m, lo) {
     .filter(Boolean);
   return fs.length ? fs.reduce((a, b) => (feasOrder(b) < feasOrder(a) ? b : a)) : null;
 }
-function indexResultHtml(minerals) {
-  if (!minerals.length) return `<div class="empty">No mineral data.</div>`;
+function indexResultTpl(minerals) {
+  if (!minerals.length) return html`<div class="empty">No mineral data.</div>`;
   const lo = equippedLoadout();
   const list = minerals.map(m => ({ ...m, _f: mineralFeas(m, lo) }));
   // Rank by minability (best first), then mineral name; without gear keep the A–Z order.
@@ -375,16 +382,17 @@ function indexResultHtml(minerals) {
     <td>${m.rocks.slice(0, 4).map(x => esc(x.name)).join("; ")}${m.rocks.length > 4 ? ` <span class="mn-dim">…+${m.rocks.length - 4}</span>` : ""}</td>
   </tr>`).join("");
   const note = lo
-    ? `<div class="mscan-note mn-dim">Ranked by minability with <b>${esc(lo.ship)}</b> — ${esc(lo.head.name)}${lo.modules.length ? " + " + lo.modules.map(x => esc(x.name)).join(", ") : ""}</div>`
-    : `<div class="mscan-note mn-dim">Pick a mining ship + gear (⚙) to rank these by minability.</div>`;
-  return `<div class="card"><h3><span>All minerals → source rocks</span><span class="scu">${minerals.length}</span></h3>` +
-    note +
-    logTable(
-      (lo ? th("Mine", false, "Minability of this mineral's best source with your current gear") : "") +
-      th("Mineral", false, "The refined mineral") +
-      th("RS to scan", false, "Radar signature value(s) whose rocks can contain it") +
-      th("Best sources", false, "The richest source rocks for this mineral"),
-      rows, "") + `</div>`;
+    ? html`<div class="mscan-note mn-dim">Ranked by minability with <b>${lo.ship}</b> — ${lo.head.name}${lo.modules.length ? " + " + lo.modules.map(x => x.name).join(", ") : ""}</div>`
+    : html`<div class="mscan-note mn-dim">Pick a mining ship + gear (⚙) to rank these by minability.</div>`;
+  const table = logTable(
+    (lo ? th("Mine", false, "Minability of this mineral's best source with your current gear") : "") +
+    th("Mineral", false, "The refined mineral") +
+    th("RS to scan", false, "Radar signature value(s) whose rocks can contain it") +
+    th("Best sources", false, "The richest source rocks for this mineral"),
+    rows, "");
+  return html`<div class="card"><h3><span>All minerals → source rocks</span><span class="scu">${minerals.length}</span></h3>
+    ${note}
+    ${unsafeHTML(table)}</div>`;
 }
 
 // ---- Plan: the blueprint build table ---- //
@@ -401,19 +409,24 @@ const _bpNum = (k) => k === "size";
 const _bpRA = (k) => _bpNum(k) || k === "quality";   // right-align the numeric-ish columns
 const _bpCell = (b, k) => { const v = b[k]; return (v === "" || v == null) ? "" : String(v); };
 
-function blueprintTableHtml() {
+// The blueprint table is built as a lit template, but its rows are then driven imperatively
+// (sort reorders DOM rows, the column filters toggle row style.display, the qty inputs update
+// in place) — exactly like salvage.js's picker. The static data-col/data-i attributes and the
+// .bp-prow/.bp-qin/.bp-on hooks the handlers re-read off the live DOM are preserved; only the
+// inline on* triggers became @-bindings.
+function blueprintTableTpl() {
   const head = BP_COLS.map(c =>
-    `<th data-col="${c.key}"${_bpRA(c.key) ? ' class="lt-num"' : ""}><span class="bp-h" onclick="bpSort('${c.key}')">${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span>${c.key === "name" ? "" : `<button class="bp-fbtn" title="Filter ${c.label}" onclick="bpFilterOpen(event,'${c.key}')"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg></button>`}</th>`
-  ).join("") + `<th class="lt-num" data-col="qty">Qty<button class="bp-fbtn" title="Show only rows with a quantity (Qty > 0)" onclick="bpQtyFilter(event)"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg></button></th>`;
+    html`<th data-col=${c.key} class=${_bpRA(c.key) ? "lt-num" : ""}><span class="bp-h" @click=${() => bpSort(c.key)}>${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span>${c.key === "name" ? nothing : html`<button class="bp-fbtn" title=${`Filter ${c.label}`} @click=${e => bpFilterOpen(e, c.key)}>${unsafeHTML('<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg>')}</button>`}</th>`);
+  const qhead = html`<th class="lt-num" data-col="qty">Qty<button class="bp-fbtn" title="Show only rows with a quantity (Qty > 0)" @click=${e => bpQtyFilter(e)}>${unsafeHTML('<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg>')}</button></th>`;
   const rows = (MINING_BLUEPRINTS || []).map((b, i) => {
     const q = BP_QTY[b.name] || 0;
     const cells = BP_COLS.map(c => {
       const v = _bpCell(b, c.key);
-      return `<td${_bpRA(c.key) ? ' class="lt-num"' : ""}>${c.key === "name" ? `<b>${esc(v)}</b>` : esc(v)}</td>`;
-    }).join("");
-    return `<tr class="bp-prow${q ? " bp-on" : ""}" data-i="${i}" onclick="bpRowClick(event,${i})">${cells}<td class="bp-qcell" onclick="event.stopPropagation()"><button class="bp-step" aria-label="One fewer" onclick="bpStep(${i},-1)">−</button><input type="number" min="0" class="bp-qin" value="${q}" aria-label="Quantity of ${esc(b.name)}" oninput="bpQtyInput(${i},this.value)"><button class="bp-step" aria-label="One more" onclick="bpStep(${i},1)">+</button></td></tr>`;
-  }).join("");
-  return `<table class="logtable bp-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+      return html`<td class=${_bpRA(c.key) ? "lt-num" : ""}>${c.key === "name" ? html`<b>${v}</b>` : v}</td>`;
+    });
+    return html`<tr class="bp-prow${q ? " bp-on" : ""}" data-i=${i} @click=${e => bpRowClick(e, i)}>${cells}<td class="bp-qcell" @click=${e => e.stopPropagation()}><button class="bp-step" aria-label="One fewer" @click=${() => bpStep(i, -1)}>−</button><input type="number" min="0" class="bp-qin" .value=${String(q)} aria-label=${`Quantity of ${b.name}`} @input=${e => bpQtyInput(i, e.target.value)}><button class="bp-step" aria-label="One more" @click=${() => bpStep(i, 1)}>+</button></td></tr>`;
+  });
+  return html`<table class="logtable bp-table"><thead><tr>${head}${qhead}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 // ---- Shipbuilder: outfit a whole ship's components to a chosen class in one click ---- //
 // Pick a ship + a component class; /api/ship-build returns the Grade-A blueprints to craft each
@@ -432,28 +445,29 @@ function _sbRegister() {
   if (_sbReg) return; _sbReg = true;
   registerCombo("sb-ship", { entries: _sbMatches, onPick: (name) => { SB_SHIP = name; }, reset: () => SB_SHIP });
 }
-function shipbuilderHtml() {
+function shipbuilderTpl() {
   _sbRegister();
-  const types = SB_CLASSES.map(c => `<option value="${c}"${c === "Military" ? " selected" : ""}>${c}</option>`).join("");
-  return `<div class="sb-bar">
-    <span class="sb-lbl">Outfit a ship ${hintIcon(
+  const types = SB_CLASSES.map(c => html`<option value=${c} ?selected=${c === "Military"}>${c}</option>`);
+  const box = comboInputHtml("sb-ship", { value: SB_SHIP, placeholder: "search ship…", label: "Ship to outfit", cls: "sb-box" });
+  return html`<div class="sb-bar">
+    <span class="sb-lbl">Outfit a ship ${unsafeHTML(hintIcon(
       "Pick a ship and a component class — this sets the Grade-A blueprints to craft each of its " +
       "components (power plant, cooler, shield, quantum drive, radar) to that class. Where a class " +
-      "doesn't make a part that size, the closest class fills it; sizes with no blueprint are flagged.")}</span>
-    ${comboInputHtml("sb-ship", { value: SB_SHIP, placeholder: "search ship…", label: "Ship to outfit", cls: "sb-box" })}
+      "doesn't make a part that size, the closest class fills it; sizes with no blueprint are flagged."))}</span>
+    ${box}
     <select id="sb-type" class="sb-sel" aria-label="Component class">${types}</select>
-    <button class="sb-go" onclick="bpBuildShip()">Add builds</button>
+    <button class="sb-go" @click=${() => bpBuildShip()}>Add builds</button>
     <span id="sb-status" class="sb-status" role="status"></span>
   </div>`;
 }
-function planToolHtml() {
-  return `<div class="card mtool"><h3><span>Blueprints ${hintIcon(
+function planToolTpl() {
+  return html`<div class="card mtool"><h3><span>Blueprints ${unsafeHTML(hintIcon(
       "Every craftable blueprint. Filter any column (multi-select, like a spreadsheet), click a header " +
       "to sort, click a row to toggle it on, and set a quantity. Materials are summed below across " +
-      "everything with a quantity, then ranked by deposit coverage.")}</span>
-      <button class="bp-clear" onclick="bpClearList()" title="Reset every quantity to 0">Clear</button></h3>
-    ${shipbuilderHtml()}
-    <div class="bp-pick"${BP_H ? ` style="height:${BP_H}px"` : ""}>${blueprintTableHtml()}</div>
+      "everything with a quantity, then ranked by deposit coverage."))}</span>
+      <button class="bp-clear" @click=${() => bpClearList()} title="Reset every quantity to 0">Clear</button></h3>
+    ${shipbuilderTpl()}
+    <div class="bp-pick" style=${BP_H ? `height:${BP_H}px` : ""}>${blueprintTableTpl()}</div>
   </div>`;
 }
 let _bpTimer = 0;
@@ -552,6 +566,9 @@ const _bpDistinct = (col) => {
   return vals;
 };
 let _bpFcol = null;
+// The filter popup is imperative DOM (a body-appended #bp-fpop, its inputs read back off the live
+// DOM by bpFilterToggle/bpFilterAll/bpFilterSearch) — same approach salvage.js takes for its
+// picker. Only the trigger (the funnel button) is an @-binding now.
 export function bpFilterOpen(e, col) {
   e.stopPropagation();
   let pop = $("bp-fpop");
@@ -560,8 +577,8 @@ export function bpFilterOpen(e, col) {
   _bpFcol = col;
   const ex = BP_FILTERS[col] || new Set();
   const opts = _bpDistinct(col).map(v =>
-    `<label class="bp-fopt"><input type="checkbox" value="${esc(v)}" ${ex.has(v) ? "" : "checked"} onchange="bpFilterToggle(this.checked,this.value)"><span>${v === "" ? "(blank)" : esc(v)}</span></label>`).join("");
-  pop.innerHTML = `<div class="bp-fhead"><input class="bp-fsearch" placeholder="search…" aria-label="search values" oninput="bpFilterSearch(this.value)"><label class="bp-fall"><input type="checkbox" ${ex.size ? "" : "checked"} onchange="bpFilterAll(this.checked)">All</label></div><div class="bp-fopts">${opts}</div>`;
+    html`<label class="bp-fopt"><input type="checkbox" value=${v} ?checked=${!ex.has(v)} @change=${(e) => bpFilterToggle(e.target.checked, v)}><span>${v === "" ? "(blank)" : v}</span></label>`);
+  render(html`<div class="bp-fhead"><input class="bp-fsearch" placeholder="search…" aria-label="search values" @input=${(e) => bpFilterSearch(e.target.value)}><label class="bp-fall"><input type="checkbox" ?checked=${!ex.size} @change=${(e) => bpFilterAll(e.target.checked)}>All</label></div><div class="bp-fopts">${opts}</div>`, pop);
   const r = e.currentTarget.getBoundingClientRect();
   pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 248)) + "px";
   pop.style.top = (r.bottom + 4) + "px";
@@ -615,10 +632,10 @@ async function renderBpPlan() {
   const out = "mres-plan";
   const items = Object.entries(BP_QTY).filter(([, q]) => q > 0).map(([name, qty]) => ({ name, qty }));
   if (!items.length) {
-    setHTML(out, `<div class="empty">Set a quantity on one or more blueprints to see the materials you'll need.</div>`);
+    mount(out, html`<div class="empty">Set a quantity on one or more blueprints to see the materials you'll need.</div>`);
     return;
   }
-  setHTML(out, `<div class="empty">summing materials…</div>`);
+  mount(out, html`<div class="empty">summing materials…</div>`);
   try {
     const agg = await fetch("/api/blueprints-plan", {
       method: "POST", headers: writeHeaders(), body: JSON.stringify({ items }),
@@ -626,33 +643,12 @@ async function renderBpPlan() {
     const plan = await fetch("/api/mining-plan", {
       method: "POST", headers: writeHeaders(), body: JSON.stringify({ minerals: agg.minerals || [] }),
     }).then(r => r.json());
-    setHTML(out, breakdownHtml(agg) + contractsHtml(agg) + planResultHtml(plan));
-  } catch (e) { setHTML(out, `<div class="empty">plan failed</div>`); }
-}
-// The merged shopping list: every chosen recipe's materials summed by resource.
-function breakdownHtml(agg) {
-  const rows = (agg.requirements || []).map(r => `<tr>
-    <td><b>${esc(r.resource)}</b></td>
-    <td class="lt-num">${num(r.scu)} SCU</td>
-    <td class="lt-num">${r.min_quality > 0 ? "Q≥" + r.min_quality : "—"}</td>
-    <td>${(r.from || []).map(f => tag(f.qty > 1 ? `${f.name} ×${f.qty}` : f.name)).join(" ")}</td>
-  </tr>`).join("");
-  const meta = [
-    agg.total_scu ? `${num(agg.total_scu)} SCU total` : "",
-    agg.craft_seconds ? _miningDur(agg.craft_seconds) + " craft" : "",
-  ].filter(Boolean).join(" · ");
-  return `<div class="card"><h3><span>Materials needed</span><span class="scu">${meta}</span></h3>
-    ${logTable(
-      th("Material", false, "The mineral or resource to mine and refine") +
-      th("Qty", true, "Total amount across all chosen blueprints, in SCU") +
-      th("Min quality", true, "Strictest refined quality any chosen blueprint requires (— = any)") +
-      th("For", false, "Which blueprints need this material"),
-      rows, "No materials.")}
-  </div>`;
+    mount(out, html`${breakdownTpl(agg)}${unsafeHTML(contractsHtml(agg))}${planResultTpl(plan)}`);
+  } catch (e) { mount(out, html`<div class="empty">plan failed</div>`); }
 }
 // The other half of "what do I need to build this": per chosen blueprint, the contracts that
 // reward it, grouped by the faction that grants them. `sources` rides each aggregate item; we
-// tolerate the pre-rebuild flat-string shape defensively.
+// tolerate the pre-rebuild flat-string shape defensively. Pure-markup STRING helper (no handlers).
 const _BP_SRC_CAP = 6;
 const _bpSource = (s) => (typeof s === "string") ? { faction: s, contracts: [] } : (s || {});
 function contractsHtml(agg) {
@@ -677,9 +673,31 @@ function contractsHtml(agg) {
   return `<div class="card"><h3><span>Reward contracts</span><span class="scu">where to earn these blueprints</span></h3>
     <div class="mplan-srcs">${rows}${foot}</div></div>`;
 }
-function planResultHtml(r) {
+// The merged shopping list: every chosen recipe's materials summed by resource.
+function breakdownTpl(agg) {
+  const rows = (agg.requirements || []).map(r => `<tr>
+    <td><b>${esc(r.resource)}</b></td>
+    <td class="lt-num">${num(r.scu)} SCU</td>
+    <td class="lt-num">${r.min_quality > 0 ? "Q≥" + r.min_quality : "—"}</td>
+    <td>${(r.from || []).map(f => tag(f.qty > 1 ? `${f.name} ×${f.qty}` : f.name)).join(" ")}</td>
+  </tr>`).join("");
+  const meta = [
+    agg.total_scu ? `${num(agg.total_scu)} SCU total` : "",
+    agg.craft_seconds ? _miningDur(agg.craft_seconds) + " craft" : "",
+  ].filter(Boolean).join(" · ");
+  const table = logTable(
+    th("Material", false, "The mineral or resource to mine and refine") +
+    th("Qty", true, "Total amount across all chosen blueprints, in SCU") +
+    th("Min quality", true, "Strictest refined quality any chosen blueprint requires (— = any)") +
+    th("For", false, "Which blueprints need this material"),
+    rows, "No materials.");
+  return html`<div class="card"><h3><span>Materials needed</span><span class="scu">${meta}</span></h3>
+    ${unsafeHTML(table)}
+  </div>`;
+}
+function planResultTpl(r) {
   const targets = r.targets || [];
-  if (!targets.length) return `<div class="empty">No minerals given.</div>`;
+  if (!targets.length) return html`<div class="empty">No minerals given.</div>`;
   const covRows = (r.coverage || []).slice(0, 15).map(c => `<tr>
     <td><b>${esc(c.deposit)}</b></td>
     <td class="lt-num">${c.n_covers}/${targets.length}</td>
@@ -691,13 +709,14 @@ function planResultHtml(r) {
     return `<div class="mrow"><span class="mk">${esc(p.mineral)}</span>
       <div>${best || '<span class="mn-dim">no source found</span>'}${locChips(p.locations)}</div></div>`;
   }).join("");
-  return `<div class="card"><h3><span>Best deposits — by coverage</span></h3>
-      ${logTable(
-        th("Deposit", false, "A rock deposit / cluster type you can mine") +
-        th("Covers", true, "How many of the blueprint's ingredients this deposit can yield") +
-        th("Ingredients", false, "Which of the wanted minerals it covers") +
-        th("RS", false, "Radar signature value(s) to scan for to find this deposit"),
-        covRows, "No deposit yields any of these minerals.")}
+  const covTable = logTable(
+    th("Deposit", false, "A rock deposit / cluster type you can mine") +
+    th("Covers", true, "How many of the blueprint's ingredients this deposit can yield") +
+    th("Ingredients", false, "Which of the wanted minerals it covers") +
+    th("RS", false, "Radar signature value(s) to scan for to find this deposit"),
+    covRows, "No deposit yields any of these minerals.");
+  return html`<div class="card"><h3><span>Best deposits — by coverage</span></h3>
+      ${unsafeHTML(covTable)}
     </div>
-    <div class="card"><h3><span>Per-ingredient sources</span></h3>${locKey()}<div class="mplan-srcs">${srcs}</div></div>`;
+    <div class="card"><h3><span>Per-ingredient sources</span></h3>${unsafeHTML(locKey())}<div class="mplan-srcs">${unsafeHTML(srcs)}</div></div>`;
 }

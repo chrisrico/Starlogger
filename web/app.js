@@ -1,22 +1,15 @@
 "use strict";
 
-import { $, val, esc, num, setHTML, logTable, th, tag, tabBar, toast } from "./dom.js";
+import { $, num, mount, tabBarTpl } from "./dom.js";
+import { html, nothing, repeat, unsafeHTML, ifDefined } from "./lit.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
-import {
-  initMining, miningSub, miningFind, miningIndex, locChips, locKey,
-  bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList, bpBuildShip, bpQtyFilter,
-} from "./mining.js";
-import { registerCombo, comboInputHtml, comboOpen, comboFilter, comboKey, comboBlur, comboPick } from "./combobox.js";
-import {
-  initSignal, syncSignalSession, signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
-} from "./signal.js";
-import {
-  initSalvage, renderSalvage, salvageToggle, salvagePick,
-  salvageDdOpen, salvageDdFilter, salvageDdKey,
-} from "./salvage.js";
+import { initMining, miningSub, locChips, locKey } from "./mining.js";
+import { registerCombo, comboInputHtml } from "./combobox.js";
+import { initSignal, syncSignalSession } from "./signal.js";
+import { initSalvage, renderSalvage } from "./salvage.js";
 import { initJukebox, openJukebox, closeJukebox, jukeApplyMusicState, claimJukeboxPrimary } from "./jukebox.js";
 import "./settings.js";   // side-effect: renders the Settings overlay + wires its own nav button
-import "./shipequip.js";  // side-effect: wires the ship-equipment popup + self-bridges its handlers
+import { openShipEquip } from "./shipequip.js";  // also side-effect: wires the popup + self-bridges its handlers
 import "./hint.js";       // side-effect: drives the floating tips for inline "?" help badges
 // Shared hot state (TAB / LAST / ROUTE_ORDER / REPLAY_*) + the snapshot accessor live on the
 // `S` object so the archive/stream/editor modules all mutate the same state. See state.js.
@@ -28,7 +21,13 @@ import { loadSessions, activateArchiveTab, typeMark } from "./archive.js";
 // refresh is the one-shot pull the editor reaches for after a write.
 import { connectStream, refresh } from "./stream.js";
 
-let EDIT = null;      // mission_id whose editor is open (Contracts tab)
+let EDIT = null;      // mission_id whose editor is open (Contracts tab). NOT a render guard:
+                      // the Contracts tab is lit-rendered, so renderAll repaints it on every
+                      // snapshot — lit reuses the open editor's DOM (typed-but-unsaved values
+                      // and focus survive). EDIT just says which row shows the form.
+let EDIT_DROPS = [];  // the editor's Drop-off rows, lit-managed: {id,cargo,qty,loc,hint}. Held
+let EDIT_PICKUPS = []; // here (not in the DOM) so Add/Remove and a live snapshot don't fight an
+let _legSeq = 0;      // imperative innerHTML splice; a keyed repeat reuses each row's inputs.
 let EDIT_CELL = null; // token of the open inline editor (unified, one at a time)
 
 
@@ -157,14 +156,13 @@ function setMode(m) {
 }
 function modeSwitchHtml(d) {
   const eff = effectiveMode(d);                                       // what Auto resolved to
-  return [["auto", "Auto"], ["cargo", "Cargo"], ["mining", "Mining"], ["salvage", "Salvage"]]
+  return html`${[["auto", "Auto"], ["cargo", "Cargo"], ["mining", "Mining"], ["salvage", "Salvage"]]
     .map(([k, t]) => {
       const on = MODE_OVERRIDE === k;
-      const hint = (k === "auto") ? ` <small>${eff}</small>` : "";
       const title = k === "auto" ? "Follow the detected ship / wrecks" : `Always use ${t} mode`;
-      return `<button class="modesw-opt${on ? " active" : ""}" aria-pressed="${on}"
-        title="${title}" onclick="setMode('${k}')">${t}${hint}</button>`;
-    }).join("");
+      return html`<button class="modesw-opt${on ? " active" : ""}" aria-pressed=${on}
+        title=${title} @click=${() => setMode(k)}>${t}${k === "auto" ? html` <small>${eff}</small>` : nothing}</button>`;
+    })}`;
 }
 
 // Each mode shows its own tab set: cargo keeps the hauling tabs; mining and salvage each hide
@@ -248,7 +246,7 @@ async function selectShip(name) {
 // of the top bar (#connpill), separate from the right-aligned ship/controls.
 function connPillHtml(d) {
   const online = d.logged_in;
-  return `<span class="pill ${online ? "online" : "offline"}"><span class="dot"></span>${online ? "In Verse" : "Main Menu"}</span>`;
+  return html`<span class="pill ${online ? "online" : "offline"}"><span class="dot"></span>${online ? "In Verse" : "Main Menu"}</span>`;
 }
 
 function statusHtml(d) {
@@ -256,74 +254,77 @@ function statusHtml(d) {
   // equipment category is mining gear, so the button shows only for a mining ship — extend the
   // gate (and the popup body) when other equipment types arrive.
   const equip = d.mining_ship
-    ? ` <button id="shipEquipBtn" class="ship-equip-btn" title="Ship equipment" aria-haspopup="dialog" onclick="openShipEquip()">⚙</button>`
-    : "";
+    ? html` <button id="shipEquipBtn" class="ship-equip-btn" title="Ship equipment" aria-haspopup="dialog" @click=${openShipEquip}>⚙</button>`
+    : nothing;
   if (d.boarded) {
     // crewing another player's ship — show it badged as boarded, not "detected"
-    const who = d.boarded_owner ? `${esc(d.boarded_owner)}'s ship` : "another ship";
-    return `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${equip}
-      <span class="ship-auto" title="you're aboard ${who} as crew — the manifest shows the shared haul in this hold">⚑ aboard ${who}</span></span>`;
+    const who = d.boarded_owner ? `${d.boarded_owner}'s ship` : "another ship";
+    return html`<span class="ship">SHIP <b>${d.ship || "—"}</b>${equip}
+      <span class="ship-auto" title=${`you're aboard ${who} as crew — the manifest shows the shared haul in this hold`}>⚑ aboard ${who}</span></span>`;
   }
   if (d.ship_detected) {
     // detected ship overrides the manual pick — show it locked, no searchable box
-    return `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${equip}
+    return html`<span class="ship">SHIP <b>${d.ship || "—"}</b>${equip}
       <span class="ship-auto" title="detected from the game log">● detected</span></span>`;
   }
   _registerShipCombo();
   const box = comboInputHtml("shipSel", { value: d.ship || "", placeholder: "search ship…", label: "Ship" });
-  return `<span class="ship">SHIP ${box}${equip}</span>`;
+  return html`<span class="ship">SHIP ${box}${equip}</span>`;
 }
 
 function readoutsHtml(d, mining) {
-  const stat = (k, v, cls) => `<div class="stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  // v may be a lit template (for the readouts that carry <small>/<span> markup) or a plain
+  // value (lit escapes it) — both render correctly as child content.
+  const stat = (k, v, cls) => html`<div class="stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
   if (mining) {
     // No hauling-contract metrics here — they don't apply to a mining run. We have no
     // live mining telemetry from the log, so surface the relevant context the snapshot
     // does carry: vehicle, its refined-ore hold (if any), where you are, and who.
-    const items = [["Ship", esc(d.ship || "—"), d.ship ? "accent" : ""]];
-    if (d.ship_scu) items.push(["Ore Hold", `${num(d.ship_scu)} <small>SCU</small>`, ""]);
-    items.push(["Location", esc(d.location || "—"), d.location ? "accent" : ""]);
-    items.push(["Player", esc(d.player || "—"), ""]);
-    return items.map(([k, v, cls]) => stat(k, v, cls)).join("");
+    const items = [["Ship", d.ship || "—", d.ship ? "accent" : ""]];
+    if (d.ship_scu) items.push(["Ore Hold", html`${num(d.ship_scu)} <small>SCU</small>`, ""]);
+    items.push(["Location", d.location || "—", d.location ? "accent" : ""]);
+    items.push(["Player", d.player || "—", ""]);
+    return html`${items.map(([k, v, cls]) => stat(k, v, cls))}`;
   }
   const c = d.counts;
   const items = [
-    ["Active", c.partial ? `${c.active} <span class="sub">${c.partial}⚠</span>` : c.active, "accent"],
+    ["Active", c.partial ? html`${c.active} <span class="sub">${c.partial}⚠</span>` : c.active, "accent"],
     ["Completed", c.completed, "good"],
     ["Abandoned", c.abandoned, c.abandoned ? "bad" : ""],
     ["Failed", c.failed, c.failed ? "bad" : ""],
-    ["To Deliver", `${num(d.active_scu)} <small>SCU</small>`, ""],
-    ["Earned", `${num(d.total_awarded)} <small>aUEC</small>`, ""],
-    ["Location", esc(d.location || "—"), d.location ? "accent" : ""],
-    ["Player", esc(d.player || "—"), ""],
+    ["To Deliver", html`${num(d.active_scu)} <small>SCU</small>`, ""],
+    ["Earned", html`${num(d.total_awarded)} <small>aUEC</small>`, ""],
+    ["Location", d.location || "—", d.location ? "accent" : ""],
+    ["Player", d.player || "—", ""],
   ];
   if (c.hidden) items.push(["Hidden", c.hidden, ""]);
-  return items.map(([k, v, cls]) => stat(k, v, cls)).join("");
+  return html`${items.map(([k, v, cls]) => stat(k, v, cls))}`;
 }
 
 function gaugeHtml(d, mining) {
   if (mining) {
     // The "Cargo Load" gauge tracks hauling cargo, which is meaningless here; the mining
     // vehicle's refined-ore hold has no fill we can read from the log, so show capacity
-    // only (or nothing, for hopper-only craft like the Prospector/ROC at scu 0).
-    if (!d.ship_scu) return "";
-    return `<span class="lbl">Ore Hold</span>
+    // only (or null, for hopper-only craft like the Prospector/ROC at scu 0 — renderHeader
+    // collapses #capacity when the gauge is falsy).
+    if (!d.ship_scu) return null;
+    return html`<span class="lbl">Ore Hold</span>
       <span class="remain"><b>${num(d.ship_scu)}</b> SCU capacity</span>`;
   }
   // peak simultaneous load (back-haul aware) is what must fit at once; fall back
   // to total outstanding if the server didn't send it.
   const load = (d.peak_scu != null ? d.peak_scu : d.active_scu) || 0, cap = d.ship_scu;
   if (!cap) {
-    return `<span class="lbl">Cargo Load</span>
+    return html`<span class="lbl">Cargo Load</span>
       <span class="remain"><b>${num(load)}</b> SCU outstanding${d.ship ? "" : " · awaiting ship"}</span>
       <div class="track"><div class="fill" style="width:0"></div></div>`;
   }
   const pct = Math.round(load / cap * 100);
   const over = load > cap;
   const remain = over
-    ? `<b class="over">${num(load - cap)}</b> SCU over`
-    : `<b>${num(cap - load)}</b> SCU free`;
-  return `<span class="lbl">Cargo Load</span>
+    ? html`<b class="over">${num(load - cap)}</b> SCU over`
+    : html`<b>${num(cap - load)}</b> SCU free`;
+  return html`<span class="lbl">Cargo Load</span>
     <span class="remain">${remain}</span>
     <div class="track"><div class="fill ${over ? "over" : ""}" style="width:${Math.min(100, pct)}%"></div><span class="pct">${num(load)} / ${num(cap)} SCU</span></div>`;
 }
@@ -333,45 +334,45 @@ function renderHeader(d) {
   // don't repaint the status bar while the ship search box is focused or its popup
   // is open — a poll landing mid-interaction would tear it down.
   const busy = !!(document.activeElement && document.activeElement.id === "shipSel");
-  setHTML("connpill", connPillHtml(d));   // left-aligned connection indicator; always safe to repaint
-  if (!busy) setHTML("status", statusHtml(d));
-  setHTML("modeswitch", modeSwitchHtml(d));
-  setHTML("stats", readoutsHtml(d, mining));
-  const gauge = gaugeHtml(d, mining);
-  setHTML("capacity", gauge);
+  mount("connpill", connPillHtml(d));   // left-aligned connection indicator; always safe to repaint
+  // The ship picker is still string-rendered (combobox.js not yet converted), so a repaint while
+  // it's focused would tear down the open box — keep the busy guard until combobox.js converts.
+  if (!busy) mount("status", statusHtml(d));
+  mount("modeswitch", modeSwitchHtml(d));
+  mount("stats", readoutsHtml(d, mining));
+  const gauge = gaugeHtml(d, mining);                 // a lit template, or null when there's no gauge
+  mount("capacity", gauge || nothing);
   const cap = $("capacity"); if (cap) cap.classList.toggle("hide", !gauge);  // collapse when empty
 }
 
 // ---- autocomplete catalog (cargo + station names) ---- //
 function datalistsHtml(cat) {
-  if (!cat) return "";
-  const opts = (a) => (a || []).map(v => `<option value="${esc(v)}"></option>`).join("");
-  // Tag each cargo option with its commodity category (Metal, Gas, …) from the p4k
-  // taxonomy (T1) — shown by the autocomplete where the browser supports option labels.
+  if (!cat) return nothing;
+  // Tag each cargo option with its commodity category (Metal, Gas, …) from the p4k taxonomy
+  // (T1) — shown by the autocomplete where the browser supports option labels (ifDefined omits
+  // the label attribute when there's no type).
   const types = cat.cargo_types || {};
-  const cargoOpts = (cat.cargo || []).map(v =>
-    `<option value="${esc(v)}"${types[v] ? ` label="${esc(types[v])}"` : ""}></option>`).join("");
-  return `<datalist id="dl_cargo">${cargoOpts}</datalist>` +
-         `<datalist id="dl_station">${opts(cat.stations)}</datalist>`;
+  return html`<datalist id="dl_cargo">${(cat.cargo || []).map(v =>
+        html`<option value=${v} label=${ifDefined(types[v])}></option>`)}</datalist><datalist id="dl_station">${(cat.stations || []).map(v => html`<option value=${v}></option>`)}</datalist>`;
 }
 
 // ---- standby / empty states ---- //
-// sub may contain trusted markup (e.g. <b>); title/code are escaped.
+// sub is trusted markup (e.g. <b>) → unsafeHTML; title/code are auto-escaped by lit.
 function standby(title, sub, code) {
-  return `<div class="standby">
+  return html`<div class="standby">
     <div class="reticle"><span class="tick h"></span><span class="tick v"></span><span class="core"></span></div>
-    <div class="st-title">${esc(title)}</div>
-    <div class="st-sub">${sub}</div>
-    <div class="st-code">${esc(code)}</div>
+    <div class="st-title">${title}</div>
+    <div class="st-sub">${unsafeHTML(sub)}</div>
+    <div class="st-code">${code}</div>
   </div>`;
 }
 
 // ---- loading / unloading / routes ---- //
-const QTY = (q) => q == null ? `<span class="warn" title="quantity not logged by the game">? SCU</span>` : (num(q) + " SCU");
+const QTY = (q) => q == null ? html`<span class="warn" title="quantity not logged by the game">? SCU</span>` : (num(q) + " SCU");
 const SCU = (n, partial) => num(n) + (partial ? "+" : "") + " SCU";
 const partialNote = (d) => d.counts.partial
-  ? `<div class="note">⚠ ${d.counts.partial} active mission(s) are missing cargo/quantity data — Star Citizen didn't log the delivery objectives (common when several missions are accepted quickly). Cargo <b>type</b> is recovered from the contract; quantities show <b>?</b>. Use <b>Edit</b> on the Contracts tab to fill them in.</div>`
-  : "";
+  ? html`<div class="note">⚠ ${d.counts.partial} active mission(s) are missing cargo/quantity data — Star Citizen didn't log the delivery objectives (common when several missions are accepted quickly). Cargo <b>type</b> is recovered from the contract; quantities show <b>?</b>. Use <b>Edit</b> on the Contracts tab to fill them in.</div>`
+  : nothing;
 
 // ---- unified in-place editor for unknown values --------------------------- //
 // One mechanism for every cargo-ops screen (loading, unloading, routes, trip plan).
@@ -387,67 +388,69 @@ const partialNote = (d) => d.counts.partial
 const UNKNOWN_STATION = (s) => !s || /^Unknown station/.test(s) || /^(Origin|Destination) pending$/.test(s);
 // Display a station as plain text when real, or muted/italic ("missing") when a
 // placeholder — for the read-only cells that don't use the editable() machinery.
-const stationText = (s) => UNKNOWN_STATION(s) ? `<span class="unk">${esc(s || "unknown")}</span>` : esc(s);
+const stationText = (s) => UNKNOWN_STATION(s) ? html`<span class="unk">${s || "unknown"}</span>` : (s || "");
 const cellTok = (f) => [f.k, f.zone || "", f.mid || "", f.oid || ""].join("|");
 const editPlaceholder = (k) => k === "qty" ? "SCU" : k === "cargo" ? "commodity" : "station name";
 const editList = (k) => k === "cargo" ? "dl_cargo" : (k === "station" || k === "origin") ? "dl_station" : "";
 
+// The open cell is guarded against the live poll by the EDIT_CELL check in renderAll (only
+// rerenderEdits paints it), so the input is created once and left uncontrolled — `value=${cur}`
+// seeds it and lit never re-sets it. Handlers close over the field `f` directly (no more
+// data-field JSON round-trip through the DOM).
 function editable(value, f, opts) {
   opts = opts || {};
-  const tok = cellTok(f);
   const known = value != null && value !== "" && !opts.unknown;
-  if (EDIT_CELL === tok) {
+  if (EDIT_CELL === cellTok(f)) {
     const isnum = f.k === "qty";
     const list = editList(f.k);
     const cur = (opts.unknown || value == null) ? "" : value;
-    return `<span class="edc editing"><input id="edit_input" class="edc-in"
-      data-field='${esc(JSON.stringify(f))}'
-      ${isnum ? 'type="number" min="0" step="1" inputmode="numeric"' : (list ? `list="${list}"` : "")}
-      value="${esc(cur)}" placeholder="${esc(opts.ph || editPlaceholder(f.k))}"
-      onkeydown="edKey(event)" onblur="edCommit(this)"></span>`;
+    return html`<span class="edc editing"><input id="edit_input" class="edc-in"
+      type=${isnum ? "number" : "text"} min=${ifDefined(isnum ? "0" : undefined)} step=${ifDefined(isnum ? "1" : undefined)}
+      inputmode=${ifDefined(isnum ? "numeric" : undefined)} list=${ifDefined(list || undefined)}
+      value=${cur} placeholder=${opts.ph || editPlaceholder(f.k)}
+      @keydown=${(e) => edKey(e, f)} @blur=${(e) => edCommit(e.target, f)}></span>`;
   }
-  const inner = known ? esc(value)
-    : `<span class="edc-unkn">${esc(opts.label || (value != null && value !== "" ? value : editPlaceholder(f.k)))}</span>`;
+  const inner = known ? value
+    : html`<span class="edc-unkn">${opts.label || (value != null && value !== "" ? value : editPlaceholder(f.k))}</span>`;
   // role=button + tabindex + Enter/Space (edOpenKey) make the cell operable by keyboard and
   // announced by a screen reader, not mouse-only. aria-label says which field it edits.
   const noun = f.k === "qty" ? "quantity" : f.k === "cargo" ? "commodity"
     : f.k === "origin" ? "origin" : "station name";
-  return `<span class="edc${known ? "" : " is-unknown"}" data-field='${esc(JSON.stringify(f))}'
-    role="button" tabindex="0" aria-label="${known ? "Edit" : "Set"} ${noun}"
-    title="${known ? "Click to correct" : "Click to set"}" onclick="edOpen(this)" onkeydown="edOpenKey(event)">${inner}<span class="edc-pen">✎</span></span>`;
+  return html`<span class="edc${known ? "" : " is-unknown"}"
+    role="button" tabindex="0" aria-label=${(known ? "Edit " : "Set ") + noun}
+    title=${known ? "Click to correct" : "Click to set"}
+    @click=${() => edOpen(f)} @keydown=${(e) => edOpenKey(e, f)}>${inner}<span class="edc-pen">✎</span></span>`;
 }
 // convenience wrappers used across the screens; render plain text when not editable
 function stationCell(name, zone) {
-  return zone ? editable(name, { k: "station", zone }, { unknown: UNKNOWN_STATION(name) }) : esc(name);
+  return zone ? editable(name, { k: "station", zone }, { unknown: UNKNOWN_STATION(name) }) : (name || "");
 }
 function cargoCell(cargo, mid, oid) {
   return (mid && oid) ? editable(cargo, { k: "cargo", mid, oid }, { unknown: !cargo || cargo === "Unknown cargo" })
-                      : esc(cargo || "Unknown cargo");
+                      : (cargo || "Unknown cargo");
 }
 function qtyCell(qty, mid, oid) {
   return (mid && oid) ? editable(qty, { k: "qty", mid, oid }, { unknown: qty == null, label: "?" })
                       : QTY(qty);
 }
 
-function edOpen(el) {
-  let f; try { f = JSON.parse(el.dataset.field); } catch (e) { return; }
+function edOpen(f) {
   EDIT_CELL = cellTok(f);
   rerenderEdits();
   const i = $("edit_input"); if (i) { i.focus(); if (i.select) i.select(); }
 }
 function edCancel() { EDIT_CELL = null; rerenderEdits(); }
 // Open the in-place editor from the keyboard (Enter/Space) when the cell itself is focused.
-function edOpenKey(e) {
-  if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); edOpen(e.currentTarget); }
+function edOpenKey(e, f) {
+  if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); edOpen(f); }
 }
-function edKey(e) {
-  if (e.key === "Enter") { e.preventDefault(); edCommit(e.target); }
+function edKey(e, f) {
+  if (e.key === "Enter") { e.preventDefault(); edCommit(e.target, f); }
   else if (e.key === "Escape") { e.preventDefault(); edCancel(); }
 }
 let EDIT_BUSY = false;
-async function edCommit(el) {
+async function edCommit(el, f) {
   if (!el || EDIT_BUSY) return;
-  let f; try { f = JSON.parse(el.dataset.field); } catch (e) { return; }
   if (EDIT_CELL !== cellTok(f)) return;   // already cancelled/committed
   const raw = (el.value || "").trim();
   EDIT_BUSY = true; EDIT_CELL = null;
@@ -485,8 +488,8 @@ export async function replayEdit(op) {
 function rerenderEdits() {
   if (!S.LAST) return;
   const d = curData(); if (!d) return;
-  setHTML("cargo", cargoView(d));
-  setHTML("plan", planView(d));
+  mount("cargo", cargoView(d));
+  mount("plan", planView(d));
 }
 
 // ---- Cargo tab: Loading (pickup) ⇄ Unloading (dropoff) behind a segmented control ---- //
@@ -509,14 +512,14 @@ function cargoSub(k) {
   // deep link. replaceState (not push): toggling a sub-tab shouldn't pile up history entries.
   const h = k === "dropoff" ? "unloading" : "loading";
   if (location.hash.slice(1) !== h) history.replaceState(null, "", location.pathname + "#" + h);
-  const d = curData(); if (d) setHTML("cargo", cargoView(d));
+  const d = curData(); if (d) mount("cargo", cargoView(d));
 }
 function cargoView(d) {
   const sub = cargoSubActive(d);
   const body = sub === "dropoff"
     ? groupCards(d.unloading, "unloading", d)
     : groupCards(d.loading, "loading", d);
-  return tabBar([["pickup", "Loading"], ["dropoff", "Unloading"]], sub, "cargoSub") + body;
+  return html`${tabBarTpl([["pickup", "Loading"], ["dropoff", "Unloading"]], sub, cargoSub)}${body}`;
 }
 
 // ---- Plan tab: ONE section — the ordered itinerary IS the load order, with the 3D
@@ -533,34 +536,31 @@ function groupCards(groups, kind, d) {
     : standby("Holds Empty",
         "Nothing staged for delivery. As you take on cargo, drop-offs show here <b>grouped by destination</b>.",
         "awaiting manifest");
-  return partialNote(d) + `<div class="grid">` + groups.map(g => {
+  return html`${partialNote(d)}<div class="grid">${groups.map(g => {
     const rows = g.items.map(it => {
       const tail = kind === "loading"
-        ? `<div class="sub">→ ${esc(it.to)} · ${esc(it.mission)}</div>`
-        : `<div class="sub">← ${esc(it.from)} · ${esc(it.mission)}</div>`;
+        ? html`<div class="sub">→ ${it.to} · ${it.mission}</div>`
+        : html`<div class="sub">← ${it.from} · ${it.mission}</div>`;
       // unloading rows carry a leg oid → can be ticked off as delivered
       const check = (kind === "unloading" && it.oid)
-        ? legCheck(it.mission_id, it.oid, it.done) : "";
-      return `<div class="row ${it.done ? "done" : ""} ${it.partial ? "partial" : ""}">
+        ? legCheck(it.mission_id, it.oid, it.done) : nothing;
+      return html`<div class="row ${it.done ? "done" : ""} ${it.partial ? "partial" : ""}">
         ${check}<div class="rowmain"><span class="cargo">${cargoCell(it.cargo, it.mission_id, it.oid)}</span>${tail}</div>
         <div class="qty">${qtyCell(it.qty, it.mission_id, it.oid)}</div></div>`;
-    }).join("");
-    const warn = g.has_partial ? ' <span class="warn" title="some quantities not logged">⚠</span>' : "";
-    return `<div class="card"><h3><span>${stationCell(g.location, g.zone)}${warn}</span>
+    });
+    const warn = g.has_partial ? html` <span class="warn" title="some quantities not logged">⚠</span>` : nothing;
+    return html`<div class="card"><h3><span>${stationCell(g.location, g.zone)}${warn}</span>
         <span class="scu">${SCU(g.total_scu, g.has_partial)}</span></h3>${rows}</div>`;
-  }).join("") + `</div>`;
+  })}</div>`;
 }
 
-// A delivered-toggle for one leg. `legsJson` (optional) lets one control tick a
-// whole set of legs at once (used by route cargo chips).
-function legCheck(mid, oid, done, legsJson) {
-  const arg = legsJson ? `'${legsJson}'` : `[{mission_id:'${esc(mid)}',oid:'${esc(oid)}'}]`;
-  return `<button class="legchk ${done ? "on" : ""}" title="${done ? "Mark not delivered" : "Mark delivered"}"
-    onclick='markDelivered(${arg}, ${done ? "false" : "true"})'>${done ? "✓" : ""}</button>`;
+// A delivered-toggle for one leg.
+function legCheck(mid, oid, done) {
+  return html`<button class="legchk ${done ? "on" : ""}" title=${done ? "Mark not delivered" : "Mark delivered"}
+    @click=${() => markDelivered([{ mission_id: mid, oid }], !done)}>${done ? "✓" : ""}</button>`;
 }
 
 async function markDelivered(legs, done) {
-  if (typeof legs === "string") legs = JSON.parse(legs);
   if (S.REPLAY_MODE) return replayEdit({ kind: "leg_state", legs, done });
   try { await postJSON("/api/leg-state", { legs, done }); }
   catch (e) { alert("Update failed: " + e); return; }
@@ -572,11 +572,11 @@ async function markDelivered(legs, done) {
 // deliveries. Merged: the timeline IS the run list — each stop carries its origin(s)
 // and mission count, and dragging a stop sets the visit & load order that the load
 // sequence and the manifest packing both follow.)
-function bodyLabel(s) {
+function bodyLabel(s) {   // plain string → interpolated as lit text (auto-escaped at use)
   if (s.body === "?") return "Unknown location";
-  const sys = s.system && s.system !== "?" && s.system !== s.body ? `${esc(s.system)} · ` : "";
-  const moon = s.moon ? ` › ${esc(s.moon)}` : "";
-  return sys + esc(s.body) + moon;
+  const sys = s.system && s.system !== "?" && s.system !== s.body ? `${s.system} · ` : "";
+  const moon = s.moon ? ` › ${s.moon}` : "";
+  return sys + s.body + moon;
 }
 
 // container-size breakdown of one cargo line, as "n×size" groups (largest first),
@@ -591,7 +591,7 @@ function boxBreakdown(qty, maxBox) {
 // inline-editable, and a leg tick lets a stop be marked delivered without leaving Plan.
 function cargoChip(it, maxBox) {
   const brk = boxBreakdown(it.qty, maxBox);
-  return `<span class="cargochip">${legCheck(it.mission_id, it.oid, false)}<span class="cc-name">${cargoCell(it.cargo, it.mission_id, it.oid)}</span> <span class="cc-qty">${qtyCell(it.qty, it.mission_id, it.oid)}</span>${brk ? ` <span class="cc-box sub">${brk}</span>` : ""}</span>`;
+  return html`<span class="cargochip">${legCheck(it.mission_id, it.oid, false)}<span class="cc-name">${cargoCell(it.cargo, it.mission_id, it.oid)}</span> <span class="cc-qty">${qtyCell(it.qty, it.mission_id, it.oid)}</span>${brk ? html` <span class="cc-box sub">${brk}</span>` : nothing}</span>`;
 }
 
 // How the hold was packed, in words — branches on the strategy packGroups chose.
@@ -607,16 +607,16 @@ function strategyCopy(packed) {
 // The section header — matches the app's .arch-sub header language (was the unstyled .archbar).
 function planHead(d, stops, jumps, hasGrid, access, packed, cap, placed, totalScu, empty) {
   const free = (hasGrid && cap) ? ` · ${num(Math.max(0, cap - placed))} SCU free` : "";
-  const shipBit = hasGrid ? ` · ${esc(d.ship)} ${num(totalScu)}/${num(cap)} SCU`
-    : (d.ship ? ` · ${esc(d.ship)}` : "");
+  const shipBit = hasGrid ? ` · ${d.ship} ${num(totalScu)}/${num(cap)} SCU`
+    : (d.ship ? ` · ${d.ship}` : "");
   const title = empty ? `Trip Plan${shipBit}` : `Trip Plan · ${stops} stop(s) · ${jumps} jump(s)${shipBit}`;
   const sub = empty
-    ? "no cargo staged — accept hauling contracts and your route &amp; load plan appear here"
+    ? "no cargo staged — accept hauling contracts and your route & load plan appear here"
     : (hasGrid ? `${accessLabel(access)} · ${strategyCopy(packed)}${free}`
-               : "drag a stop to set your visit &amp; load order");
+               : "drag a stop to set your visit & load order");
   const reset = S.ROUTE_ORDER
-    ? `<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" onclick="resetRouteOrder()">↺ auto order</button>` : "";
-  return `<header class="plan-head"><span class="arch-title">${title}</span>
+    ? html`<button class="route-reset" title="Forget the manual order; revert to the planner's fewest-jump order" @click=${resetRouteOrder}>↺ auto order</button>` : nothing;
+  return html`<header class="plan-head"><span class="arch-title">${title}</span>
     <span class="sub">${sub}</span>${reset}</header>`;
 }
 
@@ -642,7 +642,7 @@ function planView(d) {
   const shipPacked = hasGrid ? packGroups(d.ship_grid, order, banded ? access : null) : null;
   const cap = d.ship_scu || 0, placed = shipPacked ? shipPacked.placedScu : 0;
   const totalScu = groups.reduce((a, g) => a + g.scu, 0);
-  const hold = hasGrid ? holdHtml(d, shipPacked, access) : "";
+  const hold = hasGrid ? holdHtml(d, shipPacked, access) : nothing;
 
   // stable destination hue (matches the hold's box hues) + 1-based physical load position
   // (banded ships load deepest/last-delivered first, so the badge counts from the hatch).
@@ -654,8 +654,8 @@ function planView(d) {
   const dualEnd = !!(shipPacked && shipPacked.strategy === "dualend");
 
   if (!hasStops)
-    return `<div class="planwrap">${planHead(d, 0, 0, hasGrid, access, shipPacked, cap, placed, totalScu, true)}
-      <div class="sub" style="margin:10px 2px 14px">No cargo staged yet — accept hauling contracts and your route &amp; load plan appear here.</div>
+    return html`<div class="planwrap">${planHead(d, 0, 0, hasGrid, access, shipPacked, cap, placed, totalScu, true)}
+      <div class="sub" style="margin:10px 2px 14px">No cargo staged yet — accept hauling contracts and your route & load plan appear here.</div>
       ${hold}</div>`;
 
   // per-mission box-size cap (Medium 8-vs-16 keys off the mission's TOTAL SCU)
@@ -680,47 +680,45 @@ function planView(d) {
   const stopRows = planSorted.stops.map(s => {
     const key = `${s.system}/${s.body}/${s.moon || ""}`;
     const header = key !== lastKey
-      ? `<li class="plan-leg"><span class="plan-jump">${++n}</span>${bodyLabel(s)}</li>` : "";
+      ? html`<li class="plan-leg"><span class="plan-jump">${++n}</span>${bodyLabel(s)}</li>` : nothing;
     lastKey = key;
     const hue = hueOf[s.station] != null ? hueOf[s.station] : destHue(0);
     const pos = loadPos[s.station];
     const run = runByDest[s.station] || { origins: [], missions: 0, partial: false };
     const grp = gByDest[s.station];
     const sharedTag = grp && grp.shared
-      ? ' <span class="ls-alone" title="carries a cargo type split across stops — load this stop fully before the next, so the identical boxes don\'t get mixed up">⚠ shared</span>' : "";
+      ? html` <span class="ls-alone" title="carries a cargo type split across stops — load this stop fully before the next, so the identical boxes don't get mixed up">⚠ shared</span>` : nothing;
     const from = run.origins.length
-      ? `<div class="ps-from sub">from ${run.origins.map(esc).join(", ")}${run.missions ? " · " + run.missions + " mission(s)" : ""}</div>` : "";
-    const chips = (s.items || []).map(it => cargoChip(it, maxBoxOf(it.mission_id))).join("");
+      ? html`<div class="ps-from sub">from ${run.origins.join(", ")}${run.missions ? " · " + run.missions + " mission(s)" : ""}</div>` : nothing;
+    const chips = (s.items || []).map(it => cargoChip(it, maxBoxOf(it.mission_id)));
     // drag handle only, so clicking the station/cargo cells to edit never starts a drag
-    return header + `<li class="card plan-stop route" data-dest="${esc(s.station)}"
-        ondragover="routeDragOver(event)" ondragleave="routeDragLeave(event)"
-        ondrop="routeDrop(event)" ondragend="routeDragEnd(event)">
+    return html`${header}<li class="card plan-stop route" data-dest=${s.station}
+        @dragover=${routeDragOver} @dragleave=${routeDragLeave} @drop=${routeDrop} @dragend=${routeDragEnd}>
       <h3><span class="ends"><button type="button" class="route-grip" draggable="true"
           title="Drag, or focus and use ↑/↓, to reorder this stop" aria-label="Reorder this stop — use arrow up or down"
-          ondragstart="routeDragStart(event)" onkeydown="routeGripKey(event)">⠿</button>${hasGrid ? `<span class="ps-sw" style="background:hsl(${hue},64%,52%)"></span>` : ""}${(hasGrid && pos) ? `<span class="ps-pos" title="load #${pos}${banded ? (dualEnd ? " — loaded from both ends inward" : " — loaded deepest-first") : ""}">${pos}</span>` : ""}${stationCell(s.station, s.zone)}${run.partial ? ' <span class="warn">⚠</span>' : ""}${sharedTag}</span>
+          @dragstart=${routeDragStart} @keydown=${routeGripKey}>⠿</button>${hasGrid ? html`<span class="ps-sw" style=${`background:hsl(${hue},64%,52%)`}></span>` : nothing}${(hasGrid && pos) ? html`<span class="ps-pos" title=${`load #${pos}${banded ? (dualEnd ? " — loaded from both ends inward" : " — loaded deepest-first") : ""}`}>${pos}</span>` : nothing}${stationCell(s.station, s.zone)}${run.partial ? html` <span class="warn">⚠</span>` : nothing}${sharedTag}</span>
         <span class="scu">${SCU(s.scu, run.partial)}</span></h3>
       ${from}<div class="ps-cargo">${chips}</div></li>`;
-  }).join("");
+  });
 
   const overScu = shipPacked ? shipPacked.overflow.reduce((a, b) => a + b.scu, 0) : 0;
   const over = overScu
-    ? `<div class="note">⚠ ${num(overScu)} SCU won't fit this ${num(cap)} SCU hold — you'll need another run.</div>` : "";
+    ? html`<div class="note">⚠ ${num(overScu)} SCU won't fit this ${num(cap)} SCU hold — you'll need another run.</div>` : nothing;
   const ambig = (hasGrid && order.some(g => g.shared))
-    ? `<div class="note">⚠ A cargo type is bound for more than one destination — its boxes look identical. Load each stop marked <b>⚠ shared</b> <b>fully</b> before the next, so the twins don't get mixed up.</div>` : "";
+    ? html`<div class="note">⚠ A cargo type is bound for more than one destination — its boxes look identical. Load each stop marked <b>⚠ shared</b> <b>fully</b> before the next, so the twins don't get mixed up.</div>` : nothing;
 
   const load = planSorted.load || {};
-  const loadItems = (load.items || [])
-    .map(it => `<span class="chip">${esc(it.cargo)}${it.qty ? " " + num(it.qty) : ""}</span>`).join("");
-  const loadCard = `<div class="plan-load">
+  const loadItems = (load.items || []).map(it => html`<span class="chip">${it.cargo}${it.qty ? " " + num(it.qty) : ""}</span>`);
+  const loadCard = html`<div class="plan-load">
     <div class="plan-step">LOAD</div>
-    <div class="plan-body"><div class="plan-station">${esc(load.station || "—")}</div>
-      <div class="plan-chips">${loadItems || '<span class="sub">no cargo outstanding</span>'}</div></div>
+    <div class="plan-body"><div class="plan-station">${load.station || "—"}</div>
+      <div class="plan-chips">${loadItems.length ? loadItems : html`<span class="sub">no cargo outstanding</span>`}</div></div>
     <div class="scu">${num(planSorted.scu_total || 0)} SCU</div></div>`;
 
-  return `<div class="planwrap">${planHead(d, planSorted.stops.length, n, hasGrid, access, shipPacked, cap, placed, totalScu, false)}${over}${ambig}
+  return html`<div class="planwrap">${planHead(d, planSorted.stops.length, n, hasGrid, access, shipPacked, cap, placed, totalScu, false)}${over}${ambig}
     ${loadCard}
-    <ol class="plan-stops" id="routegrid" onmouseover="rowHover(event)" onmouseout="rowHover(event)">${stopRows}</ol>
-    ${hold}</div>` + partialNote(d);
+    <ol class="plan-stops" id="routegrid" @mouseover=${rowHover} @mouseout=${rowHover}>${stopRows}</ol>
+    ${hold}</div>${partialNote(d)}`;
 }
 
 // ---- drag-reorder of the route runs (sets the manual delivery/load order) ---- //
@@ -797,41 +795,58 @@ function routeGripKey(e) {
 }
 
 // ---- all missions table + editor ---- //
-function legRowHtml(leg, guessCargo) {
-  leg = leg || {};
-  // pre-fill best guesses: cargo from the contract decode, station from the
-  // server-resolved zone name (leg.name), so editing a sparse mission isn't blank.
-  const cargo = leg.cargo || guessCargo || "";
-  const loc = leg.location || leg.name || "";
-  const hint = (!loc && leg.zone_host_id) ? `Unknown station (zone ${leg.zone_host_id})` : "station";
-  return `<tr>
-    <td><input class="lc" list="dl_cargo" aria-label="Cargo" placeholder="cargo" value="${esc(cargo)}"></td>
-    <td><span class="numf"><span class="numf-u">SCU</span><input class="lq" type="number" min="0" step="1" inputmode="numeric" aria-label="Quantity in SCU" placeholder="?" value="${leg.qty == null ? "" : leg.qty}"></span></td>
-    <td><input class="ll" list="dl_station" aria-label="Location" placeholder="${esc(hint)}" value="${esc(loc)}"></td>
-    <td><button type="button" class="rm" title="remove row" aria-label="Remove row" onclick="this.closest('tr').remove()">✕</button></td>
+// ---- editor leg rows (Drop-offs / Pickups), lit-managed ---- //
+// The rows live in EDIT_DROPS / EDIT_PICKUPS, not the DOM, so Add/Remove and a live snapshot
+// landing mid-edit don't fight an imperative innerHTML splice: a keyed repeat reuses each
+// row's <input> across renders, and lit skips a binding whose value is unchanged — so a
+// typed-but-unsaved value survives a repaint. gatherLegs still reads committed values straight
+// off the DOM on Save (the bodyId <tbody> + .lc/.lq/.ll classes are unchanged).
+function buildLegRows(m, kind) {
+  let rows = Object.values((m && m.legs) || {}).filter(l => l.kind === kind);
+  // A normal haul's pickup is just a zone marker (no cargo) — not a real collect pickup, so
+  // don't show it as a blank row. Only genuine "Collect N SCU of X from Y" pickups; "+ Add
+  // pickup" turns a haul into a collect mission. Drop-offs always show.
+  if (kind === "pickup") rows = rows.filter(l => l.cargo);
+  // guess cargo for drop-offs: one contract cargo applies to every drop; an exact count match
+  // assigns them in order. Pickups stay blank.
+  const types = (m && m.cargo_types) || [];
+  const guess = (kind === "dropoff")
+    ? (i) => types.length === 1 ? types[0] : (types.length === rows.length ? types[i] : "")
+    : () => "";
+  return rows.map((l, i) => ({
+    id: ++_legSeq,
+    cargo: l.cargo || guess(i) || "",
+    qty: l.qty == null ? "" : l.qty,
+    loc: l.location || l.name || "",
+    hint: (!(l.location || l.name) && l.zone_host_id) ? `Unknown station (zone ${l.zone_host_id})` : "station",
+  }));
+}
+const legRowsFor = (kind) => kind === "dropoff" ? EDIT_DROPS : EDIT_PICKUPS;
+function addLeg(kind) {
+  legRowsFor(kind).push({ id: ++_legSeq, cargo: "", qty: "", loc: "", hint: "station" });
+  renderMissions();
+}
+function removeLeg(kind, id) {
+  const arr = legRowsFor(kind), i = arr.findIndex(r => r.id === id);
+  if (i >= 0) arr.splice(i, 1);
+  renderMissions();
+}
+
+function legRowTpl(kind, r) {
+  return html`<tr>
+    <td><input class="lc" list="dl_cargo" aria-label="Cargo" placeholder="cargo" value=${r.cargo}></td>
+    <td><span class="numf"><span class="numf-u">SCU</span><input class="lq" type="number" min="0" step="1" inputmode="numeric" aria-label="Quantity in SCU" placeholder="?" value=${r.qty}></span></td>
+    <td><input class="ll" list="dl_station" aria-label="Location" placeholder=${r.hint} value=${r.loc}></td>
+    <td><button type="button" class="rm" title="remove row" aria-label="Remove row" @click=${() => removeLeg(kind, r.id)}>✕</button></td>
   </tr>`;
 }
 
-function legTable(legs, kind, bodyId, locLabel, mission) {
-  let rows = Object.values(legs || {}).filter(l => l.kind === kind);
-  // A normal haul's pickup is just a zone marker (no cargo) — it isn't a real
-  // collect pickup and shouldn't show as a blank row. Only surface pickups that
-  // carry cargo (genuine "Collect N SCU of X from Y" objectives); use "+ Add
-  // pickup" to turn a haul into a collect mission. Drop-offs always show.
-  if (kind === "pickup") rows = rows.filter(l => l.cargo);
-  // guess cargo for drop-offs: a single contract cargo applies to every drop;
-  // an exact count match assigns them in order. Pickups stay blank.
-  const types = (mission && mission.cargo_types) || [];
-  const guessFor = (kind === "dropoff")
-    ? (i) => types.length === 1 ? types[0] : (types.length === rows.length ? types[i] : "")
-    : () => "";
-  const body = rows.map((l, i) => legRowHtml(l, guessFor(i))).join("");
-  return `<table class="legtable"><thead><tr><th>Cargo</th><th>Qty</th><th>${locLabel}</th><th></th></tr></thead>
-      <tbody id="${bodyId}">${body}</tbody></table>
-      <button type="button" class="addrow" onclick="addLeg('${bodyId}')">+ Add ${locLabel === "From" ? "pickup" : "drop-off"}</button>`;
+function legTableTpl(kind, bodyId, locLabel) {
+  const rows = legRowsFor(kind);
+  return html`<table class="legtable"><thead><tr><th>Cargo</th><th>Qty</th><th>${locLabel}</th><th></th></tr></thead>
+      <tbody id=${bodyId}>${repeat(rows, r => r.id, r => legRowTpl(kind, r))}</tbody></table>
+      <button type="button" class="addrow" @click=${() => addLeg(kind)}>+ Add ${locLabel === "From" ? "pickup" : "drop-off"}</button>`;
 }
-
-function addLeg(bodyId) { $(bodyId).insertAdjacentHTML("beforeend", legRowHtml({})); }
 
 function gatherLegs(bodyId, locKey) {
   return [...document.querySelectorAll(`#${bodyId} tr`)].map(r => {
@@ -844,9 +859,10 @@ function gatherLegs(bodyId, locKey) {
 }
 
 function legRow(cargo, qty, dest, opts = {}) {
-  // a delivered-toggle when this row maps to a single leg (mid + oid given)
-  const chk = (opts.mid && opts.oid) ? legCheck(opts.mid, opts.oid, opts.done) : "";
-  return `<div class="legrow ${opts.done ? "legdone" : ""}">
+  // a delivered-toggle when this row maps to a single leg (mid + oid given). cargo/qty/dest are
+  // lit values or templates supplied by the caller.
+  const chk = (opts.mid && opts.oid) ? legCheck(opts.mid, opts.oid, opts.done) : nothing;
+  return html`<div class="legrow ${opts.done ? "legdone" : ""}">
     <span class="ml-cargo ${opts.warnCargo ? "warn" : ""}">${cargo}</span>
     <span class="ml-qty">${qty}</span>
     <span class="ml-arrow">→</span>
@@ -858,67 +874,103 @@ function missionLegs(m) {
   const drops = Object.values(m.legs || {}).filter(l => l.kind === "dropoff");
   if (drops.some(l => l.cargo)) {
     const rows = drops.filter(l => l.cargo).map(l => {
-      const qty = l.qty == null ? '<span class="warn">?</span> SCU' : `${num(l.qty)} SCU`;
-      return legRow(esc(l.cargo), qty, esc(l.location || "?"),
+      const qty = l.qty == null ? html`<span class="warn">?</span> SCU` : `${num(l.qty)} SCU`;
+      return legRow(l.cargo, qty, l.location || "?",
         { done: l.state === "completed", mid: m.mission_id, oid: l.objective_id });
-    }).join("");
-    return `<div class="manilegs">${rows}</div>`;
+    });
+    return html`<div class="manilegs">${rows}</div>`;
   }
   if (drops.length) {
     const ct = (m.cargo_types || []).join(", ") || "Unknown cargo";
     const dests = (m.destinations || []).length
-      ? m.destinations.map(stationText).join(", ") : '<span class="unk">?</span>';
-    const row = legRow(esc(ct), '<span class="warn">?</span> SCU',
-      `${dests} <span class="sub">· qty not logged</span>`, { warnCargo: true });
-    return `<div class="manilegs">${row}</div>`;
+      ? m.destinations.map((s, i) => html`${i ? ", " : ""}${stationText(s)}`) : html`<span class="unk">?</span>`;
+    const row = legRow(ct, html`<span class="warn">?</span> SCU`,
+      html`${dests} <span class="sub">· qty not logged</span>`, { warnCargo: true });
+    return html`<div class="manilegs">${row}</div>`;
   }
-  return '<span class="sub">—</span>';
+  return html`<span class="sub">—</span>`;
 }
 
 // A MINING contract's "ore × qty → where to mine" rows (Shubin purchase orders carry ore
 // requirements instead of pickup/dropoff legs). Each ore lists where it's mined via the
-// same `locChips` the mining tab uses, capped server-side with a "+N more" tail.
+// same `locChips` the mining tab uses (still a string helper → unsafeHTML), capped server-side
+// with a "+N more" tail.
 function oreRow(o) {
   const done = o.need > 0 && o.have >= o.need;
   const hidden = (o.loc_count || 0) - (o.locations || []).length;
   const more = hidden > 0 ? `<span class="lt-tag mloc-more">+${hidden} more</span>` : "";
   const where = (o.locations && o.locations.length)
-    ? locChips(o.locations, more)
-    : '<div class="mloc"><span class="sub">where-to-mine unknown</span></div>';
-  return `<div class="ore-row ${done ? "legdone" : ""}">
-    <span class="ml-cargo">${esc(o.ore)}</span><span class="ml-qty">×${num(o.need)}</span>
+    ? unsafeHTML(locChips(o.locations, more))
+    : html`<div class="mloc"><span class="sub">where-to-mine unknown</span></div>`;
+  return html`<div class="ore-row ${done ? "legdone" : ""}">
+    <span class="ml-cargo">${o.ore}</span><span class="ml-qty">×${num(o.need)}</span>
     <span class="ore-where">${where}</span>
   </div>`;
 }
 
 function miningLegs(m) {
   const ores = m.ores || [];
-  if (!ores.length) return '<span class="sub">—</span>';
-  const head = `<div class="ore-head">collect ${m.ore_any ? "any <b>one</b> of" : "all of"}</div>`;
-  return `${head}<div class="orelegs">${ores.map(oreRow).join("")}</div>${locKey()}`;
+  if (!ores.length) return html`<span class="sub">—</span>`;
+  // locKey() is a handler-free legend string (mining.js) → unsafeHTML.
+  return html`<div class="ore-head">collect ${m.ore_any ? html`any <b>one</b> of` : "all of"}</div><div class="orelegs">${ores.map(oreRow)}</div>${unsafeHTML(locKey())}`;
 }
 
-function editorRow(m) {
-  const opt = (v, l, sel) => `<option value="${v}"${sel ? " selected" : ""}>${l}</option>`;
+function editorRowTpl(m) {
   const statuses = ["active", "completed", "abandoned", "failed", "expired"];
   // an unresolved origin (Unknown station / Origin pending) is a placeholder, not real
   // content: show it as the input placeholder and leave the field empty so typing overwrites.
   const unknownOrigin = UNKNOWN_STATION(m.origin);
-  return `<tr class="editrow"><td colspan="6"><div class="editor"
-    onkeydown="edFormKey(event,'${m.mission_id}')">
-    <div class="ef"><label for="ed_title">Title</label><input id="ed_title" value="${esc(m.title || "")}"></div>
-    <div class="ef"><label for="ed_origin">Origin</label><input id="ed_origin" list="dl_station" value="${esc(unknownOrigin ? "" : m.origin)}" placeholder="${esc(unknownOrigin ? (m.origin || "origin") : "origin")}"></div>
-    <div class="ef"><label for="ed_reward">Reward <span class="sub">(aUEC · type 12k or 1.5m)</span></label><input id="ed_reward" type="text" inputmode="decimal" value="${m.reward || ""}"></div>
+  return html`<tr class="editrow"><td colspan="6"><div class="editor"
+    @keydown=${(e) => edFormKey(e, m.mission_id)}>
+    <div class="ef"><label for="ed_title">Title</label><input id="ed_title" value=${m.title || ""}></div>
+    <div class="ef"><label for="ed_origin">Origin</label><input id="ed_origin" list="dl_station" value=${unknownOrigin ? "" : m.origin} placeholder=${unknownOrigin ? (m.origin || "origin") : "origin"}></div>
+    <div class="ef"><label for="ed_reward">Reward <span class="sub">(aUEC · type 12k or 1.5m)</span></label><input id="ed_reward" type="text" inputmode="decimal" value=${m.reward || ""}></div>
     <div class="ef"><label for="ed_status">Status</label><select id="ed_status">
-        ${opt("", "(from log)", true)}${statuses.map(s => opt(s, s, false)).join("")}</select></div>
-    <div class="ef wide"><label>Drop-offs</label>${legTable(m.legs, "dropoff", "ed_drops", "Destination", m)}</div>
-    <div class="ef wide"><label>Pickups <span class="sub">(collect missions only — leave empty for normal hauls)</span></label>${legTable(m.legs, "pickup", "ed_pickups", "From", m)}</div>
+        <option value="" selected>(from log)</option>${statuses.map(s => html`<option value=${s}>${s}</option>`)}</select></div>
+    <div class="ef wide"><label>Drop-offs</label>${legTableTpl("dropoff", "ed_drops", "Destination")}</div>
+    <div class="ef wide"><label>Pickups <span class="sub">(collect missions only — leave empty for normal hauls)</span></label>${legTableTpl("pickup", "ed_pickups", "From")}</div>
     <div class="ef btns">
-      <button class="primary" onclick="saveMission('${m.mission_id}')">Save</button>
-      <button onclick="cancelEdit()">Cancel</button>
-      <button onclick="resetMission('${m.mission_id}')">Reset to log</button>
+      <button class="primary" @click=${() => saveMission(m.mission_id)}>Save</button>
+      <button @click=${cancelEdit}>Cancel</button>
+      <button @click=${() => resetMission(m.mission_id)}>Reset to log</button>
     </div>
   </div></td></tr>`;
+}
+
+// One contract row (+ its editor row when open). Read-only display cells reuse the existing
+// shared string helpers (typeMark / stationText / missionLegs / miningLegs / standby — still
+// used by the not-yet-converted Cargo/Plan views) via unsafeHTML; their inline markDelivered
+// handler stays window-bridged until those tabs convert. Everything interactive in THIS row
+// (Edit/Delete/Restore + the editor) binds via lit @click, so it needs no window bridge.
+function missionRowTpl(m) {
+  const dec = m.decoded || {};
+  // dec.type/icon and dec.legal are authoritative ContractTemplate data (p4k) layered in by
+  // model.Mission.decoded; structure/category/grade come from the contract-id heuristic
+  // (grade/SCU are runtime). The type mark leads the chip row.
+  const typeChip = dec.type ? unsafeHTML(typeMark(dec.type, dec.icon)) : nothing;
+  const chips = [dec.structure, dec.category, dec.grade].filter(Boolean)
+    .map(t => html`<span class="chip">${t}</span>`);
+  const illegal = dec.legal === false
+    ? html`<span class="chip chip-illegal" title="Illegal contract">⚠ Illegal</span>` : nothing;
+  const note = m.hidden ? html`<div class="sub">hidden</div>`
+    : (m.partial && m.status === "active" ? html`<div class="warn" style="font-size:11px">⚠ partial</div>` : nothing);
+  const action = m.hidden
+    ? html`<button @click=${() => restoreMission(m.mission_id)}>Restore</button>`
+    : html`<div class="rowact"><button @click=${() => editMission(m.mission_id)}>Edit</button><button class="danger" @click=${() => deleteMission(m.mission_id)}>Delete</button></div>`;
+  const edited = m.overridden && !m.hidden
+    ? html` <span class="chip" title="has manual edits">✎</span>` : nothing;
+  const origin = (m.ores && m.ores.length && m.mining_goto)
+    ? html`<span class="ore-goto" title="Go to (mission marker)">▸ ${m.mining_goto}</span>`
+    : stationText(m.origin);
+  const cargo = (m.ores && m.ores.length) ? miningLegs(m) : missionLegs(m);
+  return html`<tr class=${m.hidden ? "hiddenrow" : ""}>
+      <td><span class="badge b-${m.status}">${m.status}</span>${note}</td>
+      <td>${m.title || m.contract}${edited}<div class="sub">${m.org}</div>${typeChip}${chips}${illegal}</td>
+      <td>${origin}</td>
+      <td>${cargo}</td>
+      <td>${m.reward ? num(m.reward) + " aUEC" : html`<span class="sub">—</span>`}</td>
+      <td>${action}</td>
+    </tr>${(EDIT === m.mission_id && !m.hidden) ? editorRowTpl(m) : nothing}`;
 }
 
 function missionsTable(ms) {
@@ -930,38 +982,10 @@ function missionsTable(ms) {
     ((a.hidden ? 1 : 0) - (b.hidden ? 1 : 0)) ||
     (order[a.status] - order[b.status]) ||
     ((b.accepted_at || "").localeCompare(a.accepted_at || "")));
-  const rows = ms.map(m => {
-    const dec = m.decoded || {};
-    // dec.type/icon and dec.legal are authoritative ContractTemplate data (p4k) layered in
-    // by model.Mission.decoded; structure/category/grade come from the contract-id heuristic
-    // (grade/SCU are runtime). The type mark leads the chip row.
-    const typeChip = dec.type ? typeMark(dec.type, dec.icon) : "";
-    const tags = typeChip + [dec.structure, dec.category, dec.grade].filter(Boolean)
-      .map(t => `<span class="chip">${esc(t)}</span>`).join("")
-      + (dec.legal === false ? `<span class="chip chip-illegal" title="Illegal contract">⚠ Illegal</span>` : "");
-    const note = m.hidden ? '<div class="sub">hidden</div>'
-      : (m.partial && m.status === "active" ? '<div class="warn" style="font-size:11px">⚠ partial</div>' : "");
-    const action = m.hidden
-      ? `<button onclick="restoreMission('${m.mission_id}')">Restore</button>`
-      : `<div class="rowact"><button onclick="editMission('${m.mission_id}')">Edit</button>` +
-        `<button class="danger" onclick="deleteMission('${m.mission_id}')">Delete</button></div>`;
-    const edited = m.overridden && !m.hidden ? ' <span class="chip" title="has manual edits">✎</span>' : "";
-    const tr = `<tr class="${m.hidden ? "hiddenrow" : ""}">
-      <td><span class="badge b-${m.status}">${esc(m.status)}</span>${note}</td>
-      <td>${esc(m.title || m.contract)}${edited}<div class="sub">${esc(m.org)}</div>${tags}</td>
-      <td>${(m.ores && m.ores.length && m.mining_goto)
-        ? `<span class="ore-goto" title="Go to (mission marker)">▸ ${esc(m.mining_goto)}</span>`
-        : stationText(m.origin)}</td>
-      <td>${(m.ores && m.ores.length) ? miningLegs(m) : missionLegs(m)}</td>
-      <td>${m.reward ? num(m.reward) + " aUEC" : '<span class="sub">—</span>'}</td>
-      <td>${action}</td>
-    </tr>`;
-    return tr + (EDIT === m.mission_id && !m.hidden ? editorRow(m) : "");
-  }).join("");
-  return `<div class="tscroll"><table><thead><tr><th>Status</th><th>Mission</th><th>Origin</th><th>Cargo → Destination</th><th>Reward</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return html`<div class="tscroll"><table><thead><tr><th>Status</th><th>Mission</th><th>Origin</th><th>Cargo → Destination</th><th>Reward</th><th></th></tr></thead><tbody>${repeat(ms, m => m.mission_id, missionRowTpl)}</tbody></table></div>`;
 }
 
-function renderMissions() { const d = curData(); if (d) setHTML("contracts", missionsTable(d.missions)); }
+function renderMissions() { const d = curData(); if (d) mount("contracts", missionsTable(d.missions)); }
 
 // ---- cargo grid (current ship) ---- //
 // Distinct, evenly-spread hues per destination (golden-angle), stable as long as
@@ -979,13 +1003,17 @@ export function renderAll(d) {
   applyTabLayout(effectiveMode(d));   // detected ship / wrecks (or the MODE switch) → tab layout
   renderHeader(d);
   renderSalvage(d);                   // refresh the Salvage panel's auto-detected wreck pills
-  setHTML("datalists", datalistsHtml(d.catalog));
-  // EDIT_CELL guards every cargo-ops screen so an open inline editor isn't clobbered by
-  // the 3s poll; DRAG_DEST guards a route drag; GRID_HOVER guards the hold highlight. Plan
-  // renders only its active sub, so combining all three keeps either sub stable mid-interaction.
-  if (!EDIT_CELL) setHTML("cargo", cargoView(d));
-  if (!EDIT_CELL && DRAG_DEST == null && !GRID_HOVER) setHTML("plan", planView(d));
-  if (EDIT === null) setHTML("contracts", missionsTable(d.missions));  // don't clobber an open editor
+  mount("datalists", datalistsHtml(d.catalog));
+  // Cargo/Plan are lit now, but two transient-interaction guards remain on purpose: EDIT_CELL
+  // (the inline cell editor is deep in dynamic lists — only rerenderEdits paints it open, so a
+  // poll never reconciles it away), and DRAG_DEST/GRID_HOVER (route drag + hold-highlight apply
+  // classes imperatively; re-rendering mid-drag/hover would fight them). All three are state
+  // flags, not innerHTML caches — the win is the bridge + EDIT going, not these.
+  if (!EDIT_CELL) mount("cargo", cargoView(d));
+  if (!EDIT_CELL && DRAG_DEST == null && !GRID_HOVER) mount("plan", planView(d));
+  // Contracts is fully lit: no guard — lit reuses the open editor's DOM (typed values + focus
+  // survive), so we repaint on every snapshot like everything else.
+  mount("contracts", missionsTable(d.missions));
 }
 
 const loadOrder = (gs) => [...gs].sort((a, b) => b.routeIdx - a.routeIdx);
@@ -1140,8 +1168,9 @@ function accessLabel(access) {
 // The 3D hold render wrapped in #holdwrap (the hover-highlight target). Delegated
 // mouseover/out drive the bidirectional highlight (box ↔ list row).
 function holdHtml(d, packed, access) {
-  return `<div id="holdwrap" onmouseover="boxHover(event)" onmouseout="boxHover(event)">`
-    + cargoGridHtml(d.ship_grid, { scale: 22, packed, layout: d.ship_layout, access }) + `</div>`;
+  // cargoGridHtml is the classic IIFE packer (cargogrid.js) — returns an HTML string → unsafeHTML.
+  return html`<div id="holdwrap" @mouseover=${boxHover} @mouseout=${boxHover}>${unsafeHTML(
+    cargoGridHtml(d.ship_grid, { scale: 22, packed, layout: d.ship_layout, access }))}</div>`;
 }
 
 // ---- editor actions ---- //
@@ -1153,7 +1182,11 @@ const rawOverride = (mid) => {
 };
 
 function editMission(mid) {
-  EDIT = mid; renderMissions();
+  const m = (curData().missions || []).find(x => x.mission_id === mid);
+  EDIT = mid;
+  EDIT_DROPS = buildLegRows(m, "dropoff");      // seed the lit-managed editor rows from the log
+  EDIT_PICKUPS = buildLegRows(m, "pickup");
+  renderMissions();
   // Critical fields a sparse mission usually needs filled: origin, plus each leg's
   // cargo / quantity / destination. The EMPTY ones get a low positive tabindex (in
   // visual order) so Tab walks through them FIRST — fill the gaps, then Tab drops into
@@ -1170,7 +1203,7 @@ function editMission(mid) {
     if (target) { target.focus(); if (target.select) target.select(); }
   }, 0);
 }
-function cancelEdit() { EDIT = null; renderMissions(); }
+function cancelEdit() { EDIT = null; EDIT_DROPS = []; EDIT_PICKUPS = []; renderMissions(); }
 // Editor keybindings: Enter (in a text field) saves, Escape cancels — matching the
 // inline cell editor so the whole form is keyboard-dismissable.
 function edFormKey(e, mid) {
@@ -1267,32 +1300,9 @@ window.addEventListener("pagehide", () => {
   window.addEventListener("resize", sync);
 })();
 
-// ---- window bridge ---- //
-// Inline HTML handlers (onclick="editMission(…)", the interpolated onclick="${fn}(…)" in
-// tabBar, etc.) resolve names against `window`. Under <script type="module"> top-level
-// declarations are module-scoped, NOT global — so every function reachable from an inline
-// handler must be re-exposed here explicitly. tests/test_window_bridge.py statically enforces
-// that this block covers every handler-referenced name (fails the build on drift). Other
-// modules bridge their own handlers the same way: archive.js (archive/replay + the contract-
-// log type filter), stream.js (the update banner), mining.js, settings.js, jukebox.js.
-Object.assign(window, {
-  // contracts / mission editor
-  editMission, saveMission, cancelEdit, deleteMission, resetMission, restoreMission, addLeg, edFormKey,
-  // unified inline cell editor
-  edOpen, edOpenKey, edKey, edCommit,
-  // header / ship selector
-  setMode, comboOpen, comboFilter, comboKey, comboBlur, comboPick,
-  // cargo / plan tabs + route reorder
-  cargoSub, resetRouteOrder, rowHover, boxHover, markDelivered,
-  routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,
-  // mining (Find / Plan)
-  miningSub, miningFind, miningIndex,
-  bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList, bpBuildShip, bpQtyFilter,
-  // signal id (RS reading → rock / wreck)
-  signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
-  // salvage (Ship-ID panel)
-  salvageToggle, salvagePick, salvageDdOpen, salvageDdFilter, salvageDdKey,
-});
+// (No window bridge: the whole dashboard is lit-rendered now and every handler binds via lit
+// @event, so module-scoped functions never need to be re-exposed on `window`. The old
+// Object.assign(window, {…}) bridge and tests/test_window_bridge.py that enforced it are gone.)
 
 // ---- initial route resolution (runs last, once all tab state + functions exist) ---- //
 // Map the URL onto the dashboard. Must run after the whole module is initialised —

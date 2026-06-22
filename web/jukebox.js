@@ -4,7 +4,8 @@
 // thereafter open/close just toggles the overlay. Music-extraction progress is pushed in via
 // jukeApplyMusicState (called from the snapshot stream) — cached so a lazily-built panel
 // catches up. Curation (rename/skip/reorder/shuffle) persists server-side via /api/music*.
-import { $, esc, num, setHTML, toast } from "./dom.js";
+import { $, esc, num, mount, toast } from "./dom.js";
+import { html, unsafeHTML } from "./lit.js";
 import { postJSON, getJSON } from "./net.js";
 
 // ---- jukebox: play + curate the game soundtrack decoded from the p4k ---- //
@@ -93,21 +94,19 @@ function jukeOrderedIds() {
 
 export function initJukebox() {
   if (!JUKE_BUILT) {
-    setHTML("jukeboxBody",
-      `<div class="juke-bar">
+    mount("jukeboxBody", html`<div class="juke-bar">
         <span class="juke-status" id="jukeStatus"></span>
         <span class="juke-total" id="jukeTotal"></span>
       </div>
       <ul class="juke-list" id="jukeList"></ul>`);
-    setHTML("jukeboxFoot",
-      `<div class="juke-player">
+    mount("jukeboxFoot", html`<div class="juke-player">
         <div class="juke-now" id="jukeNow">Nothing playing</div>
         <div class="juke-transport">
           <button class="juke-nav juke-shuf" id="jukeShuffle" title="Shuffle" aria-label="Shuffle" aria-pressed="false"><svg class="juke-ic" viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg></button>
-          <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">${JUKE_IC.prev}</button>
-          <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>${JUKE_IC.play}</button>
-          <button class="juke-nav" id="jukeStop" title="Stop" aria-label="Stop" disabled>${JUKE_IC.stop}</button>
-          <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">${JUKE_IC.next}</button>
+          <button class="juke-nav" id="jukePrev" title="Previous" aria-label="Previous track">${unsafeHTML(JUKE_IC.prev)}</button>
+          <button class="juke-play" id="jukePlay" title="Play" aria-label="Play" disabled>${unsafeHTML(JUKE_IC.play)}</button>
+          <button class="juke-nav" id="jukeStop" title="Stop" aria-label="Stop" disabled>${unsafeHTML(JUKE_IC.stop)}</button>
+          <button class="juke-nav" id="jukeNext" title="Next" aria-label="Next track">${unsafeHTML(JUKE_IC.next)}</button>
           <span class="juke-time" id="jukeCur">0:00</span>
           <input class="juke-seek" id="jukeSeek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" disabled>
           <span class="juke-time" id="jukeDur">0:00</span>
