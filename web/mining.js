@@ -626,7 +626,7 @@ async function renderBpPlan() {
     const plan = await fetch("/api/mining-plan", {
       method: "POST", headers: writeHeaders(), body: JSON.stringify({ minerals: agg.minerals || [] }),
     }).then(r => r.json());
-    setHTML(out, breakdownHtml(agg) + planResultHtml(plan));
+    setHTML(out, breakdownHtml(agg) + contractsHtml(agg) + planResultHtml(plan));
   } catch (e) { setHTML(out, `<div class="empty">plan failed</div>`); }
 }
 // The merged shopping list: every chosen recipe's materials summed by resource.
@@ -649,6 +649,33 @@ function breakdownHtml(agg) {
       th("For", false, "Which blueprints need this material"),
       rows, "No materials.")}
   </div>`;
+}
+// The other half of "what do I need to build this": per chosen blueprint, the contracts that
+// reward it, grouped by the faction that grants them. `sources` rides each aggregate item; we
+// tolerate the pre-rebuild flat-string shape defensively.
+const _BP_SRC_CAP = 6;
+const _bpSource = (s) => (typeof s === "string") ? { faction: s, contracts: [] } : (s || {});
+function contractsHtml(agg) {
+  let withSrc = 0, noSrc = 0;
+  const rows = (agg.items || []).filter(it => it.found).map(it => {
+    const srcs = (it.sources || []).map(_bpSource).filter(s => s.faction);
+    if (!srcs.length) { noSrc++; return ""; }
+    withSrc++;
+    const lines = srcs.map(s => {
+      const all = s.contracts || [];
+      const chips = all.slice(0, _BP_SRC_CAP).map(t => tag(t)).join(" ");
+      const more = all.length > _BP_SRC_CAP ? ` <span class="mn-dim">+${all.length - _BP_SRC_CAP} more</span>` : "";
+      const body = chips ? chips + more : `<span class="mn-dim">no specific contract</span>`;
+      return `<div class="bp-src"><span class="bp-fac">${esc(s.faction)}</span> ${body}</div>`;
+    }).join("");
+    return `<div class="mrow"><span class="mk">${esc(it.name)}</span><div class="bp-srcs">${lines}</div></div>`;
+  }).join("");
+  if (!withSrc) return "";
+  const foot = noSrc
+    ? `<div class="mn-dim mplan-foot">${noSrc} selected blueprint${noSrc > 1 ? "s have" : " has"} no known reward contract (craft-only).</div>`
+    : "";
+  return `<div class="card"><h3><span>Reward contracts</span><span class="scu">where to earn these blueprints</span></h3>
+    <div class="mplan-srcs">${rows}${foot}</div></div>`;
 }
 function planResultHtml(r) {
   const targets = r.targets || [];

@@ -935,6 +935,12 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mcand.salv{border-left:2px solid var(--amber)}
 .mcand.salv h3 .scu{color:var(--amber)}
 .mplan-srcs{padding:6px 16px 14px;display:flex;flex-direction:column;gap:10px}
+/* Reward-contracts card: each blueprint row's body stacks one line per granting faction. */
+.bp-srcs{display:flex;flex-direction:column;gap:5px;flex:1 1 60%;min-width:0}
+.bp-src{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+.bp-fac{flex:0 0 auto;font-family:var(--display);text-transform:uppercase;letter-spacing:.1em;
+  font-size:10px;color:var(--cyan)}
+.mplan-foot{padding-top:2px;font-size:11px}
 /* ship-vs-rock feasibility verdict pill + factors (Identify candidate card) */
 .feas{display:inline-block;white-space:nowrap;font-family:var(--display);font-size:10.5px;
   font-weight:600;letter-spacing:.1em;text-transform:uppercase;border-radius:3px;

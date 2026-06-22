@@ -26,8 +26,9 @@ _cache = {"mtime": None, "data": {"blueprints": [], "fetched_at": None, "game_ve
 # Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
 # dropped fields), so installs rebuild the cache on update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
-EXTRACT_VERSION = 2  # v2: + size/class/grade for all items (Type/Subtype/Class/Quality/Size
-                     # columns); v1 added `sources`
+EXTRACT_VERSION = 3  # v3: `sources` is now structured [{faction, contracts:[titles]}] (was a
+                     # flat [label] list); v2 added size/class/grade for all items
+                     # (Type/Subtype/Class/Quality/Size columns); v1 added `sources`
 
 
 def save_blueprints(blueprints: list, game_version: str | None = None,
@@ -245,8 +246,10 @@ def aggregate_blueprints(items: list, path: str = BLUEPRINTS_PATH) -> dict:
     """Merge a build-list of ``{name, qty}`` into one crafting shopping list: every recipe's
     materials summed by resource (``scu`` × qty), tagged with the strictest ``min_quality`` any
     line asks for and which blueprints (and how many) need it. Unknown names are echoed with
-    ``found: False`` and left out of the totals. The ``minerals`` shortcut feeds the same
-    deposit-coverage plan (``/api/mining-plan``) as a single blueprint does."""
+    ``found: False`` and left out of the totals. Each resolved item carries its ``sources``
+    (contracts that reward it, grouped by faction) when known, for the planner's reward card.
+    The ``minerals`` shortcut feeds the same deposit-coverage plan (``/api/mining-plan``) as a
+    single blueprint does."""
     by_res: dict[str, dict] = {}        # resource -> running total + contributors
     resolved: list = []
     total_seconds = 0.0
@@ -260,8 +263,11 @@ def aggregate_blueprints(items: list, path: str = BLUEPRINTS_PATH) -> dict:
         if not bp:
             resolved.append({"name": name, "qty": qty, "found": False})
             continue
-        resolved.append({"name": bp["name"], "qty": qty, "found": True,
-                         "category": bp.get("category"), "craft_seconds": bp.get("craft_seconds")})
+        item = {"name": bp["name"], "qty": qty, "found": True,
+                "category": bp.get("category"), "craft_seconds": bp.get("craft_seconds")}
+        if bp.get("sources"):   # contracts that reward it, grouped by faction (planner card)
+            item["sources"] = bp["sources"]
+        resolved.append(item)
         total_seconds += (bp.get("craft_seconds") or 0) * qty
         for r in bp.get("requirements", []):
             agg = by_res.setdefault(r["resource"], {"resource": r["resource"], "scu": 0.0,

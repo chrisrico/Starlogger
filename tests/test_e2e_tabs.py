@@ -254,3 +254,38 @@ def test_mining_plan_table_columns_and_filter(page, populated_server):
         "rows => rows.filter(r => r.style.display !== 'none').map(r => r.querySelector('td b').textContent)")
     assert shown == ["Civ Shield"], shown
     assert errors == []
+
+
+def test_reward_contracts_card_renders_per_blueprint(page, populated_server):
+    """Selecting a blueprint with known reward sources renders the per-blueprint 'Reward
+    contracts' card: the granting faction's label + its contract-title chips, capped at 6 per
+    faction with a '+N more' tail. The plan endpoints are stubbed so the assertion doesn't
+    depend on the on-disk catalog (which may predate the structured-`sources` rebuild)."""
+    import json
+    titles = [f"Contract {i}" for i in range(1, 9)]   # 8 -> shown capped to 6 with "+2 more"
+    page.route("**/api/blueprints", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"blueprints": [
+            {"name": "Test Cannon", "type": "Vehicle Weapons", "subtype": "Cannon",
+             "cls": "Military", "quality": "A", "size": 3}]})))
+    page.route("**/api/blueprints-plan", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({
+            "items": [{"name": "Test Cannon", "qty": 1, "found": True,
+                       "sources": [{"faction": "Eckhart Security", "contracts": titles}]}],
+            "requirements": [], "minerals": [], "craft_seconds": 0, "total_scu": 0})))
+    page.route("**/api/mining-plan", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"targets": [], "per_mineral": [], "coverage": []})))
+    errors = _boot(page, populated_server)
+    page.evaluate("() => window.setMode('mining')")
+    page.click('#nav a[data-tab="mining"]')
+    page.evaluate("() => window.miningSub('plan')")
+    page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length === 1")
+    page.evaluate("() => window.bpStep(0, 1)")            # qty 1 -> schedules renderBpPlan
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('#mres-plan .card h3 span')]"
+        ".some(s => /Reward contracts/i.test(s.textContent))")
+    page.wait_for_selector("#mres-plan .bp-fac")
+    assert "Eckhart Security" in page.locator("#mres-plan .bp-fac").first.text_content()
+    assert page.locator("#mres-plan .bp-src .lt-tag").count() == 6           # capped
+    assert page.locator("#mres-plan .bp-src", has_text="+2 more").count() == 1
+    assert errors == [], errors

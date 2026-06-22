@@ -56,11 +56,16 @@ def _fixture(root: str) -> None:
            "BlueprintPoolRecord.BP_MissionReward_Test", _pool("x", "weapons/bp_foo.json"))
     write_record(os.path.join(root, "libs/foundry/records/crafting/blueprintrewards/xenothreat2rewards/bp_rewards_xenothreat2_test.json"),
            "BlueprintPoolRecord.BP_Rewards_XenoThreat2_Test", _pool("x", "weapons/bp_foo.json"))
-    # a generator under the foxwellenforcement org dir that points at the first pool.
+    # a generator under the foxwellenforcement org dir whose contract grants the first pool;
+    # the contract carries a player-facing Title (a stringParamOverride) the planner resolves.
     write_record(os.path.join(root, "libs/foundry/records/contracts/contractgenerator/mercenary_guild/foxwellenforcement/foxwell_test.json"),
            "ContractGenerator.Foxwell_Test",
-           {"_Type_": "ContractGenerator", "blueprintPool":
-            "file://./../../../../crafting/blueprintrewards/blueprintmissionpools/bp_missionreward_test.json"})
+           {"_Type_": "ContractGenerator", "generators": [{"_Type_": "Generator", "contracts": [
+               {"_Type_": "Contract",
+                "paramOverrides": {"stringParamOverrides": [
+                    {"param": "Title", "value": "@Foxwell_Test_Title"}]},
+                "missionResults": [{"rewards": [{"_Type_": "BlueprintRewards", "blueprintPool":
+                    "file://./../../../../crafting/blueprintrewards/blueprintmissionpools/bp_missionreward_test.json"}]}]}]}]})
     # a placeholder-named blueprint that must be dropped
     write_record(os.path.join(root, "libs/foundry/records/crafting/blueprints/crafting/weapons/bp_ph.json"),
            "CraftingBlueprintRecord.BP_PH",
@@ -91,14 +96,25 @@ def test_build_blueprints_extracts_recipe(tmp_path):
 
 
 def test_blueprint_sources_from_reward_pools(tmp_path):
-    # bp_foo is granted by a Foxwell generator-wired pool and a standalone XenoThreat pool;
-    # both surface as sorted source labels (org dir curated, event dir named).
+    # bp_foo is granted by a Foxwell contract (its Title resolved + cleaned of the [tag] and the
+    # ~mission() fill-in) and a standalone XenoThreat event pool (faction only, no contract).
     root = str(tmp_path)
     _fixture(root)
-    src = scdata.build_blueprint_sources(root)
-    assert src["bp_foo"] == ["Foxwell Enforcement", "XenoThreat"]
-    b = scdata.build_blueprints(root, {"item_name_foo": "Foo Widget"})[0]
-    assert b["sources"] == ["Foxwell Enforcement", "XenoThreat"]
+    loc = {"foxwell_test_title": "[Yellow] Disrupt ~mission(Location)"}
+    expected = [{"faction": "Foxwell Enforcement", "contracts": ["Disrupt a location"]},
+                {"faction": "XenoThreat", "contracts": []}]
+    src = scdata.build_blueprint_sources(root, loc)
+    assert src["bp_foo"] == expected
+    b = scdata.build_blueprints(root, {**loc, "item_name_foo": "Foo Widget"})[0]
+    assert b["sources"] == expected
+
+
+def test_clean_contract_title_strips_tags_and_placeholders():
+    from starlogger.scdata._blueprints import _clean_contract_title
+    assert _clean_contract_title("[Yellow Level] Deal with ~mission(TargetName)") == "Deal with the target"
+    assert _clean_contract_title("  Wanted:   ~mission(Item) ") == "Wanted: an item"
+    assert _clean_contract_title("~mission(UnknownTok)") == "…"   # unknown token -> ellipsis
+    assert _clean_contract_title("") == ""
 
 
 def test_lookup_blueprint_by_name(tmp_path):

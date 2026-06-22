@@ -32,10 +32,12 @@ from ._p4k import (
 # crafting/blueprintrewards/), each listing blueprintRewards[].blueprintRecord (the
 # bp_craft_* record). A pool is wired to a faction's missions via a `blueprintPool` ref
 # inside a ContractGenerator (grouped under a faction org dir), or stands alone for an
-# event (XenoThreat, Wikelo's collector exchange). So: blueprint <- pool <- faction. We
-# invert that to a {blueprint-record-stem: [faction/event labels]} index for the planner.
-# Pools carry no display name, so the label comes from the generator's org dir (curated for
-# the run-together names) or, for standalone pools, the pool's own name.
+# event (XenoThreat, Wikelo's collector exchange). So: blueprint <- pool <- contract <-
+# faction. We invert that to a {blueprint-record-stem: [{faction, contracts:[titles]}]} index
+# for the planner -- grouping the player-facing contract Titles (resolved from global.ini)
+# under the faction that grants them. Pools carry no display name, so the faction comes from
+# the generator's org dir (curated for the run-together names) or, for a standalone event pool
+# with no contract, the pool's own name (with an empty contract list).
 _ORG_NAMES = {
     "bitzeros": "BitZeros",
     "bountyhunterguild": "Bounty Hunters Guild",
@@ -73,11 +75,62 @@ def _pool_label(pool: str, dirname: str, orgs: "set[str] | None") -> str:
     return _ORG_NAMES.get(nm, nm.replace("_", " ").title())
 
 
-def build_blueprint_sources(records_root: str) -> "dict[str, list[str]]":
-    """``{blueprint-record-stem: [faction/event labels]}`` -- the missions that reward each
-    blueprint. Reads the reward pools and the contract generators that point at them."""
-    # generator org per pool: scan generators once for their blueprintPool refs.
-    pool_orgs: "dict[str, set[str]]" = {}
+def _org_label(org: str) -> "str | None":
+    """Faction display name for a contract-generator org dir, or None when the generator sits
+    directly under ``contractgenerator/`` (no faction dir) -- the caller then falls back to the
+    pool label."""
+    if not org or org == "contractgenerator":
+        return None
+    return _ORG_NAMES.get(org, org.title())
+
+
+# Contract Titles carry runtime fill-ins (``~mission(TargetName)``) and the odd bracketed tag
+# prefix; render them as readable static text for the planner.
+_MISSION_TOKEN = {"targetname": "the target", "target": "the target", "item": "an item",
+                  "location": "a location", "locationname": "a location",
+                  "destination": "a destination", "quantity": "some"}
+_MISSION_RE = re.compile(r"~mission\(([^)]*)\)")
+_TAG_PREFIX_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")
+
+
+def _clean_contract_title(s: str) -> str:
+    """A player-facing contract title cleaned for display: drop any leading ``[..]`` tags,
+    replace ``~mission(Token)`` runtime fill-ins with readable words, collapse whitespace."""
+    if not s:
+        return ""
+    s = _TAG_PREFIX_RE.sub("", s)
+    s = _MISSION_RE.sub(lambda m: _MISSION_TOKEN.get(m.group(1).strip().lower(), "…"), s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _contract_title_and_pools(contract: dict) -> "tuple[str | None, list[str]]":
+    """A generator contract's Title loc key + the reward pools it grants. The Title is a
+    ``stringParamOverrides`` entry (``param == 'Title'``); pools are the ``blueprintPool`` of
+    each ``BlueprintRewards`` reward, found anywhere in the contract subtree."""
+    found: dict = {"title": None, "pools": []}
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("param") == "Title" and "value" in o:
+                found["title"] = o["value"]
+            if o.get("_Type_") == "BlueprintRewards" and o.get("blueprintPool"):
+                found["pools"].append(_stem(o["blueprintPool"]))
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(contract)
+    return found["title"], found["pools"]
+
+
+def build_blueprint_sources(records_root: str, loc: dict) -> "dict[str, list[dict]]":
+    """``{blueprint-record-stem: [{faction, contracts:[titles]}]}`` -- the contracts that reward
+    each blueprint, grouped by the faction that grants them. Reads the reward pools and the
+    contract generators that point at them, resolving each contract's player-facing Title."""
+    # pool stem -> {(org_dir, title_loc_key)} for every contract that grants the pool.
+    pool_contracts: "dict[str, set[tuple[str, str | None]]]" = {}
     for f in glob.glob(os.path.join(records_root, "**", "contractgenerator", "**", "*.json"),
                        recursive=True):
         try:
@@ -87,10 +140,17 @@ def build_blueprint_sources(records_root: str) -> "dict[str, list[str]]":
         if "blueprintrewards" not in s:
             continue
         org = os.path.basename(os.path.dirname(f))
-        for m in re.findall(r"blueprintrewards/[^\"]+?\.json", s):
-            pool_orgs.setdefault(_stem(m), set()).add(org)
-    # pool -> blueprints, inverted to blueprint -> labels.
-    sources: "dict[str, set[str]]" = {}
+        try:
+            rv = _load_json(f)["_RecordValue_"]
+        except (OSError, ValueError, KeyError):
+            continue
+        for gen in (rv.get("generators") or []):
+            for c in (gen.get("contracts") or []):
+                title, pools = _contract_title_and_pools(c)
+                for p in pools:
+                    pool_contracts.setdefault(p, set()).add((org, title))
+    # pool -> blueprints, built up as {blueprint: {faction: {titles}}}.
+    grouped: "dict[str, dict[str, set[str]]]" = {}
     for f in glob.glob(os.path.join(records_root, "**", "blueprintrewards", "**", "*.json"),
                        recursive=True):
         try:
@@ -102,10 +162,21 @@ def build_blueprint_sources(records_root: str) -> "dict[str, list[str]]":
         if not bps:
             continue
         pool = _stem(f)
-        label = _pool_label(pool, os.path.basename(os.path.dirname(f)), pool_orgs.get(pool))
+        dirname = os.path.basename(os.path.dirname(f))
+        contracts = pool_contracts.get(pool)
         for b in bps:
-            sources.setdefault(b, set()).add(label)
-    return {k: sorted(v) for k, v in sources.items()}
+            fac = grouped.setdefault(b, {})
+            if contracts:
+                for org, title_key in contracts:
+                    label = _org_label(org) or _pool_label(pool, dirname, None)
+                    titles = fac.setdefault(label, set())
+                    t = _clean_contract_title(_loc_text(title_key, loc)) if title_key else ""
+                    if t:
+                        titles.add(t)
+            else:   # standalone event pool -- faction/event name, no contract context
+                fac.setdefault(_pool_label(pool, dirname, None), set())
+    return {b: [{"faction": fa, "contracts": sorted(ts)} for fa, ts in sorted(fac.items())]
+            for b, fac in grouped.items()}
 
 
 def _craft_seconds(bp: dict) -> int:
@@ -171,12 +242,12 @@ def build_blueprints(records_root: str, loc: dict) -> list:
     """Every craftable blueprint -> {name, category, crafts, craft_seconds, requirements,
     minerals}, read from an extracted DataCore records root. ``requirements`` is the flat
     material list (slot/resource/scu/min_quality); ``minerals`` is the distinct resource
-    names for feeding the mining planner. A blueprint also carries ``sources`` -- the
-    faction/event missions that reward it -- when any are known. Placeholders/unnamed
-    blueprints are skipped."""
+    names for feeding the mining planner. A blueprint also carries ``sources`` -- the contracts
+    that reward it, grouped by faction (``[{faction, contracts:[titles]}]``) -- when any are
+    known. Placeholders/unnamed blueprints are skipped."""
     ent_index = _index_by_basename(records_root, "entities")
     meta_cache: dict[str, dict] = {}   # entity basename -> {name, grade, grade_num}
-    sources = build_blueprint_sources(records_root)   # blueprint-record stem -> [labels]
+    sources = build_blueprint_sources(records_root, loc)   # bp stem -> [{faction, contracts}]
     out = []
     for p in glob.glob(os.path.join(records_root, "**", "crafting", "blueprints",
                                     "crafting", "**", "*.json"), recursive=True):
