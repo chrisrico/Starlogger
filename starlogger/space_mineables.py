@@ -27,7 +27,8 @@ _cache = {"mtime": None,
 # so installs rebuild on a code update even without a major game-version move. 0 == absent.
 # v2: fields gained the optional ``points`` list (real Lagrange points, via ``starmap``).
 # v3: ``points`` regrouped by real planet -> [{planet, lpoints}] (was a flat ["CRU-L1", ...]).
-EXTRACT_VERSION = 3
+# v4: unplaced Lagrange archetypes ("Lagrange G", "Lagrange Occupied") dropped from the catalog.
+EXTRACT_VERSION = 4
 
 
 def save_space_mineables(fields: list, game_version: str | None = None,

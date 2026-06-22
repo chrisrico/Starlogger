@@ -106,7 +106,8 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
         print(f"[space mineables] rebuilding from local install ({reason}) -- niced, ~minutes")
         sms = scdata.build_space_mineables_from_p4k(p4k)
         if sms:
-            pts = starmap.add_field_points(sms)  # real Lagrange points from the committed bundle
+            pts = starmap.add_field_points(sms)     # real Lagrange points from the committed bundle
+            starmap.drop_unplaced_archetypes(sms)   # drop un-navigable "Lagrange G"/"Occupied"
             space_mineables.save_space_mineables(sms, game_version=ver)
             tail = f", {pts} with real points" if pts else ""
             print(f"[space mineables] built {len(sms)} fields{tail} ({reason})")

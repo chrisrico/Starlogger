@@ -136,6 +136,19 @@ def test_add_field_points_missing_bundle_is_a_noop(tmp_path):
     assert "points" not in fields[0]
 
 
+def test_drop_unplaced_archetypes():
+    fields = [
+        {"name": "Lagrange E", "system": "Stanton",            # placed -> kept
+         "points": [{"planet": "Crusader", "lpoints": ["L1"]}]},
+        {"name": "Lagrange G", "system": "Stanton"},           # unplaced archetype -> dropped
+        {"name": "Lagrange Occupied", "system": "Stanton"},    # unplaced variant -> dropped
+        {"name": "Aaron Halo", "system": "Stanton"},           # real belt, no points -> kept
+        {"name": "Yela Belt", "system": "Stanton"},            # real belt, no points -> kept
+    ]
+    assert starmap.drop_unplaced_archetypes(fields) == 2
+    assert [f["name"] for f in fields] == ["Lagrange E", "Aaron Halo", "Yela Belt"]
+
+
 # --- the SHIPPED bundle: guard against an empty/corrupt commit --------------- #
 def test_shipped_bundle_covers_stanton_lagrange():
     pts = starmap._bundled(config.DEFAULT_LAGRANGE_POINTS_PATH)

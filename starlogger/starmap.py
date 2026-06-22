@@ -69,6 +69,19 @@ def add_field_points(fields: list, path: str = config.DEFAULT_LAGRANGE_POINTS_PA
     return n
 
 
+def drop_unplaced_archetypes(fields: list) -> int:
+    """Remove Lagrange-archetype fields the bundle places nowhere -- the unplaced "Lagrange G" and
+    the "Lagrange Occupied" variant. Without a real point they'd surface as a bare, un-navigable
+    archetype label (the very jargon the planet labelling removed), and their ores are already
+    covered by the placed A..F fields. Real named belts/halos (Aaron Halo, Yela Belt) have no
+    points either but ARE destinations, so only the "Lagrange "-prefixed archetypes are dropped.
+    Call AFTER ``add_field_points``. Mutates ``fields`` in place; returns the count removed."""
+    before = len(fields)
+    fields[:] = [f for f in fields
+                 if f.get("points") or not str(f.get("name", "")).startswith("Lagrange ")]
+    return before - len(fields)
+
+
 # --- maintainer: refresh the bundle from the live starmap API --------------- #
 # Location detail; ?include=resources is REQUIRED -- the bare response only sets has_resources,
 # the include carries the mining provider archetype + ores.
