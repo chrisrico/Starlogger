@@ -23,6 +23,7 @@ const { feasibility, suggestCrack } = window;
 let MINING_SUB = "find";           // find | plan
 let MINING_MINERALS = null;        // cached mineral names for the autocomplete
 let MINING_BLUEPRINTS = null;      // cached {name, category} catalog for the picker
+let MINING_SHIPS = null;           // cached buildable ship names for the shipbuilder dropdown
 let FIND_LAST = null;              // last mineral-lookup result — re-ranked on loadout change
 let MINING_INIT = false;
 // Plan sub: the per-blueprint build quantity, keyed by blueprint name. Persisted so a planned
@@ -34,6 +35,9 @@ const _bpSave = () => { try { localStorage.setItem("bpQty", JSON.stringify(BP_QT
 // Plan sub: the table viewport's user-dragged height (resize:vertical on .bp-pick), persisted so a
 // taller/shorter table survives a reload. 0 = unset → CSS default (400px).
 let BP_H = (() => { const v = parseInt(localStorage.getItem("bpPickH"), 10); return v > 0 ? v : 0; })();
+// Plan sub: "Qty > 0" toggle — when on, the table shows only rows you've given a quantity (the
+// selected builds, e.g. after the shipbuilder), on top of any column filters. Persisted.
+let BP_ONLY = localStorage.getItem("bpOnly") === "1";
 
 export async function initMining() {
   if (!MINING_INIT) {
@@ -44,6 +48,13 @@ export async function initMining() {
     };
     [MINING_MINERALS, MINING_BLUEPRINTS] = await Promise.all([
       grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints")]);
+    // Buildable ships for the shipbuilder dropdown: those with craftable components / a radar.
+    try {
+      const sd = await getJSON("/api/ships");
+      MINING_SHIPS = Object.entries(sd.ships || {})
+        .filter(([, e]) => e && (e.components || e.radar))
+        .map(([name]) => name).sort((a, b) => a.localeCompare(b));
+    } catch (_) { MINING_SHIPS = []; }
     ensureGear();   // preload the mining-gear catalog for the feasibility verdict (fire-and-forget)
     // Re-rank the current Find results when the ship loadout changes (popup save) — it surfaces
     // the minability of the equipped ship.
@@ -99,6 +110,7 @@ function renderMiningShell() {
   // quantity is set).
   renderBpPlan();
   _bpWatchHeight();
+  _bpApplyFilter();   // honor a persisted "Qty > 0" toggle on (re)render
 }
 // Persist the blueprint table's user-dragged height (resize:vertical). The element is rebuilt on
 // every shell render, so re-observe the current one each time; ResizeObserver fires on drag.
@@ -333,7 +345,7 @@ const _bpCell = (b, k) => { const v = b[k]; return (v === "" || v == null) ? "" 
 function blueprintTableHtml() {
   const head = BP_COLS.map(c =>
     `<th data-col="${c.key}"${_bpRA(c.key) ? ' class="lt-num"' : ""}><span class="bp-h" onclick="bpSort('${c.key}')">${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span>${c.key === "name" ? "" : `<button class="bp-fbtn" title="Filter ${c.label}" onclick="bpFilterOpen(event,'${c.key}')"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg></button>`}</th>`
-  ).join("") + `<th class="lt-num">Qty</th>`;
+  ).join("") + `<th class="lt-num" data-col="qty">Qty<button class="bp-fbtn" title="Show only rows with a quantity (Qty > 0)" onclick="bpQtyFilter(event)"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg></button></th>`;
   const rows = (MINING_BLUEPRINTS || []).map((b, i) => {
     const q = BP_QTY[b.name] || 0;
     const cells = BP_COLS.map(c => {
@@ -344,12 +356,32 @@ function blueprintTableHtml() {
   }).join("");
   return `<table class="logtable bp-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
 }
+// ---- Shipbuilder: outfit a whole ship's components to a chosen class in one click ---- //
+// Pick a ship + a component class; /api/ship-build returns the Grade-A blueprints to craft each
+// of its slots (chosen class where it makes the part, else the closest class) and we drop those
+// quantities into the planner. Always Grade A -- the only tier worth crafting.
+const SB_CLASSES = ["Civilian", "Military", "Industrial", "Competition", "Stealth"];
+function shipbuilderHtml() {
+  const ships = (MINING_SHIPS || []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  const types = SB_CLASSES.map(c => `<option value="${c}"${c === "Military" ? " selected" : ""}>${c}</option>`).join("");
+  return `<div class="sb-bar">
+    <span class="sb-lbl">Outfit a ship ${hintIcon(
+      "Pick a ship and a component class — this sets the Grade-A blueprints to craft each of its " +
+      "components (power plant, cooler, shield, quantum drive, radar) to that class. Where a class " +
+      "doesn't make a part that size, the closest class fills it; sizes with no blueprint are flagged.")}</span>
+    <select id="sb-ship" class="sb-sel" aria-label="Ship to outfit"><option value="">Ship…</option>${ships}</select>
+    <select id="sb-type" class="sb-sel" aria-label="Component class">${types}</select>
+    <button class="sb-go" onclick="bpBuildShip()">Add builds</button>
+    <span id="sb-status" class="sb-status" role="status"></span>
+  </div>`;
+}
 function planToolHtml() {
   return `<div class="card mtool"><h3><span>Blueprints ${hintIcon(
       "Every craftable blueprint. Filter any column (multi-select, like a spreadsheet), click a header " +
       "to sort, click a row to toggle it on, and set a quantity. Materials are summed below across " +
       "everything with a quantity, then ranked by deposit coverage.")}</span>
       <button class="bp-clear" onclick="bpClearList()" title="Reset every quantity to 0">Clear</button></h3>
+    ${shipbuilderHtml()}
     <div class="bp-pick"${BP_H ? ` style="height:${BP_H}px"` : ""}>${blueprintTableHtml()}</div>
   </div>`;
 }
@@ -366,6 +398,7 @@ function _bpApply(i, n) {
     tr.classList.toggle("bp-on", n > 0);
     const inp = tr.querySelector(".bp-qin"); if (inp && +inp.value !== n) inp.value = n;
   }
+  if (BP_ONLY) _bpApplyFilter();   // a row dropping to 0 (or rising above it) changes what's shown
   clearTimeout(_bpTimer); _bpTimer = setTimeout(renderBpPlan, 250);
 }
 export function bpStep(i, d) { const b = (MINING_BLUEPRINTS || [])[i]; if (b) _bpApply(i, (BP_QTY[b.name] || 0) + d); }
@@ -381,7 +414,45 @@ export function bpClearList() {
   for (const tr of document.querySelectorAll("#mining .bp-table tbody tr")) {
     tr.classList.remove("bp-on"); const inp = tr.querySelector(".bp-qin"); if (inp) inp.value = 0;
   }
+  _bpApplyFilter();   // with "Qty > 0" on, clearing empties the view
   renderBpPlan();
+}
+// Sync every table row's qty input + on-state from BP_QTY after a bulk change (the shipbuilder),
+// without rebuilding the table — keeps the current sort, filters, and scroll.
+function _bpSyncRows() {
+  for (const tr of document.querySelectorAll("#mining .bp-table tbody tr")) {
+    const b = (MINING_BLUEPRINTS || [])[+tr.dataset.i]; if (!b) continue;
+    const q = BP_QTY[b.name] || 0;
+    tr.classList.toggle("bp-on", q > 0);
+    const inp = tr.querySelector(".bp-qin"); if (inp) inp.value = q;
+  }
+  _bpApplyFilter();   // re-evaluate the "Qty > 0" view after a bulk change
+}
+// Outfit the picked ship: fetch its build list, set those blueprints' quantities (leaving your
+// other picks intact), refresh the plan, and report any closest-class substitutions / unfillable
+// slots inline.
+export async function bpBuildShip() {
+  const ship = ($("sb-ship") || {}).value || "";
+  const cls = ($("sb-type") || {}).value || "Military";
+  const status = $("sb-status");
+  if (!ship) { if (status) status.innerHTML = `<span class="sb-warn">Pick a ship first.</span>`; return; }
+  if (status) status.textContent = "matching…";
+  let r;
+  try { r = await getJSON(`/api/ship-build?ship=${encodeURIComponent(ship)}&cls=${encodeURIComponent(cls)}`); }
+  catch (e) { if (status) status.innerHTML = `<span class="sb-warn">Lookup failed.</span>`; return; }
+  const builds = r.builds || [];
+  if (!builds.length) {
+    if (status) status.innerHTML = `<span class="sb-warn">No craftable components for ${esc(r.ship || ship)}.</span>`;
+    return;
+  }
+  for (const b of builds) BP_QTY[b.name] = b.qty;
+  _bpSave(); _bpSyncRows();
+  clearTimeout(_bpTimer); _bpTimer = setTimeout(renderBpPlan, 50);
+  const subs = builds.filter(b => b.substituted);
+  const parts = [`Set ${builds.length} build${builds.length > 1 ? "s" : ""} — <b>${esc(r.ship || ship)}</b> · ${esc(r.cls || cls)} (Grade A)`];
+  if (subs.length) parts.push(`<span class="sb-sub">closest class: ${subs.map(b => `${esc(b.slot)} S${b.size}→${esc(b.cls)}`).join(", ")}</span>`);
+  if ((r.unmatched || []).length) parts.push(`<span class="sb-warn">no blueprint: ${r.unmatched.map(u => `${esc(u.slot)} S${u.size}`).join(", ")}</span>`);
+  if (status) status.innerHTML = parts.join(" · ");
 }
 // ---- click a header to sort by that column; click again to reverse ---- //
 export function bpSort(col) {
@@ -444,12 +515,24 @@ export function bpFilterSearch(q) {
   for (const lab of document.querySelectorAll("#bp-fpop .bp-fopt"))
     lab.style.display = (!q || lab.textContent.toLowerCase().includes(q)) ? "" : "none";
 }
+// A row is shown when it clears every column filter AND, if the "Qty > 0" toggle is on, has a qty.
+const _bpRowShown = (b) =>
+  BP_COLS.every(c => { const ex = BP_FILTERS[c.key]; return !ex || !ex.has(_bpCell(b, c.key)); })
+  && (!BP_ONLY || (BP_QTY[b.name] || 0) > 0);
 function _bpApplyFilter() {
   for (const tr of document.querySelectorAll("#mining .bp-table tbody tr")) {
     const b = MINING_BLUEPRINTS[+tr.dataset.i] || {};
-    tr.style.display = BP_COLS.every(c => { const ex = BP_FILTERS[c.key]; return !ex || !ex.has(_bpCell(b, c.key)); }) ? "" : "none";
+    tr.style.display = _bpRowShown(b) ? "" : "none";
   }
   for (const c of BP_COLS) { const th = document.querySelector(`#mining .bp-table th[data-col="${c.key}"]`); if (th) th.classList.toggle("bp-filtered", !!BP_FILTERS[c.key]); }
+  const qth = document.querySelector('#mining .bp-table th[data-col="qty"]'); if (qth) qth.classList.toggle("bp-filtered", BP_ONLY);
+}
+// Toggle the "Qty > 0" filter from the Qty column's funnel (the selected-only view); persisted.
+export function bpQtyFilter(e) {
+  if (e) e.stopPropagation();
+  BP_ONLY = !BP_ONLY;
+  try { localStorage.setItem("bpOnly", BP_ONLY ? "1" : "0"); } catch (_) {}
+  _bpApplyFilter();
 }
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;

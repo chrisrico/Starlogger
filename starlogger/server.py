@@ -24,6 +24,7 @@ from .settings import get_ship_equipment, set_ship_equipment
 from .settings import resolve_str as settings_str
 from .settings import update as update_settings
 from .blueprints import aggregate_blueprints, blueprint_catalog, lookup_blueprint
+from .shipbuild import ship_build_plan
 from .contracts import load_contracts
 from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
@@ -500,6 +501,17 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         return jsonify(aggregate_blueprints(
             [{"name": str((it or {}).get("name", "")), "qty": (it or {}).get("qty", 1)}
              for it in items]))
+
+    @app.get("/api/ship-build")
+    def api_ship_build():
+        # Shipbuilder: the Grade-A blueprints that outfit a ship's components to a chosen class
+        # (?ship=<name>&cls=<class>) -- the chosen class where it makes the part, else the closest
+        # class. One build per slot at the stock count; feeds the planner's "outfit a ship" control.
+        ship = request.args.get("ship", "")
+        if not ship.strip():
+            return jsonify({"ok": False, "error": "ship is required"}), 400
+        return jsonify(ship_build_plan(ship.strip(), request.args.get("cls", "Military"),
+                                       load_ship_cargo()))
 
     @app.get("/api/mining-gear")
     def api_mining_gear():

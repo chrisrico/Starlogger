@@ -4,7 +4,7 @@ import { $, val, esc, num, setHTML, logTable, th, tag, tabBar, toast } from "./d
 import { postJSON, postRaw, getJSON } from "./net.js";
 import {
   initMining, miningSub, miningFind, miningIndex, locChips,
-  bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList,
+  bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList, bpBuildShip, bpQtyFilter,
 } from "./mining.js";
 import {
   initSignal, syncSignalSession, signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
@@ -208,13 +208,18 @@ async function loadShipList() {
 // concept ships (name tagged "[…Concept…]") are kept out of the picker
 const shipIsConcept = (name) => /\[[^\]]*concept[^\]]*\]/i.test(name);
 
+// The header picker lists only ships you operate in a tracked role — cargo (has a hold), mining,
+// or salvage. Combat/other ships live in the catalog purely so the shipbuilder can outfit them
+// (they'd clutter this picker); the shipbuilder keeps its own, fuller list.
+const shipIsPrimary = (v) => (v.scu || 0) > 0 || !!v.mining || /mining|salvage/i.test(v.role || "");
+
 // catalog entries matching `filter` (by ship name or manufacturer), concepts
 // removed, sorted by manufacturer then name.
 function shipMatches(filter) {
   if (!SHIP_DB) return [];
   const f = (filter || "").trim().toLowerCase();
   return Object.entries(SHIP_DB)
-    .filter(([n]) => !shipIsConcept(n))
+    .filter(([n, v]) => !shipIsConcept(n) && shipIsPrimary(v))
     .filter(([n, v]) => !f || n.toLowerCase().includes(f) || (v.manufacturer || "").toLowerCase().includes(f))
     .map(([n, v]) => ({ name: n, mfr: v.manufacturer || "—" }))
     .sort((a, b) => a.mfr.localeCompare(b.mfr) || a.name.localeCompare(b.name));
@@ -1355,7 +1360,7 @@ Object.assign(window, {
   routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,
   // mining (Find / Plan)
   miningSub, miningFind, miningIndex,
-  bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList,
+  bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList, bpBuildShip, bpQtyFilter,
   // signal id (RS reading → rock / wreck)
   signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
   // salvage (Ship-ID panel)

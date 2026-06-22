@@ -192,6 +192,39 @@ def blueprint_catalog(path: str = BLUEPRINTS_PATH) -> list:
     return sorted(rows, key=lambda r: r["name"].lower())
 
 
+# Vehicle-component `crafts` prefixes the shipbuilder fills a ship's slots from (power plant /
+# cooler / shield / quantum drive / radar) -- the first `_`-token of `crafts` is the component
+# kind for these five (manufacturer-prefixed kinds like tractor beams don't apply here).
+_COMPONENT_PREFIXES = frozenset(("powr", "cool", "shld", "qdrv", "radr"))
+
+
+def component_blueprints(prefix: str, size: int, path: str = BLUEPRINTS_PATH) -> dict:
+    """Grade-A blueprints that craft a ``prefix`` (powr/cool/shld/qdrv/radr) component of the
+    given ``size``, grouped by component class ``{cls: [blueprint, ...]}`` with each group sorted
+    by name. The supply the shipbuilder picks a ship's slot from -- Grade A only (the only tier
+    worth crafting), classless blueprints dropped (can't be matched to a chosen class)."""
+    prefix = (prefix or "").lower()
+    load_blueprints(path)
+    out: dict[str, list] = {}
+    for b in _cache["by_name"].values():
+        crafts = b.get("crafts") or ""
+        if crafts.split("_")[0].lower() != prefix:
+            continue
+        bsize = b.get("size")
+        if bsize is None:
+            bsize = _size_num(b.get("category") or "")
+        if bsize != size:
+            continue
+        if str(b.get("grade") or "").strip().upper() != "A":
+            continue
+        cls = (b.get("cls") or "").strip().title()
+        if cls:
+            out.setdefault(cls, []).append(b)
+    for grp in out.values():
+        grp.sort(key=lambda b: b["name"].lower())
+    return out
+
+
 def lookup_blueprint(name: str, path: str = BLUEPRINTS_PATH) -> dict | None:
     """The blueprint for a name (case-insensitive exact match, else first name that
     contains the query), or None. Carries its requirements + minerals."""

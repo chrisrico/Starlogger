@@ -720,10 +720,16 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                 loadout_failures += 1
             scu, groups, layout = resolve_ship_groups(cls, p4k, sb, grid_index, workdir,
                                                       loadout_text)
-            # Keep cargo ships; also keep mining vehicles even with no cargo grid so the
-            # UI can flag them (the MOLE has a grid; the Prospector / Golem / ROC / ATLS
-            # GEO don't).
-            if scu <= 0 and not mining:
+            # component_index now also carries weapons/turrets/radar (for the salvage
+            # catalog); ships.json keeps only the four headline component slots it always had.
+            components = resolve_ship_components(cls, loadout_text, component_index, loc)
+            components = {s: components[s] for s in _HEADLINE_SLOTS if s in components}
+            # Keep cargo ships; mining vehicles even with no cargo grid so the UI can flag them
+            # (the MOLE has a grid; the Prospector / Golem / ROC / ATLS GEO don't); AND any ship
+            # with craftable headline components -- combat ships have no hold but do have a power
+            # plant / cooler / shield / QD, so the shipbuilder can outfit them. The header ship
+            # picker filters these "outfit-only" ships back out (cargo/mining/salvage only).
+            if scu <= 0 and not mining and not components:
                 continue
             name, name_full = display_name(cls, loc, rec_path)
             mfr_short, mfr_full = manufacturer(cls, loc, rec_path)
@@ -738,10 +744,6 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                 "groups": groups,
             }
             entry.update(meta)
-            # component_index now also carries weapons/turrets/radar (for the salvage
-            # catalog); ships.json keeps only the four headline component slots it always had.
-            components = resolve_ship_components(cls, loadout_text, component_index, loc)
-            components = {s: components[s] for s in _HEADLINE_SLOTS if s in components}
             if components:
                 entry["components"] = components
             if mining:

@@ -37,7 +37,9 @@ _cache = {"mtime": None, "data": {"ships": {}, "fetched_at": None, "game_version
 # v1: the ``mining`` flag became a dict carrying mining-laser hardpoint sizes.
 # v2: ships carry a ``radar`` {size, stock} slot (the radar half of the mining loadout).
 # v3: the ``mining`` record carries the factory ``head`` class (for per-ship head compat).
-EXTRACT_VERSION = 3
+# v4: include every flyable ship -- combat ships too (grid-less) -- so the shipbuilder can outfit
+#     any ship; the header ship picker still lists only cargo/mining/salvage ones.
+EXTRACT_VERSION = 4
 
 
 def build_ship_cargo(p4k: str, progress=lambda m: None) -> dict:

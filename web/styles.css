@@ -843,6 +843,16 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 /* blueprint picker: one big table (Name/Type/Subtype/Class/Quality/Size + Qty). Columns are
    click-to-sort with a spreadsheet-style multi-select filter; clicking a row toggles its qty. */
 /* the table viewport is user-resizable by height (default 400px, persisted); the card sizes to it */
+/* shipbuilder bar: Ship + component-class pickers that bulk-set the planner's quantities */
+.sb-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 16px 10px;padding:8px 10px;
+  border:1px solid var(--line-2);border-radius:3px;background:rgba(var(--cyan-rgb),.04)}
+.sb-lbl{font-family:var(--display);font-weight:600;letter-spacing:.05em;color:var(--ink-2);
+  display:inline-flex;align-items:center;gap:3px}
+.sb-sel{border-radius:2px;padding:6px 8px;font-size:13px;background:var(--panel);color:var(--ink);border:1px solid var(--line-2)}
+.sb-status{font-size:12px;color:var(--ink-2);flex:1 1 100%;margin-top:1px}
+.sb-status b{color:var(--ink)}
+.sb-sub{color:var(--amber)}
+.sb-warn{color:var(--red)}
 .bp-pick{height:400px;min-height:140px;resize:vertical;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
 .bp-table{width:100%}
 .bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel);white-space:nowrap}
