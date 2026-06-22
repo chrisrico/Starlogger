@@ -853,6 +853,12 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sb-status b{color:var(--ink)}
 .sb-sub{color:var(--amber)}
 .sb-warn{color:var(--red)}
+/* outfit-ship combobox reuses the header picker's chrome (.shipbox/.shipsel/.shipmenu/.shipopt);
+   the input lives in the mining tab (not .status), so set its width + hover here, and anchor the
+   menu to the left edge since this picker sits at the start of the bar. */
+.sb-box .shipsel{width:220px}
+.sb-box .shipsel:hover,.sb-box .shipsel:focus{border-color:var(--cyan)}
+.sb-box .shipmenu{right:auto;left:0;min-width:240px;max-height:320px;overflow:auto}
 .bp-pick{height:400px;min-height:140px;resize:vertical;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
 .bp-table{width:100%}
 .bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel);white-space:nowrap}

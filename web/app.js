@@ -6,6 +6,7 @@ import {
   initMining, miningSub, miningFind, miningIndex, locChips,
   bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList, bpBuildShip, bpQtyFilter,
 } from "./mining.js";
+import { registerCombo, comboInputHtml, comboOpen, comboFilter, comboKey, comboBlur, comboPick } from "./combobox.js";
 import {
   initSignal, syncSignalSession, signalIdentify, signalAgain, signalPredict, signalKey, signalHull,
 } from "./signal.js";
@@ -194,8 +195,6 @@ function applyTabLayout(mode) {
 
 // Ship catalog for the manual selector, fetched once. name -> {manufacturer,scu,groups}.
 let SHIP_DB = null;
-let SHIP_MENU_OPEN = false;   // combobox popup state — guards the poll from clobbering it
-let SHIP_ACTIVE = -1;         // index of the keyboard-highlighted option (-1 = none)
 let GRID_HOVER = false;       // hovering a load-order row — guards the poll from wiping the hold highlight
 async function loadShipList() {
   try {
@@ -225,85 +224,17 @@ function shipMatches(filter) {
     .sort((a, b) => a.mfr.localeCompare(b.mfr) || a.name.localeCompare(b.name));
 }
 
-// The popup's options as a flat list: a "clear" sentinel first, then the matches.
-// SHIP_ACTIVE indexes into this list so Arrow keys + Enter can pick one.
-function shipEntries(filter) {
-  return [{ clear: true }].concat(shipMatches(filter));
-}
-function shipMenuHtml(filter) {
-  const ents = shipEntries(filter);
-  const matched = ents.length - 1;
-  const rows = ents.map((e, i) => {
-    const act = i === SHIP_ACTIVE ? " active" : "";
-    const aria = `role="option" id="shipopt-${i}" aria-selected="${i === SHIP_ACTIVE}"`;
-    if (e.clear)
-      return `<div class="shipopt clear${act}" ${aria} onmousedown="pickShip(event,'')">— clear (use detected) —</div>`;
-    // data-name carries the value safely (names have parens etc.); the handler reads it
-    return `<div class="shipopt${act}" ${aria} data-name="${esc(e.name)}" onmousedown="pickShip(event, this.dataset.name)">
-       <span class="sn">${esc(e.name)}</span><span class="om">${esc(e.mfr)}</span></div>`;
-  }).join("");
-  return matched ? rows : rows + `<div class="shipopt empty">no match</div>`;
-}
-// Paint the popup for `filter`, sync the open/active ARIA state, and keep the
-// highlighted option scrolled into view.
-function renderShipMenu(filter) {
-  const inp = $("shipSel"), menu = $("shipMenu");
-  if (!inp || !menu) return;
-  SHIP_MENU_OPEN = true;
-  menu.innerHTML = shipMenuHtml(filter);
-  menu.classList.add("open");
-  inp.setAttribute("aria-expanded", "true");
-  inp.setAttribute("aria-activedescendant", SHIP_ACTIVE >= 0 ? "shipopt-" + SHIP_ACTIVE : "");
-  const a = menu.querySelector(".shipopt.active");
-  if (a && a.scrollIntoView) a.scrollIntoView({ block: "nearest" });
-}
-
-function openShipMenu() {
-  const inp = $("shipSel"); if (inp) inp.select();
-  SHIP_ACTIVE = -1;
-  renderShipMenu("");   // focus shows the full list
-}
-function filterShipMenu() {
-  SHIP_ACTIVE = -1;     // typing resets the highlight
-  renderShipMenu(val("shipSel"));
-}
-function onShipBlur() {
-  SHIP_MENU_OPEN = false;
-  const menu = $("shipMenu"); if (menu) menu.classList.remove("open");
-  const inp = $("shipSel");
-  if (inp) { inp.setAttribute("aria-expanded", "false"); inp.setAttribute("aria-activedescendant", ""); }
-  if (inp && S.LAST) inp.value = S.LAST.ship || "";  // drop unselected typing
-}
-// Arrow Up/Down move the highlight, Enter selects it (else the first match),
-// Escape closes. Mirrors how a native <select>/combobox behaves.
-function shipKeydown(ev) {
-  if (ev.key === "Escape") { ev.target.blur(); return; }
-  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-    ev.preventDefault();
-    const n = shipEntries(ev.target.value).length;
-    if (!n) return;
-    SHIP_ACTIVE = ev.key === "ArrowDown"
-      ? Math.min(n - 1, SHIP_ACTIVE + 1)
-      : Math.max(0, SHIP_ACTIVE - 1);
-    renderShipMenu(ev.target.value);
-  } else if (ev.key === "Enter") {
-    ev.preventDefault();
-    const ents = shipEntries(ev.target.value);
-    if (SHIP_ACTIVE >= 0 && SHIP_ACTIVE < ents.length) {
-      const e = ents[SHIP_ACTIVE];
-      pickShip(ev, e.clear ? "" : e.name);
-    } else {
-      const m = shipMatches(ev.target.value);
-      if (m.length) pickShip(ev, m[0].name);
-    }
-  }
-}
-function pickShip(ev, name) {
-  ev.preventDefault();              // (mousedown) keep focus until we act
-  SHIP_MENU_OPEN = false; SHIP_ACTIVE = -1;
-  const inp = $("shipSel");
-  if (inp) { inp.value = name; inp.blur(); }   // blur releases the repaint guard
-  selectShip(name);
+// Register the header ship picker with the shared combobox (id "shipSel"): a "clear" sentinel
+// (revert to the detected ship) above the manufacturer-grouped matches; picking posts the choice,
+// and leaving the box without a fresh pick restores the current ship.
+let _shipComboReg = false;
+function _registerShipCombo() {
+  if (_shipComboReg) return; _shipComboReg = true;
+  registerCombo("shipSel", {
+    entries: (f) => [{ clear: true, label: "— clear (use detected) —" }, ...shipMatches(f)],
+    onPick: (name) => selectShip(name),
+    reset: () => (S.LAST && S.LAST.ship) || "",
+  });
 }
 
 async function selectShip(name) {
@@ -338,12 +269,8 @@ function statusHtml(d) {
     return `<span class="ship">SHIP <b>${esc(d.ship || "—")}</b>${equip}
       <span class="ship-auto" title="detected from the game log">● detected</span></span>`;
   }
-  const box = `<span class="shipbox">
-    <input id="shipSel" class="shipsel" type="text" autocomplete="off" aria-label="Ship"
-      role="combobox" aria-expanded="false" aria-controls="shipMenu" aria-autocomplete="list" aria-activedescendant=""
-      placeholder="search ship…" value="${esc(d.ship || "")}"
-      onfocus="openShipMenu()" oninput="filterShipMenu()" onkeydown="shipKeydown(event)" onblur="onShipBlur()">
-    <div id="shipMenu" class="shipmenu" role="listbox" aria-label="Ships"></div></span>`;
+  _registerShipCombo();
+  const box = comboInputHtml("shipSel", { value: d.ship || "", placeholder: "search ship…", label: "Ship" });
   return `<span class="ship">SHIP ${box}${equip}</span>`;
 }
 
@@ -405,7 +332,7 @@ function renderHeader(d) {
   const mining = effectiveMining(d);
   // don't repaint the status bar while the ship search box is focused or its popup
   // is open — a poll landing mid-interaction would tear it down.
-  const busy = SHIP_MENU_OPEN || (document.activeElement && document.activeElement.id === "shipSel");
+  const busy = !!(document.activeElement && document.activeElement.id === "shipSel");
   setHTML("connpill", connPillHtml(d));   // left-aligned connection indicator; always safe to repaint
   if (!busy) setHTML("status", statusHtml(d));
   setHTML("modeswitch", modeSwitchHtml(d));
@@ -1354,7 +1281,7 @@ Object.assign(window, {
   // unified inline cell editor
   edOpen, edOpenKey, edKey, edCommit,
   // header / ship selector
-  setMode, pickShip, openShipMenu, filterShipMenu, shipKeydown, onShipBlur,
+  setMode, comboOpen, comboFilter, comboKey, comboBlur, comboPick,
   // cargo / plan tabs + route reorder
   cargoSub, resetRouteOrder, rowHover, boxHover, markDelivered,
   routeDragStart, routeDragOver, routeDragLeave, routeDrop, routeDragEnd, routeGripKey,

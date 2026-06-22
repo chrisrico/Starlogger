@@ -7,6 +7,7 @@
 // (miningSub + the find/plan/bp actions).
 import { $, esc, num, val, th, tag, setHTML, logTable, tabBar, hintIcon } from "./dom.js";
 import { getJSON, writeHeaders } from "./net.js";
+import { registerCombo, comboInputHtml } from "./combobox.js";
 import { ensureGear, currentLoadout, gearCatalog } from "./shipequip.js";
 // feasibility()/suggestCrack() are globals from the classic /feasibility.js script (loaded
 // before app.js), shared with the Node unit test — same pattern as cargogrid.js's window.*.
@@ -48,12 +49,15 @@ export async function initMining() {
     };
     [MINING_MINERALS, MINING_BLUEPRINTS] = await Promise.all([
       grab("/api/minerals", "minerals"), grab("/api/blueprints", "blueprints")]);
-    // Buildable ships for the shipbuilder dropdown: those with craftable components / a radar.
+    // Buildable ships for the shipbuilder combobox: those with craftable components / a radar
+    // (concepts excluded), as {name, mfr} sorted by manufacturer then name — matching the header
+    // ship picker's grouping so the two dropdowns read the same.
     try {
       const sd = await getJSON("/api/ships");
       MINING_SHIPS = Object.entries(sd.ships || {})
-        .filter(([, e]) => e && (e.components || e.radar))
-        .map(([name]) => name).sort((a, b) => a.localeCompare(b));
+        .filter(([n, e]) => e && (e.components || e.radar) && !/\[[^\]]*concept[^\]]*\]/i.test(n))
+        .map(([name, e]) => ({ name, mfr: e.manufacturer || "—" }))
+        .sort((a, b) => a.mfr.localeCompare(b.mfr) || a.name.localeCompare(b.name));
     } catch (_) { MINING_SHIPS = []; }
     ensureGear();   // preload the mining-gear catalog for the feasibility verdict (fire-and-forget)
     // Re-rank the current Find results when the ship loadout changes (popup save) — it surfaces
@@ -361,15 +365,27 @@ function blueprintTableHtml() {
 // of its slots (chosen class where it makes the part, else the closest class) and we drop those
 // quantities into the planner. Always Grade A -- the only tier worth crafting.
 const SB_CLASSES = ["Civilian", "Military", "Industrial", "Competition", "Stealth"];
+// The ship to outfit, picked via the shared combobox (the same one the header ship picker uses),
+// registered under id "sb-ship". SB_SHIP is the committed choice; _sbMatches feeds the options.
+let SB_SHIP = "";
+const _sbMatches = (filter) => {
+  const f = (filter || "").trim().toLowerCase();
+  return (MINING_SHIPS || []).filter(s => !f || s.name.toLowerCase().includes(f) || s.mfr.toLowerCase().includes(f));
+};
+let _sbReg = false;
+function _sbRegister() {
+  if (_sbReg) return; _sbReg = true;
+  registerCombo("sb-ship", { entries: _sbMatches, onPick: (name) => { SB_SHIP = name; }, reset: () => SB_SHIP });
+}
 function shipbuilderHtml() {
-  const ships = (MINING_SHIPS || []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  _sbRegister();
   const types = SB_CLASSES.map(c => `<option value="${c}"${c === "Military" ? " selected" : ""}>${c}</option>`).join("");
   return `<div class="sb-bar">
     <span class="sb-lbl">Outfit a ship ${hintIcon(
       "Pick a ship and a component class — this sets the Grade-A blueprints to craft each of its " +
       "components (power plant, cooler, shield, quantum drive, radar) to that class. Where a class " +
       "doesn't make a part that size, the closest class fills it; sizes with no blueprint are flagged.")}</span>
-    <select id="sb-ship" class="sb-sel" aria-label="Ship to outfit"><option value="">Ship…</option>${ships}</select>
+    ${comboInputHtml("sb-ship", { value: SB_SHIP, placeholder: "search ship…", label: "Ship to outfit", cls: "sb-box" })}
     <select id="sb-type" class="sb-sel" aria-label="Component class">${types}</select>
     <button class="sb-go" onclick="bpBuildShip()">Add builds</button>
     <span id="sb-status" class="sb-status" role="status"></span>
@@ -432,7 +448,7 @@ function _bpSyncRows() {
 // other picks intact), refresh the plan, and report any closest-class substitutions / unfillable
 // slots inline.
 export async function bpBuildShip() {
-  const ship = ($("sb-ship") || {}).value || "";
+  const ship = SB_SHIP || (($("sb-ship") || {}).value || "").trim();
   const cls = ($("sb-type") || {}).value || "Military";
   const status = $("sb-status");
   if (!ship) { if (status) status.innerHTML = `<span class="sb-warn">Pick a ship first.</span>`; return; }
