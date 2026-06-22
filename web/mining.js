@@ -245,24 +245,35 @@ export async function miningFind() {
 }
 // "Mined on" chips: where a mineral is ship-mineable, attached by the server to mineral-lookup
 // + mining-plan as `locations:[{place,system,kind,rarity?,points?}]` — surface bodies (kind
-// "body") and space asteroid fields (kind "field", with a rarity tier, and `points` listing the
-// real Lagrange points where that field spawns). Returns "" when nothing is known.
+// "body") and space asteroid fields (kind "field", with a rarity tier). Archetype fields
+// (Lagrange A..F, Pyro Warm/Cool) carry `points` as the real Lagrange points grouped by planet,
+// `[{planet, lpoints:["L1",…]}]`. Returns "" when nothing is known.
 export function locChips(locations, extra = "") {
   if (!locations || !locations.length) return extra ? `<div class="mloc">${extra}</div>` : "";
   const chip = (l) => {
-    const sys = l.system ? ` · ${esc(l.system)}` : "";
     const field = l.kind === "field";
     const rar = field && l.rarity ? ` <span class="mn-dim">${esc(l.rarity)}</span>` : "";
-    const head = `<span class="lt-tag mloc-chip${field ? " mloc-field" : ""}">${esc(l.place)}${sys}${rar}</span>`;
-    // Archetype fields (Lagrange A..G) spawn at several real points — break each out as its own
-    // small tag (a flyable target) after the archetype head, instead of a long inline list.
-    if (field && l.points && l.points.length) {
-      const pts = l.points
-        .map((p) => `<span class="lt-tag mloc-chip mloc-field mloc-pt">${esc(p)}</span>`)
-        .join(" ");
-      return `${head} ${pts}`;
+    // A field placed at real Lagrange points renders one head chip per PLANET (carrying the
+    // rarity) followed by that planet's L# tags — the opaque archetype label is dropped, so you
+    // see places you can fly to (Crusader L1/L2, Hurston L3) instead of "Lagrange E"/"Warm 01".
+    const groups = field && Array.isArray(l.points)
+      ? l.points.filter((g) => g && g.planet) : [];
+    if (groups.length) {
+      const tip = l.place ? ` title="${esc(l.place)}"` : "";
+      // Each planet is its own row (a `.mloc-group` that breaks to a full line): its head chip
+      // carries the rarity, then its L# tags — so a planet + its points stay together and the
+      // groups don't run into one long wrapping line.
+      return groups.map((g) => {
+        const ls = (g.lpoints || [])
+          .map((p) => `<span class="lt-tag mloc-chip mloc-field mloc-pt">${esc(p)}</span>`)
+          .join(" ");
+        return `<span class="mloc-group"><span class="lt-tag mloc-chip mloc-field"${tip}>` +
+          `${esc(g.planet)}${rar}</span>${ls}</span>`;
+      }).join("");
     }
-    return head;
+    // surface body, plain field (belt/halo), or a pre-rebuild field without grouped points yet
+    const sys = l.system ? ` · ${esc(l.system)}` : "";
+    return `<span class="lt-tag mloc-chip${field ? " mloc-field" : ""}">${esc(l.place)}${sys}${rar}</span>`;
   };
   // `extra` is an optional trailing element (e.g. the mining-contract card's "+N more" chip).
   return `<div class="mloc"><span class="mloc-k">Mined on</span>${locations.map(chip).join(" ")}${extra}</div>`;

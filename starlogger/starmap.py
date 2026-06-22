@@ -4,14 +4,18 @@ The static ``Data.p4k`` data names each asteroid-mining field only by its spawn 
 ``HPP_Lagrange_A``..``G`` in Stanton, ``HPP_Pyro_*`` in Pyro -- and does NOT record which real
 Lagrange point that archetype is placed at (the placement is engine-side at runtime). The
 community starmap API (api.star-citizen.wiki) does: every named point (ARC-L4, CRU-L1, ...)
-exposes the archetype that spawns there. We attach the real point list to each catalogued field
-so "Lagrange E" surfaces as "CRU-L1, CRU-L2, HUR-L3" rather than a bare archetype label.
+exposes the archetype that spawns there. We attach those points to each catalogued field,
+GROUPED BY THEIR REAL PLANET, so "Lagrange E" surfaces as "Crusader L1/L2, Hurston L3" rather
+than a bare archetype label -- the opaque archetype name (esp. Pyro's "Warm 01") never reaches
+the UI.
 
 ZERO network at build/runtime: the point map is captured once and committed as a static bundle
 (``default_lagrange_points.json``); ``add_field_points`` just reads it. The live API is only
 touched by a MAINTAINER refreshing that bundle (``python -m starlogger.starmap``) -- the
 placements are stable across patches, and re-bundling is a deliberate, committed step. This keeps
-the build offline-deterministic and spares the community API ~45 calls per install.
+the build offline-deterministic and spares the community API ~45 calls per install. Planet names
+are resolved from the extract's localization at refresh time and baked into the bundle, so the
+runtime needs neither the network nor the p4k extract to name a place.
 
 Join key: the API's ``provider_names[0]`` IS the preset record token (e.g. ``HPP_Lagrange_F``),
 so rendering it through the SAME ``_field_name`` the catalog builder uses yields the catalog
@@ -24,19 +28,22 @@ with no special-casing.
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 import urllib.error
 import urllib.request
 
 from . import config
 from .jsonstore import atomic_write
+from .scdata._p4k import load_localization
 from .scdata._space_mineables import _field_name  # MUST match the catalog's naming (see above)
 
 
 # --- runtime: read the committed bundle (no network) ------------------------ #
 def _bundled(path: str = config.DEFAULT_LAGRANGE_POINTS_PATH) -> dict:
-    """``{(system, field_name): [point, ...]}`` from the shipped bundle; ``{}`` if it's missing
-    or unreadable (the fields then simply carry no points)."""
+    """``{(system, field_name): [{planet, lpoints}, ...]}`` from the shipped bundle; ``{}`` if it's
+    missing or unreadable (the fields then simply carry no points)."""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -47,9 +54,9 @@ def _bundled(path: str = config.DEFAULT_LAGRANGE_POINTS_PATH) -> dict:
 
 
 def add_field_points(fields: list, path: str = config.DEFAULT_LAGRANGE_POINTS_PATH) -> int:
-    """Attach a ``points`` list of real Lagrange points (["CRU-L1", ...]) to each catalogued
-    field the bundle knows, matched on (system, name). Mutates ``fields`` in place; returns the
-    count enriched. Reads only the static bundle -- no network."""
+    """Attach a ``points`` list -- the real Lagrange points grouped by planet,
+    ``[{planet, lpoints}]`` -- to each catalogued field the bundle knows, matched on (system,
+    name). Mutates ``fields`` in place; returns the count enriched. Reads only the static bundle."""
     pts = _bundled(path)
     if not pts:
         return 0
@@ -72,6 +79,14 @@ _LOC_URL = config.STARMAP_API.rstrip("/") + "/locations/{slug}?include=resources
 _SYSTEMS = {
     "Stanton": ("arc", "cru", "hur", "mic"),
     "Pyro": ("pyr1", "pyr2", "pyr3", "pyr5", "pyr6"),
+}
+
+# Point-code prefix -> planet display name. Stanton's are fixed brand names (mirrored in
+# planner.py); Pyro's come from localization at refresh time (pyro1..6), falling back to these.
+_PLANET = {
+    "ARC": "ArcCorp", "CRU": "Crusader", "HUR": "Hurston", "MIC": "microTech",
+    "PYR1": "Pyro I", "PYR2": "Monox", "PYR3": "Bloom",
+    "PYR4": "Pyro IV", "PYR5": "Pyro V", "PYR6": "Terminus",
 }
 
 
@@ -110,9 +125,9 @@ def _archetype(detail: dict) -> str | None:
 
 
 def field_points(fetch=_fetch):
-    """``({(system, field_name): [point, ...]}, api_version)`` -- the real Lagrange points each
-    field spawns at, fetched live from the starmap API (~45 calls). Points that 404 or carry no
-    ship-mining archetype are skipped. ``api_version`` is the patch the API built its data from
+    """``({(system, field_name): [code, ...]}, api_version)`` -- the real Lagrange point codes
+    each field spawns at, fetched live from the starmap API (~45 calls). Points that 404 or carry
+    no ship-mining archetype are skipped. ``api_version`` is the patch the API built its data from
     (``meta.resource.version``), or None. An empty map means every fetch failed."""
     out: dict = {}
     api_version = None
@@ -131,15 +146,53 @@ def field_points(fetch=_fetch):
     return out, api_version
 
 
+def _planet_name(prefix: str, loc: dict) -> str:
+    """Planet a point-code prefix belongs to. Pyro names are read from localization (so a future
+    rename is picked up on the next refresh); Stanton brand names + any gap use the static map."""
+    m = re.fullmatch(r"PYR(\d)", prefix)
+    if m:
+        return (loc.get(f"pyro{m.group(1)}") or "").strip() or _PLANET.get(prefix, prefix)
+    return _PLANET.get(prefix, prefix)
+
+
+def _group_by_planet(codes: list, loc: dict) -> list:
+    """Flat point codes -> ``[{planet, lpoints}]`` grouped by real planet, planet order by first
+    appearance (codes arrive sorted): ["CRU-L1","CRU-L2","HUR-L3"] ->
+    [{"planet":"Crusader","lpoints":["L1","L2"]}, {"planet":"Hurston","lpoints":["L3"]}]."""
+    groups: dict = {}
+    order: list = []
+    for c in codes:
+        prefix, _, lp = c.partition("-")          # "CRU-L1" -> "CRU","L1"; "PYR1-L1" -> "PYR1","L1"
+        planet = _planet_name(prefix, loc)
+        if planet not in groups:
+            groups[planet] = []
+            order.append(planet)
+        groups[planet].append(lp)
+    return [{"planet": p, "lpoints": groups[p]} for p in order]
+
+
+def _localization() -> dict:
+    """The extract's localization for planet-name resolution, or {} if the local p4k records
+    aren't present (maintainer ran outside the repo) -- the static map then covers it."""
+    try:
+        return load_localization(os.path.join(config.BASE_DIR, "p4k", "records"))
+    except Exception:
+        return {}
+
+
 def refresh_bundle(path: str = config.DEFAULT_LAGRANGE_POINTS_PATH, fetch=_fetch,
-                   stamp: str | None = None) -> int:
-    """Rebuild the committed bundle from the live API and write it (sorted, for clean diffs).
-    Returns the number of fields written; raises on a total fetch failure (nothing to write).
-    ``stamp`` overrides the generated-at timestamp (tests pass a fixed value)."""
+                   stamp: str | None = None, loc: dict | None = None) -> int:
+    """Rebuild the committed bundle from the live API and write it (planet-grouped, sorted, for
+    clean diffs). Returns the number of fields written; raises on a total fetch failure (nothing
+    to write). Planet names come from the extract's localization (``loc``); when None it's loaded
+    from the local p4k records, falling back to the static map. ``stamp`` fixes the timestamp."""
     pts, api_version = field_points(fetch=fetch)
     if not pts:
         raise RuntimeError("starmap API returned no points (network down?) -- bundle unchanged")
-    fields = [{"system": s, "name": n, "points": p} for (s, n), p in sorted(pts.items())]
+    if loc is None:
+        loc = _localization()
+    fields = [{"system": s, "name": n, "points": _group_by_planet(codes, loc)}
+              for (s, n), codes in sorted(pts.items())]
     atomic_write(path, {
         "source": config.STARMAP_API + "/locations",
         "generated_at": stamp or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

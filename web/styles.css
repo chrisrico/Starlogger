@@ -954,8 +954,10 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
   font-size:10px;letter-spacing:.14em}
 .mloc-chip{color:var(--cyan);border-color:rgba(var(--cyan-rgb),.4)}
 .mloc-chip.mloc-field{color:var(--amber);border-color:rgba(var(--amber-rgb),.4)}
-/* each real Lagrange point an archetype field (Lagrange A..G) spawns at, as its own small
-   flyable tag following the archetype head chip */
+/* one planet's points: a full-width row (so simple body/field chips keep flowing inline above,
+   while each planet + its L# tags gets its own line) holding the planet head chip + its L# tags */
+.mloc-group{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px}
+/* each real Lagrange L# point, as its own small flyable tag following its planet head chip */
 .mloc-pt{font-size:.82em;opacity:.85}
 .feas-setup{font-family:var(--display);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
   color:var(--cyan);background:rgba(var(--cyan-rgb),.1);border:1px solid rgba(var(--cyan-rgb),.35);

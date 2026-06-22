@@ -26,7 +26,8 @@ _cache = {"mtime": None,
 # Extract-schema version: bump when the output SHAPE changes (new / renamed / dropped fields),
 # so installs rebuild on a code update even without a major game-version move. 0 == absent.
 # v2: fields gained the optional ``points`` list (real Lagrange points, via ``starmap``).
-EXTRACT_VERSION = 2
+# v3: ``points`` regrouped by real planet -> [{planet, lpoints}] (was a flat ["CRU-L1", ...]).
+EXTRACT_VERSION = 3
 
 
 def save_space_mineables(fields: list, game_version: str | None = None,

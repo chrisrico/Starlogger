@@ -75,7 +75,9 @@ def _save_fields(path: str) -> None:
                             {"mineral": "Bexalite", "rarity": "rare"}]},
         {"name": "Lagrange E", "system": "Stanton",
          "ship_mineables": [{"mineral": "Bexalite", "rarity": "rare"}],
-         "points": ["CRU-L1", "CRU-L2", "HUR-L3"]},   # real Lagrange points (via starmap)
+         # real Lagrange points grouped by planet (via starmap)
+         "points": [{"planet": "Crusader", "lpoints": ["L1", "L2"]},
+                    {"planet": "Hurston", "lpoints": ["L3"]}]},
     ], game_version="4.8", path=path)
     space_mineables._cache["mtime"] = None
 
@@ -88,9 +90,10 @@ def test_locations_for(tmp_path):
         {"field": "Aaron Halo", "system": "Stanton", "rarity": "common"}]
     bx = space_mineables.locations_for("Bexalite", path=path)
     assert [(l["field"], l["rarity"]) for l in bx] == [("Aaron Halo", "rare"), ("Lagrange E", "rare")]
-    # the archetype field surfaces its real points; the plain field does not
+    # the archetype field surfaces its real points (grouped by planet); the plain field does not
     le = next(l for l in bx if l["field"] == "Lagrange E")
-    assert le["points"] == ["CRU-L1", "CRU-L2", "HUR-L3"]
+    assert le["points"] == [{"planet": "Crusader", "lpoints": ["L1", "L2"]},
+                            {"planet": "Hurston", "lpoints": ["L3"]}]
     assert "points" not in next(l for l in bx if l["field"] == "Aaron Halo")
     assert space_mineables.locations_for("Unobtainium", path=path) == []
 
