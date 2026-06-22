@@ -41,6 +41,10 @@ MINEABLES_PATH = os.path.join(DATA_DIR, "mineables.json")
 # Mining equipment (laser heads + consumable modules), from the same full DataCore
 # extract as mineables -- the gear side of the rock-feasibility calc. See mining_gear.py.
 MINING_GEAR_PATH = os.path.join(DATA_DIR, "mining_gear.json")
+# Per-celestial-body mineables (what each planet/moon yields), parsed from the starmap
+# StarMapObject descriptions in the same full DataCore extract -- the location side of the
+# mining picture (which bodies yield a mineral). See body_mineables.py.
+BODY_MINEABLES_PATH = os.path.join(DATA_DIR, "body_mineables.json")
 # Ship radar components, from the same full DataCore extract -- carries the resource-signature
 # (RS) detection stat that ranks a radar for mining (deposit identification range). Folded into
 # the per-ship loadout the mining UI tracks (head + modules + radar). See radar.py.

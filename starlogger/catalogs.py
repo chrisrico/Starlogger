@@ -51,8 +51,8 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
     reference/mineables/blueprints modules are imported lazily (only the loop needs them).
     ``state``/``music_state`` (when given) let the music build push decode progress to the
     dashboard via the SSE snapshot -- everything else builds silently."""
-    from . import (blueprints, contracts, mineables, mining_gear, music, radar, reference,
-                   salvageables, salvage_ships)
+    from . import (blueprints, body_mineables, contracts, mineables, mining_gear, music,
+                   radar, reference, salvageables, salvage_ships)
     from .config import MUSIC_DIR
 
     def _ship(p4k, ver, reason):
@@ -94,6 +94,13 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
             mining_gear.save_mining_gear(gear["heads"], gear["modules"], game_version=ver)
             print(f"[mining gear] built {len(gear['heads'])} heads + "
                   f"{len(gear['modules'])} modules ({reason})")
+
+    def _body_mineables(p4k, ver, reason):
+        print(f"[body mineables] rebuilding from local install ({reason}) -- niced, ~minutes")
+        bms = scdata.build_body_mineables_from_p4k(p4k)
+        if bms:
+            body_mineables.save_body_mineables(bms, game_version=ver)
+            print(f"[body mineables] built {len(bms)} bodies ({reason})")
 
     def _radar(p4k, ver, reason):
         print(f"[radar] rebuilding from local install ({reason}) -- niced, ~minutes")
@@ -190,6 +197,12 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
                  lambda: bool(mining_gear.load_mining_gear().get("heads")),
                  mining_gear.mining_gear_version, _mining_gear,
                  mining_gear.EXTRACT_VERSION, mining_gear.mining_gear_extract_version),
+        # Per-body mineables (which planet/moon yields which mineral; same full-extract source).
+        # Parsed from the starmap descriptions -- the location side of the mining picture.
+        _Catalog("body mineables",
+                 lambda: bool(body_mineables.load_body_mineables().get("bodies")),
+                 body_mineables.body_mineables_version, _body_mineables,
+                 body_mineables.EXTRACT_VERSION, body_mineables.body_mineables_extract_version),
         # Ship radar components (same full-extract source as mining gear) -- the radar slot of
         # the per-ship mining loadout, carrying the resource-signature (RS) detection stat.
         _Catalog("radar",

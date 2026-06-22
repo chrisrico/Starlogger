@@ -227,6 +227,15 @@ export async function miningFind() {
     setHTML(mres(), findResultHtml(r));
   } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
 }
+// "Mined on" chips: the bodies a mineral is ship-mineable on (from the per-body starmap
+// catalog; the server attaches `locations:[{body,system}]` to mineral-lookup + mining-plan).
+// Returns "" when no body is known (older catalog / a mineral the starmap doesn't list).
+function locChips(locations) {
+  if (!locations || !locations.length) return "";
+  const chips = locations.map(l =>
+    `<span class="lt-tag mloc-chip">${esc(l.body)}${l.system ? ` · ${esc(l.system)}` : ""}</span>`).join(" ");
+  return `<div class="mloc"><span class="mloc-k">Mined on</span>${chips}</div>`;
+}
 function findResultHtml(r) {
   if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;
   const sigs = (r.signatures || []).map(s => `<span class="mscan-rs">${num(s)}</span>`).join("");
@@ -247,6 +256,7 @@ function findResultHtml(r) {
     <div class="mscan"><span class="mscan-k">Scan for</span>
       <div class="mscan-vals">${sigs || '<span class="mn-dim">—</span>'}</div></div>
     ${note}
+    ${locChips(r.locations)}
     ${logTable(
       (lo ? th("Mine", false, "Minability with your current ship's mining gear") : "") +
       th("RS", true, "Radar signature a single rock of this type reads") +
@@ -493,7 +503,7 @@ function planResultHtml(r) {
     const best = (p.rocks || []).slice(0, 3).map(x =>
       `${esc(x.name)} <span class="mn-dim">(RS ${num(x.rs)}${x.probability != null ? ", " + _chance(x.probability) : ""})</span>`).join("<br>");
     return `<div class="mrow"><span class="mk">${esc(p.mineral)}</span>
-      <div>${best || '<span class="mn-dim">no source found</span>'}</div></div>`;
+      <div>${best || '<span class="mn-dim">no source found</span>'}${locChips(p.locations)}</div></div>`;
   }).join("");
   return `<div class="card"><h3><span>Best deposits — by coverage</span></h3>
       ${logTable(

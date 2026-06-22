@@ -920,6 +920,12 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .feas-suggest{font-size:11.5px;color:var(--cyan)}
 .feas-suggest b{color:var(--text)}
 .mscan-note{font-size:11px;margin:2px 0 9px}
+/* "Mined on" location chips: which bodies a mineral is ship-mineable on (per-body starmap
+   catalog). A cyan-tinted .lt-tag so it reads as a place, distinct from the ingredient tags. */
+.mloc{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;margin:2px 0 9px}
+.mloc-k{flex:0 0 auto;font-family:var(--display);text-transform:uppercase;color:var(--ink-3);
+  font-size:10px;letter-spacing:.14em}
+.mloc-chip{color:var(--cyan);border-color:rgba(var(--cyan-rgb),.4)}
 .feas-setup{font-family:var(--display);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
   color:var(--cyan);background:rgba(var(--cyan-rgb),.1);border:1px solid rgba(var(--cyan-rgb),.35);
   border-radius:3px;padding:2px 9px;cursor:pointer}

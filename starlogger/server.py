@@ -29,6 +29,7 @@ from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .mining_gear import head_by_class, load_mining_gear, modules as gear_modules
+from .body_mineables import load_body_mineables, locations_for
 from .radar import load_radar, radar_by_class
 from .salvageables import salvage_lookup
 from . import salvage_ships
@@ -415,13 +416,22 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         # Distinct mineral names (autocomplete for the forward lookup + blueprint plan).
         return jsonify({"minerals": all_minerals()})
 
+    @app.get("/api/body-mineables")
+    def api_body_mineables():
+        # Per-celestial-body mineables (which planet/moon yields which mineral), parsed from
+        # the starmap descriptions. The catalog behind the inline "where to mine this" hints.
+        return jsonify(load_body_mineables())
+
     @app.get("/api/mineral-lookup")
     def api_mineral_lookup():
-        # Forward lookup: a mineral → the RS value(s) to scan for and ranked source rocks.
+        # Forward lookup: a mineral → the RS value(s) to scan for and ranked source rocks,
+        # plus the bodies it's ship-mineable on (locations: [{body, system}]).
         name = request.args.get("name", "")
         if not name.strip():
             return jsonify({"ok": False, "error": "name is required"}), 400
-        return jsonify(lookup_mineral(name))
+        r = lookup_mineral(name)
+        r["locations"] = locations_for(name)
+        return jsonify(r)
 
     @app.get("/api/mineral-index")
     def api_mineral_index():
@@ -431,11 +441,15 @@ def create_app(state: State, log_path: str | None = None, presence=None,
     @app.post("/api/mining-plan")
     def api_mining_plan():
         # Blueprint plan: wanted minerals → per-mineral sourcing + deposit coverage ranking.
+        # Each per-mineral entry also carries the bodies it's ship-mineable on (locations).
         payload = request.get_json(force=True, silent=True) or {}
         minerals = payload.get("minerals")
         if not isinstance(minerals, list):
             return jsonify({"ok": False, "error": "minerals must be a list"}), 400
-        return jsonify(mining_plan([str(m) for m in minerals]))
+        plan = mining_plan([str(m) for m in minerals])
+        for entry in plan.get("per_mineral", []):
+            entry["locations"] = locations_for(entry["mineral"])
+        return jsonify(plan)
 
     @app.get("/api/contracts")
     def api_contracts():
