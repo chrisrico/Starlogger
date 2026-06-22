@@ -29,7 +29,8 @@ from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .mining_gear import head_by_class, load_mining_gear, modules as gear_modules
-from .body_mineables import load_body_mineables, locations_for
+from .body_mineables import load_body_mineables, locations_for as body_locations_for
+from .space_mineables import load_space_mineables, locations_for as space_locations_for
 from .radar import load_radar, radar_by_class
 from .salvageables import salvage_lookup
 from . import salvage_ships
@@ -142,6 +143,17 @@ def _host_allowed(host_header: str) -> bool:
         return True
     bind = (settings_str("bind_host") or "").strip().lower()
     return bind not in ("", "localhost", "127.0.0.1", "::1")
+
+
+def _mine_locations(name: str) -> list:
+    """Unified inline "where to mine this" list for a mineral: surface bodies + space fields,
+    each tagged with ``kind`` ("body" | "field"); space fields also carry the rarity tier. Both
+    sides reconcile spelling via ``mineables._mineral_key`` (see body_mineables/space_mineables)."""
+    locs = [{"place": l["body"], "system": l["system"], "kind": "body"}
+            for l in body_locations_for(name)]
+    locs += [{"place": l["field"], "system": l["system"], "kind": "field", "rarity": l["rarity"]}
+             for l in space_locations_for(name)]
+    return locs
 
 
 def create_app(state: State, log_path: str | None = None, presence=None,
@@ -422,15 +434,21 @@ def create_app(state: State, log_path: str | None = None, presence=None,
         # the starmap descriptions. The catalog behind the inline "where to mine this" hints.
         return jsonify(load_body_mineables())
 
+    @app.get("/api/space-mineables")
+    def api_space_mineables():
+        # Space mining locations (asteroid fields / belts / Lagrange fields -> ship mineables +
+        # rarity), from the HarvestableProviderPreset records. The space half of body-mineables.
+        return jsonify(load_space_mineables())
+
     @app.get("/api/mineral-lookup")
     def api_mineral_lookup():
-        # Forward lookup: a mineral → the RS value(s) to scan for and ranked source rocks,
-        # plus the bodies it's ship-mineable on (locations: [{body, system}]).
+        # Forward lookup: a mineral → the RS value(s) to scan for and ranked source rocks, plus
+        # where it's ship-mineable (locations: surface bodies + space fields, each kind-tagged).
         name = request.args.get("name", "")
         if not name.strip():
             return jsonify({"ok": False, "error": "name is required"}), 400
         r = lookup_mineral(name)
-        r["locations"] = locations_for(name)
+        r["locations"] = _mine_locations(name)
         return jsonify(r)
 
     @app.get("/api/mineral-index")
@@ -441,14 +459,14 @@ def create_app(state: State, log_path: str | None = None, presence=None,
     @app.post("/api/mining-plan")
     def api_mining_plan():
         # Blueprint plan: wanted minerals → per-mineral sourcing + deposit coverage ranking.
-        # Each per-mineral entry also carries the bodies it's ship-mineable on (locations).
+        # Each per-mineral entry also carries where it's ship-mineable (bodies + space fields).
         payload = request.get_json(force=True, silent=True) or {}
         minerals = payload.get("minerals")
         if not isinstance(minerals, list):
             return jsonify({"ok": False, "error": "minerals must be a list"}), 400
         plan = mining_plan([str(m) for m in minerals])
         for entry in plan.get("per_mineral", []):
-            entry["locations"] = locations_for(entry["mineral"])
+            entry["locations"] = _mine_locations(entry["mineral"])
         return jsonify(plan)
 
     @app.get("/api/contracts")

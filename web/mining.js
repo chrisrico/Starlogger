@@ -227,14 +227,18 @@ export async function miningFind() {
     setHTML(mres(), findResultHtml(r));
   } catch (e) { setHTML(mres(), `<div class="empty">lookup failed</div>`); }
 }
-// "Mined on" chips: the bodies a mineral is ship-mineable on (from the per-body starmap
-// catalog; the server attaches `locations:[{body,system}]` to mineral-lookup + mining-plan).
-// Returns "" when no body is known (older catalog / a mineral the starmap doesn't list).
+// "Mined on" chips: where a mineral is ship-mineable, attached by the server to mineral-lookup
+// + mining-plan as `locations:[{place,system,kind,rarity?}]` — surface bodies (kind "body") and
+// space asteroid fields (kind "field", with a rarity tier). Returns "" when nothing is known.
 function locChips(locations) {
   if (!locations || !locations.length) return "";
-  const chips = locations.map(l =>
-    `<span class="lt-tag mloc-chip">${esc(l.body)}${l.system ? ` · ${esc(l.system)}` : ""}</span>`).join(" ");
-  return `<div class="mloc"><span class="mloc-k">Mined on</span>${chips}</div>`;
+  const chip = (l) => {
+    const sys = l.system ? ` · ${esc(l.system)}` : "";
+    const field = l.kind === "field";
+    const rar = field && l.rarity ? ` <span class="mn-dim">${esc(l.rarity)}</span>` : "";
+    return `<span class="lt-tag mloc-chip${field ? " mloc-field" : ""}">${esc(l.place)}${sys}${rar}</span>`;
+  };
+  return `<div class="mloc"><span class="mloc-k">Mined on</span>${locations.map(chip).join(" ")}</div>`;
 }
 function findResultHtml(r) {
   if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;

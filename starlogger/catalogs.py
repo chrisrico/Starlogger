@@ -52,7 +52,7 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
     ``state``/``music_state`` (when given) let the music build push decode progress to the
     dashboard via the SSE snapshot -- everything else builds silently."""
     from . import (blueprints, body_mineables, contracts, mineables, mining_gear, music,
-                   radar, reference, salvageables, salvage_ships)
+                   radar, reference, salvageables, salvage_ships, space_mineables)
     from .config import MUSIC_DIR
 
     def _ship(p4k, ver, reason):
@@ -101,6 +101,13 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
         if bms:
             body_mineables.save_body_mineables(bms, game_version=ver)
             print(f"[body mineables] built {len(bms)} bodies ({reason})")
+
+    def _space_mineables(p4k, ver, reason):
+        print(f"[space mineables] rebuilding from local install ({reason}) -- niced, ~minutes")
+        sms = scdata.build_space_mineables_from_p4k(p4k)
+        if sms:
+            space_mineables.save_space_mineables(sms, game_version=ver)
+            print(f"[space mineables] built {len(sms)} fields ({reason})")
 
     def _radar(p4k, ver, reason):
         print(f"[radar] rebuilding from local install ({reason}) -- niced, ~minutes")
@@ -203,6 +210,12 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
                  lambda: bool(body_mineables.load_body_mineables().get("bodies")),
                  body_mineables.body_mineables_version, _body_mineables,
                  body_mineables.EXTRACT_VERSION, body_mineables.body_mineables_extract_version),
+        # Space mining locations (asteroid fields/belts/Lagrange fields -> ship mineables + rarity;
+        # HarvestableProviderPreset records in the same full extract). The space half of bodies.
+        _Catalog("space mineables",
+                 lambda: bool(space_mineables.load_space_mineables().get("fields")),
+                 space_mineables.space_mineables_version, _space_mineables,
+                 space_mineables.EXTRACT_VERSION, space_mineables.space_mineables_extract_version),
         # Ship radar components (same full-extract source as mining gear) -- the radar slot of
         # the per-ship mining loadout, carrying the resource-signature (RS) detection stat.
         _Catalog("radar",

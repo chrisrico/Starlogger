@@ -45,6 +45,10 @@ MINING_GEAR_PATH = os.path.join(DATA_DIR, "mining_gear.json")
 # StarMapObject descriptions in the same full DataCore extract -- the location side of the
 # mining picture (which bodies yield a mineral). See body_mineables.py.
 BODY_MINEABLES_PATH = os.path.join(DATA_DIR, "body_mineables.json")
+# Space mining locations (asteroid fields / belts / Lagrange fields -> ship mineables + rarity),
+# from the HarvestableProviderPreset records in the full DataCore extract -- the space half of
+# the body_mineables picture (where in the black a mineral is mined). See space_mineables.py.
+SPACE_MINEABLES_PATH = os.path.join(DATA_DIR, "space_mineables.json")
 # Ship radar components, from the same full DataCore extract -- carries the resource-signature
 # (RS) detection stat that ranks a radar for mining (deposit identification range). Folded into
 # the per-ship loadout the mining UI tracks (head + modules + radar). See radar.py.
