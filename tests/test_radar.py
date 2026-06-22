@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from starlogger import radar, ships, scdata
 from starlogger.scdata._p4k import load_localization
+from starlogger.scdata._ships import mining_head as parse_mining_head
 from starlogger.scdata._ships import radar_slot as parse_radar_slot
 from scdata_helpers import write_record
 
@@ -139,6 +140,20 @@ def test_ships_radar_slot_accessor():
         "size": 1, "stock": "radr_chco_s01_surveyorlite"}
     assert ships.radar_slot("Hull A", None, db) is None       # ship with no radar record
     assert ships.radar_slot("Nope", None, db) is None         # unknown ship
+
+
+def test_mining_head_parse_and_accessor():
+    # the factory mining head is read from the ship's own loadout block (lower-cased)
+    txt = _loadout("DRAK_Golem", "RADR_NAVE_S01_SNSR5", "Mining_Laser_DRAK_Golem_S1")
+    assert parse_mining_head("DRAK_Golem", txt) == "mining_laser_drak_golem_s1"
+    assert parse_mining_head("MISC_Prospector",
+                             _loadout("MISC_Prospector", "Mining_Laser_GRIN_Arbor_S1")) == \
+        "mining_laser_grin_arbor_s1"
+    assert parse_mining_head("MISC_Prospector", _loadout("MISC_Prospector", "Foo_Bar")) is None
+    db = {"ships": {"Golem": {"mining": {"hardpoints": [1], "head": "mining_laser_drak_golem_s1"}},
+                    "Hull A": {}}}
+    assert ships.mining_head("Golem", None, db) == "mining_laser_drak_golem_s1"
+    assert ships.mining_head("Hull A", None, db) is None
 
 
 # --- catalog cache round-trip ----------------------------------------------- #

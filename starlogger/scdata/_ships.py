@@ -218,6 +218,16 @@ def mining_hardpoints(ship_class: str, loadout_text: str) -> list:
     return sorted(sizes)
 
 
+def mining_head(ship_class: str, loadout_text: str) -> str | None:
+    """The ship's factory mining-laser class (lower-cased), or None -- the head it ships with,
+    e.g. the Prospector's ``mining_laser_grin_arbor_s1`` or the Golem's bespoke
+    ``mining_laser_drak_golem_s1`` (the Pitman). Lets the equipment popup restrict head choices
+    to those sharing the factory head's mount tag (a Golem fits only its Pitman). Match it to the
+    mining-gear catalog case-insensitively."""
+    installs = _parse_loadout_blocks(loadout_text or "").get(ship_class.lower(), [])
+    return next((child for child in installs if _MINING_HEAD_RE.match(child)), None)
+
+
 # A ship's installed radar -> its size + class, by the radar class' ``_s<NN>_`` token
 # (radr_chco_s01_surveyorlite -> size 1). Drives the equipment popup's per-ship radar filter.
 _RADAR_RE = re.compile(r"^(radr_.*_s(\d+)_.*)$")
@@ -735,7 +745,8 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
             if components:
                 entry["components"] = components
             if mining:
-                entry["mining"] = {"hardpoints": mining_hardpoints(cls, loadout_text)}
+                entry["mining"] = {"hardpoints": mining_hardpoints(cls, loadout_text),
+                                   "head": mining_head(cls, loadout_text)}
             radar = radar_slot(cls, loadout_text)
             if radar:
                 entry["radar"] = radar   # {size, stock} -- the radar slot of the mining loadout

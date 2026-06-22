@@ -150,6 +150,11 @@ def _head(rv: dict, cls: str, loc: dict) -> dict | None:
         "manufacturer": mfr,
         "manufacturer_code": code,
         "size": int(size),
+        # The mining-mount tag the head requires (AttachDef.RequiredTags). Generic heads are
+        # "miningMount" (fit any standard mining turret); a ship-bespoke head carries its own
+        # (the Golem's Pitman is "DRAK_miningMount"), so it ONLY fits that ship's port and the
+        # generic heads don't fit it. Drives the equipment popup's per-ship head filter.
+        "mount": (ad.get("RequiredTags") or "").strip() or None,
         "power": power,
         "secondary_power": _power(1),
         "optimal_range": [_num(primary.get("fullDamageRange")),

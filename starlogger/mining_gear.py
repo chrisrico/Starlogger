@@ -23,7 +23,7 @@ _cache = {"mtime": None,
 # Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
 # dropped fields), so installs rebuild on a code update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
-EXTRACT_VERSION = 1  # v1: modules carry a `power` modifier (beam damageMultiplier)
+EXTRACT_VERSION = 2  # v2: heads carry a `mount` tag (RequiredTags) for per-ship head compat
 
 
 def save_mining_gear(heads: list, modules: list, game_version: str | None = None,

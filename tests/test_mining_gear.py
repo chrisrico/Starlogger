@@ -24,7 +24,7 @@ def _mod(value: float) -> dict:
 
 
 def _head_value(size: int, name_key: str, power, mods: dict, slots: int,
-                throttle_min=0.1, secondary=None) -> dict:
+                throttle_min=0.1, secondary=None, req_tags="miningMount") -> dict:
     fire = [{"damagePerSecond": {"DamageEnergy": power},
              "fullDamageRange": 60.0, "zeroDamageRange": 180.0}]
     if secondary is not None:
@@ -34,7 +34,7 @@ def _head_value(size: int, name_key: str, power, mods: dict, slots: int,
                "RequiredPortTags": "miningConsumable"} for i in range(slots)]
     return {"Components": [
         {"_Type_": "SAttachableComponentParams", "AttachDef": {
-            "Size": size,
+            "Size": size, "RequiredTags": req_tags,
             "Localization": {"_Type_": "SCItemLocalization", "Name": name_key},
             "Manufacturer": "file://.../scitemmanufacturer.misc.json"}},
         {"_Type_": "SCItemWeaponComponentParams", "fireActions": fire},
@@ -154,6 +154,7 @@ def test_head_fields(tmp_path):
     assert arbor["manufacturer_code"] == "GRIN"
     assert arbor["manufacturer"] == "Greycat Industrial"
     assert arbor["size"] == 1
+    assert arbor["mount"] == "miningMount"          # generic mount -> fits any standard turret
     assert arbor["power"] == 1890.0
     assert arbor["secondary_power"] == 1850.0
     assert arbor["optimal_range"] == [60.0, 180.0]
@@ -204,6 +205,25 @@ def test_save_load_round_trip(tmp_path):
     assert len(mining_gear.heads(path)) == 2
     assert mining_gear.head_by_class("Mining_Laser_GRIN_Arbor_S1", path)["power"] == 1890.0
     assert mining_gear.module_by_class("Mining_Modules_Passive_Focus_MK3", path)["name"] == "Focus III"
+
+
+def test_bespoke_head_mount_tag(tmp_path):
+    # A ship-bespoke head (the Golem's Pitman) carries its own mount tag, so the equipment popup
+    # can keep it off generic ships and keep generic heads off it.
+    root = str(tmp_path / "records")
+    hd = os.path.join(root, "libs/foundry/records/entities/scitem/ships/weapons")
+    write_record(os.path.join(hd, "mining_laser_grin_arbor_s1.json"),
+                 "EntityClassDefinition.Mining_Laser_GRIN_Arbor_S1",
+                 _head_value(1, "@a", 1890.0, {}, slots=1))                  # default miningMount
+    write_record(os.path.join(hd, "mining_laser_drak_golem_s1.json"),
+                 "EntityClassDefinition.Mining_Laser_DRAK_Golem_S1",
+                 _head_value(1, "@p", 3150.0, {}, slots=2, req_tags="DRAK_miningMount"))
+    loc_dir = os.path.join(root, "Data/Localization/english")
+    os.makedirs(loc_dir, exist_ok=True)
+    open(os.path.join(loc_dir, "global.ini"), "w").close()
+    by = {h["class"]: h for h in scdata.build_mining_gear(root, load_localization(root))["heads"]}
+    assert by["Mining_Laser_GRIN_Arbor_S1"]["mount"] == "miningMount"
+    assert by["Mining_Laser_DRAK_Golem_S1"]["mount"] == "DRAK_miningMount"
 
 
 if __name__ == "__main__":

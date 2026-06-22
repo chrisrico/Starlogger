@@ -36,7 +36,8 @@ _cache = {"mtime": None, "data": {"ships": {}, "fetched_at": None, "game_version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
 # v1: the ``mining`` flag became a dict carrying mining-laser hardpoint sizes.
 # v2: ships carry a ``radar`` {size, stock} slot (the radar half of the mining loadout).
-EXTRACT_VERSION = 2
+# v3: the ``mining`` record carries the factory ``head`` class (for per-ship head compat).
+EXTRACT_VERSION = 3
 
 
 def build_ship_cargo(p4k: str, progress=lambda m: None) -> dict:
@@ -167,6 +168,16 @@ def mining_hardpoints(name: str | None, internal: str | None = None,
     hit = _lookup(name, db) or _lookup(internal, db)
     mining = (hit or {}).get("mining")
     return list(mining.get("hardpoints") or []) if isinstance(mining, dict) else []
+
+
+def mining_head(name: str | None, internal: str | None = None,
+                db: dict | None = None) -> str | None:
+    """A ship's factory mining-laser class (lower-case), or None -- the head it ships with (the
+    Prospector's Arbor, the Golem's bespoke Pitman). Read from the cargo DB's ``mining`` record.
+    Lets the equipment popup restrict head choices to those sharing this head's mount tag."""
+    hit = _lookup(name, db) or _lookup(internal, db)
+    mining = (hit or {}).get("mining")
+    return mining.get("head") if isinstance(mining, dict) else None
 
 
 def radar_slot(name: str | None, internal: str | None = None,

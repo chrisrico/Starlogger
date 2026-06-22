@@ -49,6 +49,7 @@ def client(monkeypatch):
         "get_ship_equipment": lambda: {"MOLE": {"head": "H_S2", "modules": ["M_A"]}},
         "set_ship_equipment": lambda ship, eq: None,
         "mining_hardpoints": lambda name, internal, db: [2, 2, 2] if name == "MOLE" else [1],
+        "mining_head": lambda name, internal, db: None,
         "head_by_class": lambda cls: {"class": "H_S2", "module_slots": 2} if cls == "H_S2" else None,
         "gear_modules": lambda: [{"class": "M_A"}, {"class": "M_B"}],
         "load_radar": lambda: {"radars": []},
@@ -163,6 +164,23 @@ def test_mining_gear_set_ok(client, monkeypatch):
     r = client.post("/api/mining-gear", json={"ship": "MOLE", "head": "H_S2", "modules": ["M_A"]})
     assert r.status_code == 200 and r.get_json()["ok"] is True
     assert seen == {"ship": "MOLE", "eq": {"head": "H_S2", "modules": ["M_A"], "radar": None}}
+
+
+def test_mining_gear_head_filtered_by_mount(client, monkeypatch):
+    # heads carry a mount tag; a ship is offered only heads matching its factory head's mount.
+    monkeypatch.setattr(server, "load_mining_gear", lambda: {"heads": [
+        {"class": "H_GEN", "size": 1, "module_slots": 1, "mount": "miningMount"},
+        {"class": "H_PITMAN", "size": 1, "module_slots": 2, "mount": "DRAK_miningMount"}],
+        "modules": []})
+    monkeypatch.setattr(server, "mining_hardpoints", lambda name, internal, db: [1])
+    # Golem's factory head is the bespoke Pitman -> only it is offered, flagged fixed
+    monkeypatch.setattr(server, "mining_head", lambda name, internal, db: "h_pitman")
+    j = client.get("/api/mining-gear?ship=Golem").get_json()
+    assert [h["class"] for h in j["heads"]] == ["H_PITMAN"] and j["fixed_head"] is True
+    # a generic ship (factory Arbor) gets the generic head, NOT the Pitman, and isn't fixed
+    monkeypatch.setattr(server, "mining_head", lambda name, internal, db: "h_gen")
+    j = client.get("/api/mining-gear?ship=Prospector").get_json()
+    assert [h["class"] for h in j["heads"]] == ["H_GEN"] and j["fixed_head"] is False
 
 
 def test_mining_gear_filtered_includes_radars(client, monkeypatch):

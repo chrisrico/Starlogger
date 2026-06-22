@@ -86,6 +86,7 @@ export async function openShipEquip() {
       ship,
       hardpoints: r.hardpoints || [],
       heads: r.heads || [],                              // already filtered to this ship's sizes
+      fixed_head: !!r.fixed_head,                         // ship uses a bespoke, non-swappable head
       radars: r.radars || [],                            // already filtered to this ship's radar size
       radar_slot: r.radar_slot || null,                  // {size, stock} for this ship
       head: (r.selected && r.selected.head) || null,
@@ -164,6 +165,10 @@ function renderEquip() {
   html += `<div class="sp-row"><div class="sp-label"><span class="t">Mining laser ${hintIcon("The head fitted to your mining turret. Ranked by effective extraction power.")}</span></div>
     <div class="sp-ctl"><select id="se-head" onchange="seHeadChange()">
       <option value="">— none —</option>${heads.map(h => _headOption(h, headBest)).join("")}</select></div></div>`;
+  if (EDIT.fixed_head) {
+    html += `<div class="se-note mn-dim">This ship has a <b>bespoke, non-swappable</b> mining head${
+      heads[0] ? ` (${esc(heads[0].name)})` : ""} — modules &amp; radar are still your choice.</div>`;
+  }
   for (let i = 0; i < slots; i++) {
     html += `<div class="sp-row"><div class="sp-label"><span class="t">Module ${i + 1} ${hintIcon("A gadget slotted into the head. Ranked by crack benefit (power + resistance).")}</span></div>
       <div class="sp-ctl"><select id="se-mod-${i}" onchange="seModuleChange()">

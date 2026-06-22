@@ -35,7 +35,7 @@ from .mine_locations import mine_locations
 from .radar import load_radar, radar_by_class
 from .salvageables import salvage_lookup
 from . import salvage_ships
-from .ships import load_ship_cargo, mining_hardpoints, radar_slot
+from .ships import load_ship_cargo, mining_head, mining_hardpoints, radar_slot
 from .tradeflags import set_lost
 from .snapshot import build_snapshot
 from .state import State
@@ -518,12 +518,22 @@ def create_app(state: State, log_path: str | None = None, presence=None,
             hardpoints = mining_hardpoints(ship, None, db)
             sizes = set(hardpoints)
             heads = [h for h in all_heads if h.get("size") in sizes]
+            # Restrict to heads sharing the factory head's mount tag: a bespoke head (the Golem's
+            # Pitman, "DRAK_miningMount") fits ONLY its ship, and a generic ship ("miningMount")
+            # must not be offered that bespoke head. `fixed_head` flags the bespoke case so the UI
+            # can note the head isn't a free choice.
+            factory_cls = (mining_head(ship, None, db) or "").lower()
+            factory = next((h for h in all_heads if h["class"].lower() == factory_cls), None)
+            fixed_head = False
+            if factory and factory.get("mount"):
+                heads = [h for h in heads if h.get("mount") == factory["mount"]]
+                fixed_head = factory["mount"] != "miningMount"   # non-generic mount = bespoke
             rslot = radar_slot(ship, None, db)
             rsize = (rslot or {}).get("size")
             radars = [r for r in all_radars if r.get("size") == rsize] if rsize is not None else []
             return jsonify({"ship": ship, "hardpoints": hardpoints, "heads": heads,
-                            "modules": all_modules, "radars": radars, "radar_slot": rslot,
-                            "selected": saved.get(ship)})
+                            "fixed_head": fixed_head, "modules": all_modules, "radars": radars,
+                            "radar_slot": rslot, "selected": saved.get(ship)})
         return jsonify({"heads": all_heads, "modules": all_modules, "radars": all_radars,
                         "selected": saved, "game_version": cat.get("game_version")})
 
