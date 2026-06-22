@@ -28,7 +28,7 @@ _cache = {"mtime": None,
 # Extract-schema version: bump when this extraction's output SHAPE changes (new / renamed /
 # dropped fields), so installs rebuild on a code update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
-EXTRACT_VERSION = 1
+EXTRACT_VERSION = 2  # v2: global.ini-driven (recovers ,P-variant + Pyro bodies) + ground_mineables
 
 # Trailing parenthetical qualifier on an item ("Janalite (Caves only)") -- stripped before
 # keying so the qualifier doesn't corrupt the mineral key.
