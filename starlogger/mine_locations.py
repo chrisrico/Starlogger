@@ -17,13 +17,18 @@ from .space_mineables import locations_for as _space_locations_for
 
 
 def mine_locations(name: str, method: str = "ship") -> list:
-    """``[{place, system, kind}]`` (field entries also carry ``rarity``) for where ``name`` is
-    mined under ``method``. Bodies come from the method-matched list; asteroid fields are added
-    only for ``ship`` (you can't hand-mine an asteroid belt). Spelling reconciles via
+    """``[{place, system, kind}]`` (field entries also carry ``rarity``, plus ``points`` -- the
+    real Lagrange points -- when the starmap knows them) for where ``name`` is mined under
+    ``method``. Bodies come from the method-matched list; asteroid fields are added only for
+    ``ship`` (you can't hand-mine an asteroid belt). Spelling reconciles via
     ``mineables._mineral_key`` inside each reverse map."""
     locs = [{"place": l["body"], "system": l["system"], "kind": "body"}
             for l in _body_locations_for(name, method=method)]
     if method == "ship":
-        locs += [{"place": l["field"], "system": l["system"], "kind": "field", "rarity": l["rarity"]}
-                 for l in _space_locations_for(name)]
+        for l in _space_locations_for(name):
+            loc = {"place": l["field"], "system": l["system"], "kind": "field",
+                   "rarity": l["rarity"]}
+            if l.get("points"):
+                loc["points"] = l["points"]
+            locs.append(loc)
     return locs

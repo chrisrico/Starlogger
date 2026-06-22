@@ -14,9 +14,10 @@ so the mineral AND its rarity tier fall straight out of the archetype name (``..
 "Yela Belt"); the system from the record path.
 
 Note: nothing in the *static* data binds a field archetype to a *named* Lagrange point (e.g.
-"Hurston L1") -- that placement is runtime -- so the Lagrange fields are catalogued as their
-archetype (Lagrange A..G). The generic ``AsteroidCluster_*`` / ``ResourceRush_*`` presets are
-not real destinations, so they're skipped.
+"Hurston L1") -- that placement is runtime -- so the Lagrange fields are catalogued here as their
+archetype (Lagrange A..G). The real points are layered on after the build from the community
+starmap API (``starmap.add_field_points``), which keys back to this archetype name. The generic
+``AsteroidCluster_*`` / ``ResourceRush_*`` presets are not real destinations, so they're skipped.
 """
 
 from __future__ import annotations

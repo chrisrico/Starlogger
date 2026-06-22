@@ -25,7 +25,8 @@ _cache = {"mtime": None,
 
 # Extract-schema version: bump when the output SHAPE changes (new / renamed / dropped fields),
 # so installs rebuild on a code update even without a major game-version move. 0 == absent.
-EXTRACT_VERSION = 1
+# v2: fields gained the optional ``points`` list (real Lagrange points, via ``starmap``).
+EXTRACT_VERSION = 2
 
 
 def save_space_mineables(fields: list, game_version: str | None = None,
@@ -45,7 +46,8 @@ def load_space_mineables(path: str = SPACE_MINEABLES_PATH) -> dict:
 
 
 def fields(path: str = SPACE_MINEABLES_PATH) -> list:
-    """The field list (each {name, system, ship_mineables: [{mineral, rarity}]})."""
+    """The field list (each {name, system, ship_mineables: [{mineral, rarity}]}, plus an
+    optional ``points`` list of real Lagrange points where the starmap knows them)."""
     return (load_space_mineables(path) or {}).get("fields") or []
 
 
@@ -62,15 +64,18 @@ def space_mineables_extract_version(path: str = SPACE_MINEABLES_PATH) -> int:
 def mineral_locations(path: str = SPACE_MINEABLES_PATH) -> dict:
     """Reverse map ``{mineral_key: [{field, system, rarity}]}`` from every field's ship
     mineables, keyed via ``mineables._mineral_key`` so the spelling reconciles with the
-    rock/blueprint side. In catalog (system, name) order."""
+    rock/blueprint side. In catalog (system, name) order. A field carrying real Lagrange
+    points adds them as ``points`` (omitted otherwise, to keep the common case lean)."""
     out: dict[str, list] = {}
     for f in fields(path):
         for sm in f.get("ship_mineables") or []:
             key = _mineral_key(sm.get("mineral"))
             if key:
-                out.setdefault(key, []).append(
-                    {"field": f.get("name"), "system": f.get("system"),
-                     "rarity": sm.get("rarity")})
+                entry = {"field": f.get("name"), "system": f.get("system"),
+                         "rarity": sm.get("rarity")}
+                if f.get("points"):
+                    entry["points"] = f["points"]
+                out.setdefault(key, []).append(entry)
     return out
 
 

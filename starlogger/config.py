@@ -109,6 +109,11 @@ STARSTRINGS_URL = (
     "Data/Localization/english/global.ini"
 )
 
+# Community starmap API: the one source that records which real Lagrange point each
+# asteroid-field spawn archetype is placed at (the static p4k data only names the archetype).
+# Queried once per game-version build to enrich the space-mineables catalog -- see ``starmap``.
+STARMAP_API = "https://api.star-citizen.wiki/api"
+
 # `Game.log` (and `Data.p4k` beside it) live in the game's LIVE folder. On native
 # Windows that's under %PROGRAMFILES%; on Linux it's inside the Wine/Proton prefix.
 # We probe every platform's candidates (a stray isfile() on the wrong OS is cheap and

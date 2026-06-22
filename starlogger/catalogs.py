@@ -52,7 +52,7 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
     ``state``/``music_state`` (when given) let the music build push decode progress to the
     dashboard via the SSE snapshot -- everything else builds silently."""
     from . import (blueprints, body_mineables, contracts, mineables, mining_gear, music,
-                   radar, reference, salvageables, salvage_ships, space_mineables)
+                   radar, reference, salvageables, salvage_ships, space_mineables, starmap)
     from .config import MUSIC_DIR
 
     def _ship(p4k, ver, reason):
@@ -106,8 +106,10 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
         print(f"[space mineables] rebuilding from local install ({reason}) -- niced, ~minutes")
         sms = scdata.build_space_mineables_from_p4k(p4k)
         if sms:
+            pts = starmap.add_field_points(sms)  # real Lagrange points, best-effort (network)
             space_mineables.save_space_mineables(sms, game_version=ver)
-            print(f"[space mineables] built {len(sms)} fields ({reason})")
+            tail = f", {pts} with real points" if pts else ""
+            print(f"[space mineables] built {len(sms)} fields{tail} ({reason})")
 
     def _radar(p4k, ver, reason):
         print(f"[radar] rebuilding from local install ({reason}) -- niced, ~minutes")
