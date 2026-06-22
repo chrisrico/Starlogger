@@ -51,6 +51,9 @@ def client(monkeypatch):
         "mining_hardpoints": lambda name, internal, db: [2, 2, 2] if name == "MOLE" else [1],
         "head_by_class": lambda cls: {"class": "H_S2", "module_slots": 2} if cls == "H_S2" else None,
         "gear_modules": lambda: [{"class": "M_A"}, {"class": "M_B"}],
+        "load_radar": lambda: {"radars": []},
+        "radar_by_class": lambda cls: None,
+        "radar_slot": lambda name, internal, db: None,
         "filter_sessions": lambda s, **kw: {"sessions": [], "kw": kw},
         "load_sessions": lambda: [],
         "build_timeline": lambda key, lp: {"checkpoints": []} if key == "good" else None,
@@ -159,7 +162,35 @@ def test_mining_gear_set_ok(client, monkeypatch):
     monkeypatch.setattr(server, "set_ship_equipment", lambda s, eq: seen.update(ship=s, eq=eq))
     r = client.post("/api/mining-gear", json={"ship": "MOLE", "head": "H_S2", "modules": ["M_A"]})
     assert r.status_code == 200 and r.get_json()["ok"] is True
-    assert seen == {"ship": "MOLE", "eq": {"head": "H_S2", "modules": ["M_A"]}}
+    assert seen == {"ship": "MOLE", "eq": {"head": "H_S2", "modules": ["M_A"], "radar": None}}
+
+
+def test_mining_gear_filtered_includes_radars(client, monkeypatch):
+    # radars are filtered to the ship's radar slot size, and the slot {size, stock} is returned.
+    monkeypatch.setattr(server, "load_radar", lambda: {"radars": [
+        {"class": "R_S1", "size": 1, "rs": 1.0}, {"class": "R_S2", "size": 2, "rs": 1.0}]})
+    monkeypatch.setattr(server, "radar_slot",
+                        lambda name, internal, db: {"size": 1, "stock": "r_stock"})
+    monkeypatch.setattr(server, "mining_hardpoints", lambda name, internal, db: [1])
+    j = client.get("/api/mining-gear?ship=Prospector").get_json()
+    assert [r["class"] for r in j["radars"]] == ["R_S1"]          # only the size-1 radar
+    assert j["radar_slot"] == {"size": 1, "stock": "r_stock"}
+
+
+def test_mining_gear_set_radar_validates(client, monkeypatch):
+    monkeypatch.setattr(server, "radar_slot", lambda name, internal, db: {"size": 1})
+    # unknown radar class -> 400
+    monkeypatch.setattr(server, "radar_by_class", lambda cls: None)
+    assert client.post("/api/mining-gear",
+                       json={"ship": "Prospector", "radar": "NOPE"}).status_code == 400
+    # radar size mismatch vs the ship's slot -> 400
+    monkeypatch.setattr(server, "radar_by_class", lambda cls: {"class": cls, "size": 2})
+    assert client.post("/api/mining-gear",
+                       json={"ship": "Prospector", "radar": "R_S2"}).status_code == 400
+    # a correctly-sized known radar -> 200
+    monkeypatch.setattr(server, "radar_by_class", lambda cls: {"class": cls, "size": 1})
+    r = client.post("/api/mining-gear", json={"ship": "Prospector", "radar": "R_S1"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
 
 
 # --- mining GETs with arg validation --------------------------------------- #

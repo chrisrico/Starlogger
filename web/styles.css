@@ -951,6 +951,12 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .se-hp{font-family:var(--mono);font-size:12px;color:var(--ink-2);margin:2px 0 8px}
 .se-hp b{color:var(--ink)}
 .se-note{font-family:var(--mono);font-size:11px;margin-top:6px}
+.se-rec{display:flex;align-items:center;gap:8px;margin:2px 0 10px}
+.se-rec .mn-dim{font-family:var(--mono);font-size:11px}
+.se-rec-btn{font-family:var(--display);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--cyan);background:transparent;border:1px solid var(--line-2);border-radius:3px;
+  padding:4px 9px;cursor:pointer}
+.se-rec-btn:hover{border-color:var(--cyan);color:var(--ink)}
 .sp-group{margin-top:14px}
 .sp-group-h{font-family:var(--display);font-size:10.5px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--cyan);margin:0 0 4px;

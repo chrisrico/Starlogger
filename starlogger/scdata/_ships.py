@@ -218,6 +218,24 @@ def mining_hardpoints(ship_class: str, loadout_text: str) -> list:
     return sorted(sizes)
 
 
+# A ship's installed radar -> its size + class, by the radar class' ``_s<NN>_`` token
+# (radr_chco_s01_surveyorlite -> size 1). Drives the equipment popup's per-ship radar filter.
+_RADAR_RE = re.compile(r"^(radr_.*_s(\d+)_.*)$")
+
+
+def radar_slot(ship_class: str, loadout_text: str) -> dict | None:
+    """The ship's radar hardpoint -- ``{size, stock}`` from its default loadout (the Prospector
+    -> ``{size: 1, stock: radr_chco_s01_surveyorlite}``). Reads only the ship's OWN loadout
+    block, like ``mining_hardpoints``; ``None`` when no radar is installed. ``stock`` is the
+    lower-cased install class (the loadout text is lower-cased) -- match it to the radar catalog
+    case-insensitively. Drives the equipment popup's per-ship radar filter + stock marker."""
+    installs = _parse_loadout_blocks(loadout_text or "").get(ship_class.lower(), [])
+    for child in installs:
+        if (m := _RADAR_RE.match(child)):
+            return {"size": int(m.group(2)), "stock": m.group(1)}
+    return None
+
+
 def grid_cells_scu(grid_index: dict, cls: str) -> int:
     x, y, z = grid_index[cls]
     return round(x * y * z / SCU_M ** 3)
@@ -718,6 +736,9 @@ def build_ships(p4k: str, sb: str | None = None, workdir: str | None = None,
                 entry["components"] = components
             if mining:
                 entry["mining"] = {"hardpoints": mining_hardpoints(cls, loadout_text)}
+            radar = radar_slot(cls, loadout_text)
+            if radar:
+                entry["radar"] = radar   # {size, stock} -- the radar slot of the mining loadout
             entry.update(_NAME_FIXUPS.get(cls, {}))   # hand-fix names that lack localisation
             # On a model+variant name clash keep the larger-capacity one.
             if cls not in ships or scu > ships[cls]["scu"]:

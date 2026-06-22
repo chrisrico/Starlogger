@@ -8,6 +8,7 @@ from ._ships import build_ships
 from ._reference import build_reference_data, _resource_maps
 from ._mineables import build_mineables, build_mineables_from_p4k
 from ._mining_gear import build_mining_gear, build_mining_gear_from_p4k
+from ._radar import build_radar, build_radar_from_p4k
 from ._salvageables import build_salvageables, build_salvageables_from_p4k
 from ._salvage_ships import (
     build_salvage_ships, build_salvage_ships_from_p4k, is_pullable,
@@ -32,6 +33,7 @@ __all__ = [
     "build_reference_data", "_resource_maps",
     "build_mineables", "build_mineables_from_p4k",
     "build_mining_gear", "build_mining_gear_from_p4k",
+    "build_radar", "build_radar_from_p4k",
     "build_salvageables", "build_salvageables_from_p4k",
     "build_salvage_ships", "build_salvage_ships_from_p4k", "is_pullable",
     "build_blueprints", "build_blueprints_from_p4k", "build_blueprint_sources",

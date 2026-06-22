@@ -29,9 +29,10 @@ from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .mining_gear import head_by_class, load_mining_gear, modules as gear_modules
+from .radar import load_radar, radar_by_class
 from .salvageables import salvage_lookup
 from . import salvage_ships
-from .ships import load_ship_cargo, mining_hardpoints
+from .ships import load_ship_cargo, mining_hardpoints, radar_slot
 from .tradeflags import set_lost
 from .snapshot import build_snapshot
 from .state import State
@@ -473,39 +474,49 @@ def create_app(state: State, log_path: str | None = None, presence=None,
 
     @app.get("/api/mining-gear")
     def api_mining_gear():
-        # The mining-equipment catalog (laser heads + consumable modules) + the user's saved
-        # per-ship loadout. With ?ship=<name>, heads are filtered to that ship's mining
+        # The mining-equipment catalog (laser heads + consumable modules + radar) + the user's
+        # saved per-ship loadout. With ?ship=<name>, heads/radars are filtered to that ship's
         # hardpoint sizes and the response carries just that ship's saved selection -- this is
         # what the equipment popup renders. Without it, the full catalog (for browsing).
         cat = load_mining_gear()
         all_heads = cat.get("heads") or []
         all_modules = cat.get("modules") or []
+        all_radars = load_radar().get("radars") or []
         saved = get_ship_equipment()
         ship = request.args.get("ship")
         if ship:
-            hardpoints = mining_hardpoints(ship, None, load_ship_cargo())
+            db = load_ship_cargo()
+            hardpoints = mining_hardpoints(ship, None, db)
             sizes = set(hardpoints)
             heads = [h for h in all_heads if h.get("size") in sizes]
+            rslot = radar_slot(ship, None, db)
+            rsize = (rslot or {}).get("size")
+            radars = [r for r in all_radars if r.get("size") == rsize] if rsize is not None else []
             return jsonify({"ship": ship, "hardpoints": hardpoints, "heads": heads,
-                            "modules": all_modules, "selected": saved.get(ship)})
-        return jsonify({"heads": all_heads, "modules": all_modules, "selected": saved,
-                        "game_version": cat.get("game_version")})
+                            "modules": all_modules, "radars": radars, "radar_slot": rslot,
+                            "selected": saved.get(ship)})
+        return jsonify({"heads": all_heads, "modules": all_modules, "radars": all_radars,
+                        "selected": saved, "game_version": cat.get("game_version")})
 
     @app.post("/api/mining-gear")
     def api_mining_gear_set():
-        # Persist one ship's mining loadout {ship, head, modules}. Validates the head/module
-        # classes against the catalog and caps modules at the head's slot count. Empty head +
-        # empty modules clears the ship's entry.
+        # Persist one ship's mining loadout {ship, head, modules, radar}. Validates the
+        # head/module/radar classes against the catalog, caps modules at the head's slot count,
+        # and checks the radar fits the ship's radar slot size. Empty head + modules + radar
+        # clears the ship's entry.
         payload = request.get_json(force=True, silent=True) or {}
         ship = payload.get("ship")
         if not isinstance(ship, str) or not ship.strip():
             return jsonify({"ok": False, "error": "ship is required"}), 400
         head = payload.get("head") or None
         mods = payload.get("modules") or []
+        radar = payload.get("radar") or None
         if head is not None and not isinstance(head, str):
             return jsonify({"ok": False, "error": "head must be a class string or null"}), 400
         if not isinstance(mods, list) or any(not isinstance(m, str) for m in mods):
             return jsonify({"ok": False, "error": "modules must be a list of class strings"}), 400
+        if radar is not None and not isinstance(radar, str):
+            return jsonify({"ok": False, "error": "radar must be a class string or null"}), 400
         known_mods = {m["class"] for m in gear_modules()}
         head_rec = head_by_class(head) if head else None
         if head and not head_rec:
@@ -517,8 +528,16 @@ def create_app(state: State, log_path: str | None = None, presence=None,
             return jsonify({"ok": False, "error": "modules require a head"}), 400
         if len(mods) > slots:
             return jsonify({"ok": False, "error": f"head has only {slots} module slot(s)"}), 400
+        if radar:
+            radar_rec = radar_by_class(radar)
+            if not radar_rec:
+                return jsonify({"ok": False, "error": "unknown radar"}), 400
+            rslot = radar_slot(ship.strip(), None, load_ship_cargo())
+            if rslot and radar_rec.get("size") != rslot.get("size"):
+                return jsonify({"ok": False,
+                                "error": f"radar must be size {rslot.get('size')}"}), 400
         try:
-            set_ship_equipment(ship.strip(), {"head": head, "modules": mods})
+            set_ship_equipment(ship.strip(), {"head": head, "modules": mods, "radar": radar})
         except Exception as e:  # pragma: no cover
             return jsonify({"ok": False, "error": str(e)}), 500
         return _ok()

@@ -35,7 +35,8 @@ _cache = {"mtime": None, "data": {"ships": {}, "fetched_at": None, "game_version
 # dropped fields), so installs rebuild the cache on update even without a major game-version
 # move. 0 == absent (files written before this stamp existed); see ``catalogs._reason``.
 # v1: the ``mining`` flag became a dict carrying mining-laser hardpoint sizes.
-EXTRACT_VERSION = 1
+# v2: ships carry a ``radar`` {size, stock} slot (the radar half of the mining loadout).
+EXTRACT_VERSION = 2
 
 
 def build_ship_cargo(p4k: str, progress=lambda m: None) -> dict:
@@ -166,6 +167,18 @@ def mining_hardpoints(name: str | None, internal: str | None = None,
     hit = _lookup(name, db) or _lookup(internal, db)
     mining = (hit or {}).get("mining")
     return list(mining.get("hardpoints") or []) if isinstance(mining, dict) else []
+
+
+def radar_slot(name: str | None, internal: str | None = None,
+               db: dict | None = None) -> dict | None:
+    """A ship's radar hardpoint ``{size, stock}`` (e.g. the Prospector -> size 1, stock
+    ``radr_chco_s01_surveyorlite``), or None if unknown. Read from the cargo DB's ``radar``
+    record, which ``scdata.build_ships`` fills from the ship's default loadout. Drives the
+    equipment popup's per-ship radar filter + stock marker (``stock`` is lower-case; match the
+    radar catalog case-insensitively)."""
+    hit = _lookup(name, db) or _lookup(internal, db)
+    radar = (hit or {}).get("radar")
+    return dict(radar) if isinstance(radar, dict) else None
 
 
 def known_ship_names(db: dict | None = None) -> set:

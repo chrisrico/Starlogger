@@ -48,6 +48,8 @@ salvageables.json
 salvage_ships.json
 blueprints.json
 contracts.json
+mining_gear.json
+radar.json
 mission_icons/
 # Persistent full DataCore extract (records/*.json + global.ini), checked in nowhere. This is
 # the raw StarBreaker `dcb extract` output every build_* pass reads — kept on disk so the heavy

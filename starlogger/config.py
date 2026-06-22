@@ -41,6 +41,10 @@ MINEABLES_PATH = os.path.join(DATA_DIR, "mineables.json")
 # Mining equipment (laser heads + consumable modules), from the same full DataCore
 # extract as mineables -- the gear side of the rock-feasibility calc. See mining_gear.py.
 MINING_GEAR_PATH = os.path.join(DATA_DIR, "mining_gear.json")
+# Ship radar components, from the same full DataCore extract -- carries the resource-signature
+# (RS) detection stat that ranks a radar for mining (deposit identification range). Folded into
+# the per-ship loadout the mining UI tracks (head + modules + radar). See radar.py.
+RADAR_PATH = os.path.join(DATA_DIR, "radar.json")
 # Salvageable wrecks (ship-debris hulls + panels) and their radar signature, from the same
 # full DataCore extract as mineables. Salvage has no mineral composition -- only a signature
 # that identifies a target (whole-ship hull or n debris panels). Feeds the rock-lookup

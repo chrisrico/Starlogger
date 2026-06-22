@@ -182,8 +182,8 @@ def test_ship_equipment_round_trip(store):
     settings.set_ship_equipment("MOLE", {"head": "H_S2", "modules": ["M_A", "M_B"]})
     settings.set_ship_equipment("Prospector", {"head": "H_S1", "modules": []})
     eq = settings.get_ship_equipment()
-    assert eq["MOLE"] == {"head": "H_S2", "modules": ["M_A", "M_B"]}
-    assert eq["Prospector"] == {"head": "H_S1", "modules": []}
+    assert eq["MOLE"] == {"head": "H_S2", "modules": ["M_A", "M_B"], "radar": None}
+    assert eq["Prospector"] == {"head": "H_S1", "modules": [], "radar": None}
 
 
 def test_ship_equipment_clear_and_coexist_with_other_settings(store):

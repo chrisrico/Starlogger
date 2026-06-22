@@ -51,7 +51,7 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
     reference/mineables/blueprints modules are imported lazily (only the loop needs them).
     ``state``/``music_state`` (when given) let the music build push decode progress to the
     dashboard via the SSE snapshot -- everything else builds silently."""
-    from . import (blueprints, contracts, mineables, mining_gear, music, reference,
+    from . import (blueprints, contracts, mineables, mining_gear, music, radar, reference,
                    salvageables, salvage_ships)
     from .config import MUSIC_DIR
 
@@ -94,6 +94,13 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
             mining_gear.save_mining_gear(gear["heads"], gear["modules"], game_version=ver)
             print(f"[mining gear] built {len(gear['heads'])} heads + "
                   f"{len(gear['modules'])} modules ({reason})")
+
+    def _radar(p4k, ver, reason):
+        print(f"[radar] rebuilding from local install ({reason}) -- niced, ~minutes")
+        rads = scdata.build_radar_from_p4k(p4k)
+        if rads:
+            radar.save_radar(rads, game_version=ver)
+            print(f"[radar] built {len(rads)} radars ({reason})")
 
     def _salvageables(p4k, ver, reason):
         print(f"[salvageables] rebuilding from local install ({reason}) -- niced, ~minutes")
@@ -183,6 +190,12 @@ def _build_catalogs(path: str, state=None, music_state=None) -> list:
                  lambda: bool(mining_gear.load_mining_gear().get("heads")),
                  mining_gear.mining_gear_version, _mining_gear,
                  mining_gear.EXTRACT_VERSION, mining_gear.mining_gear_extract_version),
+        # Ship radar components (same full-extract source as mining gear) -- the radar slot of
+        # the per-ship mining loadout, carrying the resource-signature (RS) detection stat.
+        _Catalog("radar",
+                 lambda: bool(radar.load_radar().get("radars")),
+                 radar.radar_version, _radar,
+                 radar.EXTRACT_VERSION, radar.radar_extract_version),
         # Salvageable wrecks (ship-debris hulls + panels; signature-only, no composition).
         _Catalog("salvageables",
                  lambda: bool(salvageables.load_salvageables().get("wrecks")),
