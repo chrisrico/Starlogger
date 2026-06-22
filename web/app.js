@@ -3,7 +3,7 @@
 import { $, val, esc, num, setHTML, logTable, th, tag, tabBar, toast } from "./dom.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 import {
-  initMining, miningSub, miningFind, miningIndex,
+  initMining, miningSub, miningFind, miningIndex, locChips,
   bpSort, bpFilterOpen, bpFilterToggle, bpFilterAll, bpFilterSearch, bpRowClick, bpStep, bpQtyInput, bpClearList,
 } from "./mining.js";
 import {
@@ -943,6 +943,29 @@ function missionLegs(m) {
   return '<span class="sub">—</span>';
 }
 
+// A MINING contract's "ore × qty → where to mine" rows (Shubin purchase orders carry ore
+// requirements instead of pickup/dropoff legs). Each ore lists where it's mined via the
+// same `locChips` the mining tab uses, capped server-side with a "+N more" tail.
+function oreRow(o) {
+  const done = o.need > 0 && o.have >= o.need;
+  const hidden = (o.loc_count || 0) - (o.locations || []).length;
+  const more = hidden > 0 ? `<span class="lt-tag mloc-more">+${hidden} more</span>` : "";
+  const where = (o.locations && o.locations.length)
+    ? locChips(o.locations, more)
+    : '<div class="mloc"><span class="sub">where-to-mine unknown</span></div>';
+  return `<div class="ore-row ${done ? "legdone" : ""}">
+    <span class="ml-cargo">${esc(o.ore)}</span><span class="ml-qty">×${num(o.need)}</span>
+    <span class="ore-where">${where}</span>
+  </div>`;
+}
+
+function miningLegs(m) {
+  const ores = m.ores || [];
+  if (!ores.length) return '<span class="sub">—</span>';
+  const head = `<div class="ore-head">collect ${m.ore_any ? "any <b>one</b> of" : "all of"}</div>`;
+  return `${head}<div class="orelegs">${ores.map(oreRow).join("")}</div>`;
+}
+
 function editorRow(m) {
   const opt = (v, l, sel) => `<option value="${v}"${sel ? " selected" : ""}>${l}</option>`;
   const statuses = ["active", "completed", "abandoned", "failed", "expired"];
@@ -994,8 +1017,10 @@ function missionsTable(ms) {
     const tr = `<tr class="${m.hidden ? "hiddenrow" : ""}">
       <td><span class="badge b-${m.status}">${esc(m.status)}</span>${note}</td>
       <td>${esc(m.title || m.contract)}${edited}<div class="sub">${esc(m.org)}</div>${tags}</td>
-      <td>${stationText(m.origin)}</td>
-      <td>${missionLegs(m)}</td>
+      <td>${(m.ores && m.ores.length && m.mining_goto)
+        ? `<span class="ore-goto" title="Go to (mission marker)">▸ ${esc(m.mining_goto)}</span>`
+        : stationText(m.origin)}</td>
+      <td>${(m.ores && m.ores.length) ? miningLegs(m) : missionLegs(m)}</td>
       <td>${m.reward ? num(m.reward) + " aUEC" : '<span class="sub">—</span>'}</td>
       <td>${action}</td>
     </tr>`;

@@ -66,26 +66,41 @@ def body_mineables_extract_version(path: str = BODY_MINEABLES_PATH) -> int:
     return int((load_body_mineables(path) or {}).get("extract_version") or 0)
 
 
-def mineral_locations(path: str = BODY_MINEABLES_PATH) -> dict:
-    """Reverse map ``{mineral_key: [{body, system}]}`` from every body's *ship* mineables
-    (the ship-mining context the Find / Blueprint tools operate in). Keyed via
-    ``mineables._mineral_key`` so the body spelling reconciles with the rock/blueprint
+# Which per-body mineable list(s) a mining *method* draws from. "ship" (Prospector/MOLE) is
+# the default the Find / Blueprint tools use; "hand" (handheld multitool -- cave gems like
+# Aphorite) and "ground" (ROC, Pyro) answer the matching contract types; "any" unions them.
+_METHOD_FIELDS = {
+    "ship": ("ship_mineables",),
+    "hand": ("hand_mineables",),
+    "ground": ("ground_mineables",),
+    "any": ("ship_mineables", "hand_mineables", "ground_mineables"),
+}
+
+
+def mineral_locations(path: str = BODY_MINEABLES_PATH, method: str = "ship") -> dict:
+    """Reverse map ``{mineral_key: [{body, system}]}`` from every body's mineables for the
+    given mining ``method`` (``ship`` default -- the ship-mining context the Find / Blueprint
+    tools operate in; ``hand`` for handheld cave gems, ``ground`` for ROC, ``any`` to union).
+    Keyed via ``mineables._mineral_key`` so the body spelling reconciles with the rock/blueprint
     spelling; bodies de-duplicated per mineral, in catalog (system, name) order."""
+    fields = _METHOD_FIELDS.get(method, _METHOD_FIELDS["ship"])
     out: dict[str, list] = {}
     for b in bodies(path):
         loc = {"body": b.get("name"), "system": b.get("system")}
-        for item in b.get("ship_mineables") or []:
-            key = _mineral_key(_QUALIFIER.sub("", item or ""))
-            if not key:
-                continue
-            rows = out.setdefault(key, [])
-            if loc not in rows:
-                rows.append(loc)
+        for fld in fields:
+            for item in b.get(fld) or []:
+                key = _mineral_key(_QUALIFIER.sub("", item or ""))
+                if not key:
+                    continue
+                rows = out.setdefault(key, [])
+                if loc not in rows:
+                    rows.append(loc)
     return out
 
 
-def locations_for(name: str, path: str = BODY_MINEABLES_PATH) -> list:
-    """The bodies whose ship mineables include ``name`` (spelling-tolerant) -- a list of
+def locations_for(name: str, path: str = BODY_MINEABLES_PATH, method: str = "ship") -> list:
+    """The bodies whose ``method`` mineables include ``name`` (spelling-tolerant) -- a list of
     ``{body, system}``. The single call the server uses to attach inline location info to a
-    mineral lookup / blueprint-plan result."""
-    return mineral_locations(path).get(_mineral_key(_QUALIFIER.sub("", name or "")), [])
+    mineral lookup / blueprint-plan result (default ``ship``); the mining-contract surface
+    passes ``hand`` / ``ground`` to match the contract type."""
+    return mineral_locations(path, method).get(_mineral_key(_QUALIFIER.sub("", name or "")), [])

@@ -24,6 +24,18 @@ class Leg:
 
 
 @dataclass
+class OreReq:
+    """One ore requirement of a MINING contract (Shubin "Purchase Order: Hand Mined Materials"
+    / "Ship Mined Ore"), parsed from its ``New Objective: <have>/<need> of <ore>`` log line.
+    Unlike a hauling ``Leg`` there's no station or SCU -- just a count of an ore to collect.
+    ``need`` is the target; ``have`` the latest progress. The objective carries no usable
+    ObjectiveId in the log, so these are keyed by ore name on the Mission."""
+    ore: str
+    have: int = 0
+    need: int = 0
+
+
+@dataclass
 class Trade:
     """A manual commodity-terminal transaction (buy/sell), parsed from the game log.
 
@@ -87,6 +99,19 @@ class Mission:
     reason: str | None = None
     reward: int | None = None
     legs: dict[str, Leg] = field(default_factory=dict)
+    # MINING contracts (Shubin purchase orders) don't use legs -- they carry a set of ore
+    # requirements instead. ``ores`` is keyed by ore name; ``ore_any`` marks "Collect and
+    # deliver one of the following" (any single ore satisfies it); ``mining_goto`` is the
+    # "Go to <place>" start step the log emits before the dig. See state._mining_* + snapshot.
+    ores: dict[str, OreReq] = field(default_factory=dict)
+    ore_any: bool = False
+    mining_goto: str | None = None
+
+    @property
+    def is_mining(self) -> bool:
+        """True once any ore requirement has been parsed -- drives the contract card's
+        mining layout (ores + where-to-mine) instead of the hauling pickup/dropoff legs."""
+        return bool(self.ores)
 
     @property
     def decoded(self) -> dict:

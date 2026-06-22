@@ -74,6 +74,22 @@ def test_deliver_and_collect():
     assert patterns.DELIVER.search(cl) is None  # a Collect line is not a Deliver
 
 
+def test_mining_objectives():
+    # the suffix every "Added notification" line shares (notification index + MissionId)
+    suf = '" [114] to queue. New queue size: 1, MissionId: [ab-1], ObjectiveId: []'
+    ore = patterns.MINING_ORE.search('Added notification "New Objective: 0/15 of Aphorite: ' + suf)
+    assert (ore.group("have"), ore.group("need"), ore.group("ore"), ore.group("mid")) == \
+        ("0", "15", "Aphorite", "ab-1")
+    assert patterns.MINING_ANY.search(
+        'Added notification "New Objective: Collect and deliver one of the following:: ' + suf
+    ).group("mid") == "ab-1"
+    goto = patterns.MINING_GOTO.search('Added notification "New Objective: Go to HDMS-Perlman: ' + suf)
+    assert goto.group("loc") == "HDMS-Perlman" and goto.group("mid") == "ab-1"
+    # a hauling Deliver line (digits sit behind "Deliver ... SCU") is NOT a mining ore objective
+    dl = 'Added notification "New Objective: Deliver 0/77 SCU of Quartz to Seraphim Station: ' + suf
+    assert patterns.MINING_ORE.search(dl) is None
+
+
 def test_obj_upsert_and_mission_state():
     m = patterns.OBJ_UPSERT.search(
         "ObjectiveUpserted push message for: mission_id ab-1 - objective_id o-1 "

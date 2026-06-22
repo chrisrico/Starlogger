@@ -230,15 +230,16 @@ export async function miningFind() {
 // "Mined on" chips: where a mineral is ship-mineable, attached by the server to mineral-lookup
 // + mining-plan as `locations:[{place,system,kind,rarity?}]` — surface bodies (kind "body") and
 // space asteroid fields (kind "field", with a rarity tier). Returns "" when nothing is known.
-function locChips(locations) {
-  if (!locations || !locations.length) return "";
+export function locChips(locations, extra = "") {
+  if (!locations || !locations.length) return extra ? `<div class="mloc">${extra}</div>` : "";
   const chip = (l) => {
     const sys = l.system ? ` · ${esc(l.system)}` : "";
     const field = l.kind === "field";
     const rar = field && l.rarity ? ` <span class="mn-dim">${esc(l.rarity)}</span>` : "";
     return `<span class="lt-tag mloc-chip${field ? " mloc-field" : ""}">${esc(l.place)}${sys}${rar}</span>`;
   };
-  return `<div class="mloc"><span class="mloc-k">Mined on</span>${locations.map(chip).join(" ")}</div>`;
+  // `extra` is an optional trailing element (e.g. the mining-contract card's "+N more" chip).
+  return `<div class="mloc"><span class="mloc-k">Mined on</span>${locations.map(chip).join(" ")}${extra}</div>`;
 }
 function findResultHtml(r) {
   if (!r.rocks || !r.rocks.length) return `<div class="empty">No rock yields “${esc(r.mineral)}”.</div>`;

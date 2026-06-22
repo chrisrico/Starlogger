@@ -166,6 +166,38 @@ def test_singletomulti_marker_is_not_expanded():
     assert list(st.missions["0b-2"].legs) == ["dropoff_0"]
 
 
+# --- mining-contract objectives (Shubin purchase orders) ------------------- #
+def _notif(text, mid, idx=1):
+    return (f'<2026-06-06T00:00:00.000Z> [Notice] <SHUDEvent_OnNotification> Added notification '
+            f'"{text}: " [{idx}] to queue. New queue size: 1, MissionId: [{mid}], ObjectiveId: [] [x]\n')
+
+
+def test_mining_contract_ore_objectives():
+    st = State()
+    mid = "ab-1"
+    for ln in [_notif("Contract Accepted:  Small Purchase Order: Hand Mined Materials", mid),
+               _notif("New Objective: Go to HDMS-Perlman", mid),
+               _notif("New Objective: 0/15 of Aphorite", mid),
+               _notif("New Objective: 0/20 of Dolivine", mid),
+               _notif("New Objective: 0/5 of Hadanite", mid),
+               _notif("New Objective: Collect and deliver one of the following:", mid)]:
+        st.feed(ln)
+    m = st.missions[mid]
+    assert m.is_mining and m.ore_any and m.mining_goto == "HDMS-Perlman"
+    assert {o.ore: o.need for o in m.ores.values()} == {"Aphorite": 15, "Dolivine": 20, "Hadanite": 5}
+    assert not m.legs                     # mining contracts carry ores, not pickup/dropoff legs
+
+
+def test_hauling_objective_is_not_mistaken_for_an_ore():
+    st = State()
+    st.feed('<2026-06-06T00:00:00.000Z> [Notice] <SHUDEvent_OnNotification> Added notification '
+            '"New Objective: Deliver 0/77 SCU of Quartz to Seraphim Station: " [3] to queue. '
+            'New queue size: 1, MissionId: [cd-2], ObjectiveId: [o-1] [x]\n')
+    m = st.missions["cd-2"]
+    assert not m.is_mining and not m.ores       # parsed as a hauling leg, not an ore requirement
+    assert m.legs and next(iter(m.legs.values())).cargo == "Quartz"
+
+
 # --- award queue gating --------------------------------------------------- #
 # Only a completed mission queues for the next "Awarded N aUEC" line; failed /
 # abandoned / expired endings must never claim a payout.

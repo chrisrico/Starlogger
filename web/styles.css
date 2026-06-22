@@ -626,6 +626,17 @@ td .sub{display:block;margin-top:2px}
 .ml-dest .sub{display:inline}
 .legdone .ml-cargo,.legdone .ml-qty,.legdone .ml-dest{color:var(--ink-3);opacity:.5;text-decoration:line-through}
 .legdone .ml-arrow{opacity:.5}
+/* mining contract cell: ore × qty, with "Mined on" chips wrapping beneath each ore */
+.ore-head{font-family:var(--display);text-transform:uppercase;font-size:10px;letter-spacing:.14em;
+  color:var(--ink-3);margin-bottom:4px}
+.ore-head b{color:var(--cyan)}
+.orelegs{display:flex;flex-direction:column;gap:7px}
+.ore-row{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:8px;row-gap:3px}
+.ore-row .ml-cargo{font-weight:600}
+.ore-where{flex:1 1 100%}            /* chips drop to their own line under the ore name */
+.ore-where .mloc{margin:0}
+.mloc-more{color:var(--ink-3)}
+.ore-goto{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
 
 .badge{font-family:var(--mono);font-size:10.5px;padding:3px 9px;border-radius:2px;border:1px solid var(--line);
   text-transform:uppercase;letter-spacing:.08em}

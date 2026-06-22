@@ -29,8 +29,9 @@ from .music import load_curation, load_music, set_curation
 from .mineables import (all_minerals, decompose_rs, load_mineables, lookup_mineral,
                         lookup_rs, mineral_index, mining_plan, rock_signatures)
 from .mining_gear import head_by_class, load_mining_gear, modules as gear_modules
-from .body_mineables import load_body_mineables, locations_for as body_locations_for
-from .space_mineables import load_space_mineables, locations_for as space_locations_for
+from .body_mineables import load_body_mineables
+from .space_mineables import load_space_mineables
+from .mine_locations import mine_locations
 from .radar import load_radar, radar_by_class
 from .salvageables import salvage_lookup
 from . import salvage_ships
@@ -146,14 +147,10 @@ def _host_allowed(host_header: str) -> bool:
 
 
 def _mine_locations(name: str) -> list:
-    """Unified inline "where to mine this" list for a mineral: surface bodies + space fields,
-    each tagged with ``kind`` ("body" | "field"); space fields also carry the rarity tier. Both
-    sides reconcile spelling via ``mineables._mineral_key`` (see body_mineables/space_mineables)."""
-    locs = [{"place": l["body"], "system": l["system"], "kind": "body"}
-            for l in body_locations_for(name)]
-    locs += [{"place": l["field"], "system": l["system"], "kind": "field", "rarity": l["rarity"]}
-             for l in space_locations_for(name)]
-    return locs
+    """Unified inline "where to mine this" list for a mineral (ship-mining context: surface
+    bodies + asteroid fields). Thin wrapper over the shared ``mine_locations`` join so the
+    mineral-lookup / mining-plan endpoints and the per-mission snapshot stay consistent."""
+    return mine_locations(name)
 
 
 def create_app(state: State, log_path: str | None = None, presence=None,

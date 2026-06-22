@@ -58,6 +58,25 @@ OBJ_UPSERT = re.compile(
     r"ObjectiveUpserted push message for:\s*mission_id\s*(?P<mid>[0-9a-f-]+)\s*-\s*"
     r"objective_id\s*(?P<oid>\S+)\s*-\s*state\s*MISSION_OBJECTIVE_STATE_(?P<state>\w+)"
 )
+# MINING contracts (Shubin purchase orders) state their requirement differently from hauling:
+# "New Objective: 0/15 of Aphorite: " -- a bare count of an ore, no SCU/station. The digits
+# immediately after "New Objective:" (no "Deliver"/"Collect"/"SCU") keep this from matching the
+# hauling DELIVER/COLLECT above. ObjectiveId is empty in these, so callers key by ore name.
+MINING_ORE = re.compile(
+    r'Added notification "New Objective:\s*(?P<have>\d+)/(?P<need>\d+)\s+of\s+'
+    r'(?P<ore>[A-Za-z][A-Za-z ]*?)\s*:\s*"\s*\[\d+\].*?MissionId:\s*\[(?P<mid>[0-9a-f-]+)\]'
+)
+# "New Objective: Collect and deliver one of the following:: " -- marks the ore objectives as
+# alternatives (any single one satisfies the contract).
+MINING_ANY = re.compile(
+    r'Added notification "New Objective:\s*Collect and deliver one of the following:'
+    r'.*?MissionId:\s*\[(?P<mid>[0-9a-f-]+)\]'
+)
+# "New Objective: Go to HDMS-Perlman: " -- the navigate-to-the-dig-site start step.
+MINING_GOTO = re.compile(
+    r'Added notification "New Objective:\s*Go to\s+(?P<loc>[^:"]+?)\s*:\s*"\s*\[\d+\]'
+    r'.*?MissionId:\s*\[(?P<mid>[0-9a-f-]+)\]'
+)
 # Player's current location (where the client requests its own inventory), e.g.
 #   <RequestLocationInventory> Player[Name] requested inventory for Location[Stanton2_Orison]
 # The code is "<System><index>_<Place>" (Place may itself contain underscores);

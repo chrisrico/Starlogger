@@ -112,6 +112,27 @@ def test_locations_for_reconciles_spelling(tmp_path):
     assert body_mineables.locations_for("Unobtainium", path=path) == []
 
 
+def test_method_aware_locations(tmp_path):
+    path = str(tmp_path / "body_mineables.json")
+    body_mineables.save_body_mineables([
+        {"name": "Hurston", "system": "Stanton", "ship_mineables": ["Aluminum"],
+         "hand_mineables": ["Aphorite", "Janalite (Caves only)"], "ground_mineables": ["Copper"],
+         "harvestables": [], "creatures": [], "description": ""},
+    ], path=path)
+    body_mineables._cache["mtime"] = None
+    hur = [{"body": "Hurston", "system": "Stanton"}]
+    # default "ship" sees only ship_mineables; the cave gem is invisible to it
+    assert body_mineables.locations_for("Aluminum", path=path) == hur
+    assert body_mineables.locations_for("Aphorite", path=path) == []
+    # "hand" resolves the cave gems (parenthetical qualifier stripped before keying)
+    assert body_mineables.locations_for("Aphorite", path=path, method="hand") == hur
+    assert body_mineables.locations_for("Janalite", path=path, method="hand") == hur
+    # "ground" resolves the ROC list; "any" unions all three methods
+    assert body_mineables.locations_for("Copper", path=path, method="ground") == hur
+    assert set(body_mineables.mineral_locations(path, method="any")) == \
+        {"aluminium", "aphorite", "janalite", "copper"}
+
+
 # --- integration: pin the real coverage from the persistent extract ---------- #
 @pytest.mark.skipif(not os.path.isdir(_RECORDS), reason="no ./p4k/records extract")
 def test_body_mineables_from_extract_full_coverage():

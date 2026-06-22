@@ -7,7 +7,7 @@ import threading
 from collections import deque
 
 from . import patterns
-from .model import Leg, Mission, SalvageTarget, Trade
+from .model import Leg, Mission, OreReq, SalvageTarget, Trade
 from .planner import classify_station
 
 # A mission in one of these states is finished -- the trigger for a live archive
@@ -406,6 +406,27 @@ class State:
         m = patterns.COLLECT.search(line)
         if m:
             self._objective_text(m, "pickup")
+            return
+
+        # Mining-contract objectives (Shubin purchase orders) -- a set of ore counts, an
+        # "any one of" marker, and a "Go to <place>" start step, instead of pickup/dropoff legs.
+        m = patterns.MINING_ORE.search(line)
+        if m:
+            mis = self._m(m.group("mid"))
+            ore = m.group("ore").strip()
+            mis.ores[ore] = OreReq(ore=ore, have=int(m.group("have")), need=int(m.group("need")))
+            return
+
+        m = patterns.MINING_ANY.search(line)
+        if m:
+            self._m(m.group("mid")).ore_any = True
+            return
+
+        m = patterns.MINING_GOTO.search(line)
+        if m:
+            mis = self._m(m.group("mid"))
+            if not mis.mining_goto:
+                mis.mining_goto = m.group("loc").strip()
             return
 
         m = patterns.PLAYER_LOCATION.search(line)

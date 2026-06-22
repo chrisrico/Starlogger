@@ -14,6 +14,7 @@ from functools import lru_cache
 from . import patterns
 from .config import BASE_DIR
 from .archive import build_session_trades, build_session_travels
+from .mine_locations import mine_locations
 from .reference import commodity_names, commodity_types, load_commodities, station_names
 from .model import Leg, Mission
 from .planner import BODY_ORDER, SYSTEM_ORDER, classify_station, plan_trip
@@ -164,15 +165,16 @@ def _sorted_groups(groups: dict) -> list:
 # ---- build_snapshot pieces (pure helpers; the orchestrator below wires them together) ---- #
 
 def _split_missions(state_missions: dict, overrides: dict):
-    """Apply each mission's override, keep only trade missions (the live dashboard is
-    cargo-ops only — couriers/combat go to the Archive instead), and partition into the
-    full list, the hidden (manually-deleted) ids, and the visible (non-hidden) subset."""
+    """Apply each mission's override, keep the cargo-ops missions the live dashboard shows --
+    trade/hauling AND mining (Shubin purchase orders, which carry ore requirements instead of
+    legs); couriers/combat still go to the Archive instead. Partition into the full list, the
+    hidden (manually-deleted) ids, and the visible (non-hidden) subset."""
     missions: list[Mission] = []
     hidden_ids: set[str] = set()
     for m in state_missions.values():
         ov = overrides.get(m.mission_id)
         eff = apply_override(m, ov) if ov else m
-        if not eff.is_trade:
+        if not (eff.is_trade or eff.is_mining):
             continue
         if ov and ov.get("hidden"):
             hidden_ids.add(eff.mission_id)
@@ -199,11 +201,39 @@ def committed_scu(m: Mission) -> int:
                if l.kind == "pickup" and l.qty and l.state != "completed")
 
 
+# Cap the where-to-mine chips shown per ore on a contract card (a common gem is on every body).
+_LOC_CAP = 8
+
+
+# Which mining method a contract's title implies -> which body-mineables list its ores are
+# found on (hand cave gems vs ship-mined ore vs ROC ground). Drives the where-to-mine join.
+def _mining_method(title: str) -> str:
+    t = (title or "").lower()
+    if "hand mined" in t or "hand mining" in t:
+        return "hand"
+    if "ground vehicle" in t or "roc" in t:
+        return "ground"
+    return "ship"
+
+
 def _mission_dict(mis: Mission, origin_of, dleg_loc, zone_names: dict,
                   hidden_ids: set, overrides: dict) -> dict:
     """Serialize one mission for the client: the dataclass plus derived origin/destinations,
-    flags, and a best-guess resolved name per leg (so the editor pre-fills its rows)."""
+    flags, and a best-guess resolved name per leg (so the editor pre-fills its rows). Mining
+    contracts also get their ore requirements joined to where-to-mine locations."""
     d = asdict(mis)
+    if mis.ores:
+        method = _mining_method(mis.title)
+        d["mining_method"] = method
+        # Replace the asdict ore map with an ordered list, each ore joined to its mine locations.
+        # Cap the chip list (a common gem like Aphorite is on every body -> 25 chips); keep the
+        # full count so the card can show "+N more".
+        ores = []
+        for o in mis.ores.values():
+            locs = mine_locations(o.ore, method)
+            ores.append({"ore": o.ore, "have": o.have, "need": o.need,
+                         "locations": locs[:_LOC_CAP], "loc_count": len(locs)})
+        d["ores"] = ores
     d["decoded"] = mis.decoded
     d["origin"] = origin_of(mis)
     d["cargo_types"] = mis.cargo_types
