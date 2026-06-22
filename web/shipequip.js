@@ -38,12 +38,26 @@ const _moduleByClass = (cls) => (GEAR?.modules || []).find(m => m.class === cls)
 const REF_RES = 0.5;
 const _headScore = (h) => (h.power || 0) *
   (1 - REF_RES * (1 + (((h.modifiers || {}).resistance) || 0) / 100));
-// MODULES: the two crack levers are +power% and −resistance% (both lift the margin); window_size
-// is a minor softener. Higher = better. Passives (always-on) are ranked ahead of consumables.
-const _moduleScore = (m) => {
-  const x = m.modifiers || {};
+// MODULES are ranked HEAD-AWARE: a module's value is how much it lifts THIS head's mining
+// quality, so a wide-window head (the Golem's Pitman) favours power modules while a tight-window
+// head (the Helix) favours window modules. Quality = the head+modules' effective power on a
+// reference rock, scaled down continuously when the optimal-charge window is tight (the
+// feasibility model only grades the window in discrete steps). Reuses the validated
+// `window.feasibility`; falls back to a head-independent stat score when no head is picked yet
+// (or feasibility isn't loaded). Passives are still ranked ahead of consumables.
+const _REF_ROCK = { laser_power: 1500, resistance: 0.5, window_thinness: 1.25 };
+const _TIGHT_BELOW = 0.45;     // mirror feasibility.js: a window below this grades a crack harder
+function _comboQuality(head, modules) {
+  const f = window.feasibility ? window.feasibility(_REF_ROCK, head, modules || []) : null;
+  if (!f) return 0;
+  const winFactor = f.width == null ? 1 : Math.min(1, f.width / _TIGHT_BELOW);
+  return (f.margin + _REF_ROCK.laser_power) * winFactor;     // effective power × window fitness
+}
+function _moduleScore(m, head) {
+  if (head && window.feasibility) return _comboQuality(head, [m]) - _comboQuality(head, []);
+  const x = m.modifiers || {};                                // fallback: head-independent stats
   return (x.power || 0) - (x.resistance || 0) + (x.window_size || 0) * 0.1;
-};
+}
 // RADARS rank purely on the resource-signature (RS) detection stat, piercing as a tiebreak.
 const _radarSort = (a, b) => (b.rs - a.rs) || (b.rs_piercing - a.rs_piercing)
   || a.name.localeCompare(b.name);
@@ -122,15 +136,16 @@ function _headOption(h, best) {
   return `<option value="${esc(h.class)}"${sel}>${star}${esc(h.name)} — S${h.size}, ${num(h.power)} power${resTxt}, ${h.module_slots} slot${h.module_slots === 1 ? "" : "s"}</option>`;
 }
 
-function _moduleOptions(picked) {
-  // Passives first, then by crack score; ★ the best passive(s) that actually help.
+function _moduleOptions(picked, head) {
+  // Passives first, then by crack benefit to the fitted head; ★ the best passive(s) that help.
+  const score = (m) => _moduleScore(m, head);
   const cat = [...(EDIT.modules_catalog || GEAR.modules)]
-    .sort((a, b) => (a.active ? 1 : 0) - (b.active ? 1 : 0) || _moduleScore(b) - _moduleScore(a));
-  const passiveScores = cat.filter(m => !m.active).map(_moduleScore);
+    .sort((a, b) => (a.active ? 1 : 0) - (b.active ? 1 : 0) || score(b) - score(a));
+  const passiveScores = cat.filter(m => !m.active).map(score);
   const best = passiveScores.length ? Math.max(...passiveScores) : -Infinity;
   const opts = [`<option value="">— none —</option>`];
   for (const m of cat) {
-    const star = (!m.active && best > 0 && _moduleScore(m) >= best - 1e-9) ? "★ " : "";
+    const star = (!m.active && best > 0 && score(m) >= best - 1e-9) ? "★ " : "";
     opts.push(`<option value="${esc(m.class)}"${m.class === picked ? " selected" : ""}>${star}${esc(m.name)} (${esc(m.manufacturer_code || "")})</option>`);
   }
   return opts.join("");
@@ -170,9 +185,9 @@ function renderEquip() {
       heads[0] ? ` (${esc(heads[0].name)})` : ""} — modules &amp; radar are still your choice.</div>`;
   }
   for (let i = 0; i < slots; i++) {
-    html += `<div class="sp-row"><div class="sp-label"><span class="t">Module ${i + 1} ${hintIcon("A gadget slotted into the head. Ranked by crack benefit (power + resistance).")}</span></div>
+    html += `<div class="sp-row"><div class="sp-label"><span class="t">Module ${i + 1} ${hintIcon("A gadget slotted into the head. Ranked by how much it helps THIS head (a tight-window head favours window modules; a wide-window head favours power).")}</span></div>
       <div class="sp-ctl"><select id="se-mod-${i}" onchange="seModuleChange()">
-        ${_moduleOptions(EDIT.modules[i] || "")}</select></div></div>`;
+        ${_moduleOptions(EDIT.modules[i] || "", head)}</select></div></div>`;
   }
   // Radar slot: ranked by resource-signature (RS); only shown when the ship has a radar slot
   // and the catalog has matching radars.
@@ -238,8 +253,8 @@ export function applyRecommendedGear() {
   const head = EDIT.head ? _headByClass(EDIT.head) : null;
   const slots = head ? head.module_slots : 0;
   EDIT.modules = [...(GEAR.modules || [])]
-    .filter(m => !m.active && _moduleScore(m) > 0)
-    .sort((a, b) => _moduleScore(b) - _moduleScore(a))
+    .filter(m => !m.active && _moduleScore(m, head) > 0)
+    .sort((a, b) => _moduleScore(b, head) - _moduleScore(a, head))
     .slice(0, slots).map(m => m.class);
   if (EDIT.radars && EDIT.radars.length) EDIT.radar = [...EDIT.radars].sort(_radarSort)[0].class;
   renderEquip();
