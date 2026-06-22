@@ -1,0 +1,112 @@
+{
+  "fields": [
+    {
+      "name": "Cool 01",
+      "points": [
+        "PYR5-L1",
+        "PYR5-L2",
+        "PYR5-L3",
+        "PYR5-L4",
+        "PYR5-L5"
+      ],
+      "system": "Pyro"
+    },
+    {
+      "name": "Cool 02",
+      "points": [
+        "PYR6-L1",
+        "PYR6-L2",
+        "PYR6-L3",
+        "PYR6-L4",
+        "PYR6-L5"
+      ],
+      "system": "Pyro"
+    },
+    {
+      "name": "Warm 01",
+      "points": [
+        "PYR1-L1",
+        "PYR1-L2",
+        "PYR1-L3",
+        "PYR1-L4",
+        "PYR1-L5",
+        "PYR2-L1",
+        "PYR2-L2",
+        "PYR2-L3",
+        "PYR2-L4",
+        "PYR2-L5"
+      ],
+      "system": "Pyro"
+    },
+    {
+      "name": "Warm 02",
+      "points": [
+        "PYR3-L1",
+        "PYR3-L2",
+        "PYR3-L3",
+        "PYR3-L4",
+        "PYR3-L5"
+      ],
+      "system": "Pyro"
+    },
+    {
+      "name": "Lagrange A",
+      "points": [
+        "HUR-L1",
+        "HUR-L4"
+      ],
+      "system": "Stanton"
+    },
+    {
+      "name": "Lagrange B",
+      "points": [
+        "ARC-L5",
+        "CRU-L4",
+        "MIC-L3"
+      ],
+      "system": "Stanton"
+    },
+    {
+      "name": "Lagrange C",
+      "points": [
+        "CRU-L3",
+        "HUR-L5",
+        "MIC-L1",
+        "MIC-L2",
+        "MIC-L5"
+      ],
+      "system": "Stanton"
+    },
+    {
+      "name": "Lagrange D",
+      "points": [
+        "ARC-L3",
+        "CRU-L5",
+        "MIC-L4"
+      ],
+      "system": "Stanton"
+    },
+    {
+      "name": "Lagrange E",
+      "points": [
+        "CRU-L1",
+        "CRU-L2",
+        "HUR-L3"
+      ],
+      "system": "Stanton"
+    },
+    {
+      "name": "Lagrange F",
+      "points": [
+        "ARC-L1",
+        "ARC-L2",
+        "ARC-L4",
+        "HUR-L2"
+      ],
+      "system": "Stanton"
+    }
+  ],
+  "game_version": "4.8.2-LIVE.12030094",
+  "generated_at": "2026-06-22T18:26:48Z",
+  "source": "https://api.star-citizen.wiki/api/locations"
+}

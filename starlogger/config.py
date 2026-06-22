@@ -87,6 +87,11 @@ MUSIC_CURATION_PATH = os.path.join(DATA_DIR, "music_curation.json")
 # named/ordered. Pure metadata (ids + names + order), NOT p4k-derived audio -> safe to track;
 # must never carry the StarBreaker source marker the pre-commit hook scans for.
 DEFAULT_MUSIC_CURATION_PATH = os.path.join(PKG_DIR, "default_music_curation.json")
+# Shipped Lagrange-point map: the real points each asteroid-field archetype spawns at, captured
+# from the community starmap API and committed so the build needs ZERO network calls. Refreshed
+# by a maintainer (`python -m starlogger.starmap`), not at runtime. Public location data (point
+# codes + generic archetype labels), NOT p4k-derived -> safe to track.
+DEFAULT_LAGRANGE_POINTS_PATH = os.path.join(PKG_DIR, "default_lagrange_points.json")
 TRADE_FLAGS_PATH = os.path.join(DATA_DIR, "trade_flags.json")
 SESSIONS_PATH = os.path.join(DATA_DIR, "sessions.json")
 STATION_NAMES_PATH = os.path.join(DATA_DIR, "station_names.json")
