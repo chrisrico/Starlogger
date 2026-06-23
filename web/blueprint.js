@@ -15,10 +15,19 @@ import { encodePlan, decodePlan, planLink } from "./shareplan.js";
 let BP_CATALOG = null;        // cached {name, type, …, acquired} blueprint catalog for the picker
 let BP_SHIPS = null;          // cached buildable ship names for the shipbuilder dropdown
 let BP_INIT = false;
-// Names of blueprints the player already owns (b.acquired from /api/blueprints, parsed from the
-// game log). Used to drop them from the "Reward contracts" card — no point showing how to earn
-// a blueprint you've got.
+// Effective set of acquired blueprint NAMES (the server's log-derived value overlaid with your
+// manual per-row checkbox overrides). Rebuilt whenever either changes; used to drop acquired
+// blueprints from the "Reward contracts" card — no point showing how to earn one you've got.
 let ACQ_NAMES = new Set();
+// Manual Acquired-checkbox overrides, keyed by blueprint name → bool, layered over the log-derived
+// `acquired` flag so you can correct a miss (the log + catalog don't always line up). Persisted.
+let BP_ACQ = (() => { try { return JSON.parse(localStorage.getItem("bpAcq") || "{}"); } catch (_) { return {}; } })();
+const _bpAcqSave = () => { try { localStorage.setItem("bpAcq", JSON.stringify(BP_ACQ)); } catch (_) {} };
+// Effective acquired for a row: your override if set, else what the game log reported.
+const _bpAcq = (b) => (b && b.name in BP_ACQ) ? !!BP_ACQ[b.name] : !!(b && b.acquired);
+const _bpAcqTitle = (b) => (b && b.name in BP_ACQ)
+  ? (BP_ACQ[b.name] ? "Marked acquired (manual)" : "Marked not acquired (manual)")
+  : (b && b.acquired ? "Acquired" + (b.acquired_at ? " — " + b.acquired_at : "") + " (from your game log)" : "Not acquired");
 // Per-blueprint build quantity, keyed by blueprint name. Persisted so a planned crafting run
 // survives a reload. The whole catalog is one table with an inline qty input per row; the
 // materials breakdown is summed from the rows whose quantity > 0 — Clear resets every qty to 0.
@@ -27,11 +36,6 @@ const _bpSave = () => { try { localStorage.setItem("bpQty", JSON.stringify(BP_QT
 // "Qty > 0" toggle — when on, the table shows only rows you've given a quantity (the selected
 // builds, e.g. after the shipbuilder), on top of any column filters. Persisted.
 let BP_ONLY = localStorage.getItem("bpOnly") === "1";
-// Show/hide the Acquired column (the one toggleable column); persisted, default on. The column
-// stays in BP_COLS for sort/filter/the row predicate — only its TH/TD rendering is gated — so a
-// header funnel filter still works while it's shown; we clear that filter when hiding it so there
-// can't be an active filter on a column you can't see.
-let BP_SHOW_ACQ = localStorage.getItem("bpShowAcq") !== "0";
 
 // ---- shared read-only snapshot ---- //
 // When the page is opened via a ?code=… link (a plan another Starlogger user shared), the whole
@@ -63,7 +67,7 @@ export async function initBlueprint() {
     renderBlueprintShell();
     try { BP_CATALOG = (await getJSON("/api/blueprints")).blueprints || []; }
     catch (_) { BP_CATALOG = []; }
-    ACQ_NAMES = new Set((BP_CATALOG || []).filter(b => b.acquired).map(b => b.name));
+    ACQ_NAMES = new Set((BP_CATALOG || []).filter(_bpAcq).map(b => b.name));
     // Buildable ships for the shipbuilder combobox: those with craftable components / a radar
     // (concepts excluded), as {name, mfr} sorted by manufacturer then name — matching the header
     // ship picker's grouping so the two dropdowns read the same.
@@ -105,17 +109,14 @@ const BP_COLS = [
   { key: "cls", label: "Class" }, { key: "quality", label: "Quality" }, { key: "size", label: "Size" },
   { key: "acquired", label: "Acquired" },
 ];
-// The columns actually rendered: all of BP_COLS, minus Acquired when its toggle is off. Sort,
-// filter, and _bpRowShown still walk the full BP_COLS so a hidden column's filter is honored.
-const _bpCols = () => (BP_SHOW_ACQ ? BP_COLS : BP_COLS.filter(c => c.key !== "acquired"));
 let BP_FILTERS = {};   // col -> Set of EXCLUDED values (unchecked in its dropdown); empty/absent = all
 let BP_SORT = null;    // { col, dir: 1 | -1 }
 const _bpNum = (k) => k === "size";
 const _bpRA = (k) => _bpNum(k) || k === "quality";   // right-align the numeric-ish columns
-// Acquired reads as a plain "Yes"/"No" string for the funnel filter + sort; the cell itself
-// renders a ✓ (below). Everything else is its raw value.
+// Acquired reads as a plain "Yes"/"No" string for the funnel filter + sort (effective value, with
+// your manual override applied); the cell itself renders a checkbox (below).
 const _bpCell = (b, k) => {
-  if (k === "acquired") return b.acquired ? "Yes" : "No";
+  if (k === "acquired") return _bpAcq(b) ? "Yes" : "No";
   const v = b[k]; return (v === "" || v == null) ? "" : String(v);
 };
 
@@ -124,7 +125,7 @@ const _bpCell = (b, k) => {
 // in place). The static data-col/data-i attributes and the .bp-prow/.bp-qin/.bp-on hooks the
 // handlers re-read off the live DOM are preserved; only the inline on* triggers are @-bindings.
 function blueprintTableTpl() {
-  const cols = _bpCols();
+  const cols = BP_COLS;
   const head = cols.map(c =>
     html`<th data-col=${c.key} class=${_bpRA(c.key) ? "lt-num" : ""}><span class="bp-h" @click=${() => bpSort(c.key)}>${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span>${c.key === "name" ? nothing : html`<button class="bp-fbtn" title=${`Filter ${c.label}`} @click=${e => bpFilterOpen(e, c.key)}>${unsafeHTML('<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg>')}</button>`}</th>`);
   const qhead = html`<th class="lt-num" data-col="qty">Qty<button class="bp-fbtn" title="Show only rows with a quantity (Qty > 0)" @click=${e => bpQtyFilter(e)}>${unsafeHTML('<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg>')}</button></th>`;
@@ -132,7 +133,7 @@ function blueprintTableTpl() {
     const q = BP_QTY[b.name] || 0;
     const cells = cols.map(c => {
       if (c.key === "acquired")
-        return html`<td class="bp-acq-cell">${b.acquired ? html`<span class="bp-acq" title=${b.acquired_at ? "Acquired " + b.acquired_at : "Acquired"}>✓</span>` : nothing}</td>`;
+        return html`<td class="bp-acq-cell" @click=${e => e.stopPropagation()}><input type="checkbox" class="bp-acq" .checked=${_bpAcq(b)} aria-label=${`Acquired: ${b.name}`} title=${_bpAcqTitle(b)} @change=${e => bpAcqToggle(i, e.target.checked)}></td>`;
       const v = _bpCell(b, c.key);
       return html`<td class=${_bpRA(c.key) ? "lt-num" : ""}>${c.key === "name" ? html`<b>${v}</b>` : v}</td>`;
     });
@@ -176,10 +177,9 @@ function shipbuilderTpl() {
 function planToolTpl() {
   return html`<div class="card mtool"><h3><span>Blueprints ${unsafeHTML(hintIcon(
       "Every craftable blueprint. Filter any column (multi-select, like a spreadsheet), click a header " +
-      "to sort, click a row to toggle it on, and set a quantity. Materials are summed below across " +
+      "to sort, click a row to add it (− or Clear to remove), and set a quantity. Materials are summed below across " +
       "everything with a quantity, then ranked by deposit coverage."))}</span>
       <span class="bp-acts">
-        <button class="bp-clear" @click=${() => bpToggleAcq()} title="Show or hide the Acquired column (blueprints you've received, read from the game log)">${BP_SHOW_ACQ ? "Hide acquired" : "Show acquired"}</button>
         <button class="bp-share" @click=${() => bpShare()} title="Copy a read-only link to this plan to send to another Starlogger user">Share plan</button>
         <button class="bp-clear" @click=${() => bpClearList()} title="Reset every quantity to 0">Clear</button>
       </span></h3>
@@ -291,10 +291,12 @@ function _bpApply(i, n) {
 }
 function bpStep(i, d) { const b = (BP_CATALOG || [])[i]; if (b) _bpApply(i, (BP_QTY[b.name] || 0) + d); }
 function bpQtyInput(i, v) { _bpApply(i, parseInt(v, 10) || 0); }
-// Click a row (outside its qty cell) to toggle it between 0 and 1 — the easy "add one".
+// Click a row (outside its qty/acquired cells) to SELECT it (qty 0 → 1). Clicking an already-
+// selected row leaves it as-is — removing is done with the − stepper or Clear, so a stray click
+// can't wipe a quantity you set.
 function bpRowClick(e, i) {
   if (e.target.closest(".bp-qcell")) return;
-  const b = (BP_CATALOG || [])[i]; if (b) _bpApply(i, (BP_QTY[b.name] || 0) > 0 ? 0 : 1);
+  const b = (BP_CATALOG || [])[i]; if (b && (BP_QTY[b.name] || 0) === 0) _bpApply(i, 1);
 }
 // Reset every quantity to 0 (zero the inputs + clear row highlights in place) and the breakdown.
 function bpClearList() {
@@ -349,6 +351,9 @@ function bpSort(col) {
   const rows = [...tbody.children];
   rows.sort((ra, rb) => {
     let a = (BP_CATALOG[+ra.dataset.i] || {})[col], b = (BP_CATALOG[+rb.dataset.i] || {})[col];
+    if (col === "acquired") {   // sort by the EFFECTIVE Yes/No (manual override applied), not raw
+      a = _bpCell(BP_CATALOG[+ra.dataset.i] || {}, col); b = _bpCell(BP_CATALOG[+rb.dataset.i] || {}, col);
+    }
     if (_bpNum(col)) return ((a == null ? -1 : +a) - (b == null ? -1 : +b)) * BP_SORT.dir;
     a = (a == null ? "" : String(a)).toLowerCase(); b = (b == null ? "" : String(b)).toLowerCase();
     return (a < b ? -1 : a > b ? 1 : 0) * BP_SORT.dir;
@@ -425,13 +430,19 @@ function bpQtyFilter(e) {
   try { localStorage.setItem("bpOnly", BP_ONLY ? "1" : "0"); } catch (_) {}
   _bpApplyFilter();
 }
-// Show/hide the Acquired column; persisted. Rebuild the table so the column appears/disappears.
-// Drop any Acquired filter when hiding so there's no active filter on a column you can't see.
-function bpToggleAcq() {
-  BP_SHOW_ACQ = !BP_SHOW_ACQ;
-  try { localStorage.setItem("bpShowAcq", BP_SHOW_ACQ ? "1" : "0"); } catch (_) {}
-  if (!BP_SHOW_ACQ) delete BP_FILTERS.acquired;
-  renderBlueprintShell();   // repaint the table (and tool bar's button label) with the new layout
+// Toggle a row's Acquired checkbox. Stored as a manual override (localStorage) layered over the
+// log-derived value, so you can correct a miss; checking it back to the log default drops the
+// override. The cell stops the row click, so this never touches the row's qty/selection. Re-derive
+// the reward-suppression set and re-apply the filter (an Acquired filter may now hide/show the row).
+function bpAcqToggle(i, checked) {
+  const b = (BP_CATALOG || [])[i]; if (!b) return;
+  checked = !!checked;
+  if (checked === !!b.acquired) delete BP_ACQ[b.name];   // back to the log default → drop the override
+  else BP_ACQ[b.name] = checked;
+  _bpAcqSave();
+  ACQ_NAMES = new Set((BP_CATALOG || []).filter(_bpAcq).map(x => x.name));
+  _bpApplyFilter();
+  clearTimeout(_bpTimer); _bpTimer = setTimeout(renderBpPlan, 250);   // refresh the Reward-contracts card
 }
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;

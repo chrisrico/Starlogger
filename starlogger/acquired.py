@@ -74,10 +74,11 @@ def acquired_index(state=None, path: str = ACQUIRED_BLUEPRINTS_PATH) -> dict:
 def resolve_owned(index: dict, catalog_norm_names) -> dict:
     """Map acquired (normalized) log names onto the catalog names they own, returning
     ``{catalog_norm: acquired_at}``. Tries the name as-is, then with a leading grade-code
-    prefix stripped ("ind/3/c surveyor-max" -> "surveyor-max"). Names that resolve to no
-    catalog entry (e.g. "s00 hofstede", whose only catalog match is the ambiguous
-    "Hofstede-S1/S2 Mining Laser") are simply left out -- still recorded in the file, just
-    not decorating a row."""
+    prefix stripped ("ind/3/c surveyor-max" -> "surveyor-max"). Names with no catalog row are
+    left out -- still recorded in the file, just not decorating a row. The notable case is the
+    size-0 ROC/ATLS heads ("s00 hofstede", "s00 helix"): the game's English global.ini has no
+    localized name for them yet (unlike the s0 Klein, which is "Lawson"), so the catalog build
+    skips them as unnamed -- there is simply no row to flag (NOT an S1/S2 ambiguity)."""
     cat = set(catalog_norm_names)
     owned: dict = {}
     for raw, ts in (index or {}).items():

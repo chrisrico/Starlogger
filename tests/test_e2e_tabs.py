@@ -354,8 +354,8 @@ def test_blueprint_table_populates_when_catalog_loads_late(page, populated_serve
 
 def test_blueprint_table_columns_and_filter(page, populated_server):
     """The Blueprints table exposes Name/Type/Subtype/Class/Quality/Size/Acquired columns, each
-    with a spreadsheet-style multi-select filter; unchecking a value hides its rows. Acquired
-    blueprints (from the game log) render a \u2713."""
+    with a spreadsheet-style multi-select filter; unchecking a value hides its rows. The Acquired
+    column is a checkbox per row, checked for blueprints the game log reported."""
     import json
     rows = [
         {"name": "Mil Shield", "type": "Vehicle Component", "subtype": "Shield",
@@ -376,7 +376,8 @@ def test_blueprint_table_columns_and_filter(page, populated_server):
         "ths => ths.map(t => t.textContent.replace(/[\u25be\u25b2\u25bc]/g, '').trim())")
     assert heads == ["Name", "Type", "Subtype", "Class", "Quality", "Size", "Acquired", "Qty"], heads
     assert page.locator("#blueprint .bp-prow").count() == 2
-    assert page.locator("#blueprint .bp-table tbody .bp-acq").count() == 1   # only the acquired row
+    assert page.locator("#blueprint .bp-table tbody input.bp-acq").count() == 2          # a checkbox per row
+    assert page.locator("#blueprint .bp-table tbody input.bp-acq:checked").count() == 1  # only the acquired row
     # multi-select filter on Class: uncheck "Military" -> only the Civilian row remains
     page.click('#blueprint th[data-col="cls"] .bp-fbtn')
     page.wait_for_selector("#bp-fpop.open")
@@ -390,9 +391,10 @@ def test_blueprint_table_columns_and_filter(page, populated_server):
     assert errors == []
 
 
-def test_blueprint_acquired_filter_and_column_toggle(page, populated_server):
-    """The Acquired column filters like any other (uncheck "Yes" → only un-owned rows remain) and
-    can be toggled off entirely, which removes it from the header and clears its filter."""
+def test_blueprint_acquired_filter_and_checkbox(page, populated_server):
+    """The Acquired column filters like any other (uncheck "Yes" → only un-owned rows remain), and
+    its per-row checkbox toggles acquired state WITHOUT selecting the row (clicking it must not add
+    a qty / the bp-on highlight). The manual toggle is a localStorage override that persists."""
     import json
     rows = [
         {"name": "Mil Shield", "type": "Vehicle Component", "subtype": "Shield",
@@ -417,16 +419,18 @@ def test_blueprint_acquired_filter_and_column_toggle(page, populated_server):
         "#blueprint .bp-prow",
         "rows => rows.filter(r => r.style.display !== 'none').map(r => r.querySelector('td b').textContent)")
     assert shown == ["Civ Shield"], shown
-    # toggle the column off -> header drops "Acquired" and its filter clears (both rows return)
-    page.click("#blueprint button:has-text('Hide acquired')")
-    page.wait_for_function("() => [...document.querySelectorAll('#blueprint .bp-table thead th')]"
-                           ".every(t => t.textContent.trim() !== 'Acquired')")
-    heads = page.eval_on_selector_all(
-        "#blueprint .bp-table thead th",
-        "ths => ths.map(t => t.textContent.replace(/[▾▲▼]/g, '').trim())")
-    assert heads == ["Name", "Type", "Subtype", "Class", "Quality", "Size", "Qty"], heads
+    # re-check "Yes" so both rows are back, then exercise the checkbox
+    page.click('#bp-fpop .bp-fopt input[value="Yes"]')
     page.wait_for_function("() => [...document.querySelectorAll('#blueprint .bp-prow')]"
                            ".filter(r => r.style.display !== 'none').length === 2")
+    # clicking the acquired checkbox must NOT select the row (no qty / no bp-on) — the bug we fixed
+    civ = page.locator("#blueprint .bp-prow", has_text="Civ Shield")
+    civ.locator("input.bp-acq").check()
+    assert civ.locator("input.bp-acq").is_checked()
+    assert "bp-on" not in (civ.get_attribute("class") or ""), "checkbox click wrongly selected the row"
+    assert civ.locator(".bp-qin").input_value() == "0"
+    # the override persists to localStorage
+    assert "Civ Shield" in (page.evaluate("() => localStorage.getItem('bpAcq')") or "")
     assert errors == []
 
 
