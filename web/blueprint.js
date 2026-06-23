@@ -442,12 +442,15 @@ function bpAcqToggle(i, checked) {
   _bpAcqSave();
   ACQ_NAMES = new Set((BP_CATALOG || []).filter(_bpAcq).map(x => x.name));
   _bpApplyFilter();
-  clearTimeout(_bpTimer); _bpTimer = setTimeout(renderBpPlan, 250);   // refresh the Reward-contracts card
+  renderRewardCard();   // only the reward card depends on acquired state — leave materials/deposits untouched
 }
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;
   return m ? `${m}m${sec ? " " + sec + "s" : ""}` : `${sec}s`;
 };
+// Last aggregated plan, cached so toggling a row's Acquired checkbox can re-render JUST the reward
+// card (which alone depends on acquired state) without re-fetching or repainting the rest.
+let BP_LAST_AGG = null;
 // Sum the materials of every blueprint with a quantity (server) → one deposit-coverage plan,
 // painted into the results div below the table.
 async function renderBpPlan() {
@@ -466,8 +469,17 @@ async function renderBpPlan() {
     const plan = await fetch("/api/mining-plan", {
       method: "POST", headers: writeHeaders(), body: JSON.stringify({ minerals: agg.minerals || [] }),
     }).then(r => r.json());
-    mount(out, html`${breakdownTpl(agg)}${unsafeHTML(contractsHtml(agg))}${planResultTpl(plan)}`);
+    BP_LAST_AGG = agg;   // for renderRewardCard() on an Acquired toggle
+    mount(out, html`${breakdownTpl(agg)}<div id="mres-rewards"></div>${planResultTpl(plan)}`);
+    renderRewardCard();
   } catch (e) { mount(out, html`<div class="empty">plan failed</div>`); }
+}
+// Re-render ONLY the Reward-contracts card (its own #mres-rewards slot) from the cached plan, so
+// toggling Acquired updates which blueprints the card drops without re-fetching the plan or
+// repainting the materials/deposits below (acquired state doesn't affect those). lit diffs the slot.
+function renderRewardCard() {
+  if (!$("mres-rewards")) return;
+  mount("mres-rewards", BP_LAST_AGG ? html`${unsafeHTML(contractsHtml(BP_LAST_AGG))}` : html``);
 }
 // The other half of "what do I need to build this": per chosen blueprint, the contracts that
 // reward it, grouped by the faction that grants them. `sources` rides each aggregate item; we

@@ -499,3 +499,40 @@ def test_reward_contracts_suppressed_for_acquired_blueprint(page, populated_serv
         "#mres-plan .card h3 span", "ss => ss.map(s => s.textContent)")
     assert not any("Reward contracts" in c for c in cards), cards
     assert errors == [], errors
+
+
+def test_acquired_toggle_updates_only_the_reward_card(page, populated_server):
+    """Toggling a row's Acquired checkbox re-renders ONLY the Reward-contracts card (its own
+    #mres-rewards slot), leaving the Materials card untouched — no full plan re-fetch / repaint.
+    Here the selected blueprint starts un-owned (its reward card shows); checking Acquired drops it
+    from the card while the same Materials card element survives."""
+    import json
+    page.route("**/api/blueprints", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"blueprints": [
+            {"name": "Test Cannon", "type": "Vehicle Weapons", "subtype": "Cannon",
+             "cls": "Military", "quality": "A", "size": 3, "acquired": False}]})))
+    page.route("**/api/blueprints-plan", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({
+            "items": [{"name": "Test Cannon", "qty": 1, "found": True,
+                       "sources": [{"faction": "Eckhart Security", "contracts": ["Contract 1"]}]}],
+            "requirements": [], "minerals": [], "craft_seconds": 0, "total_scu": 0})))
+    page.route("**/api/mining-plan", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"targets": [], "per_mineral": [], "coverage": []})))
+    errors = _boot(page, populated_server)
+    _set_mode(page, 'Mining')
+    page.click('#nav a[data-tab="blueprint"]')
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length === 1")
+    page.click("#blueprint .bp-prow .bp-step[aria-label='One more']")   # select -> plan + reward card
+    page.wait_for_function("() => [...document.querySelectorAll('#mres-plan .card h3 span')]"
+                           ".some(s => /Reward contracts/i.test(s.textContent))")
+    # tag the Materials card so we can prove it's the SAME element afterwards (not repainted)
+    page.eval_on_selector("#mres-plan", "el => { const c = [...el.querySelectorAll('.card')]"
+                          ".find(c => /Materials needed/.test(c.textContent)); if (c) c.dataset.probe = 'keep'; }")
+    # check Acquired -> the reward card drops the now-owned blueprint (whole card goes away)
+    page.locator("#blueprint .bp-prow", has_text="Test Cannon").locator("input.bp-acq").check()
+    page.wait_for_function("() => ![...document.querySelectorAll('#mres-plan .card h3 span')]"
+                           ".some(s => /Reward contracts/i.test(s.textContent))")
+    # the Materials card is the same DOM node (its probe attribute survived → not re-rendered)
+    assert page.locator("#mres-plan .card[data-probe='keep']").count() == 1
+    assert errors == [], errors
