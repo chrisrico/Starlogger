@@ -211,10 +211,10 @@ h1 em{font-style:normal;color:var(--cyan);font-weight:500;letter-spacing:.1em}
 .status .shipsel:hover{border-color:var(--cyan)}
 /* shared form controls — one dark field + cyan focus ring for every input/select/combobox.
    Per-context rules elsewhere set only their own width/padding/font-size/radius. */
-.editor input,.editor select,.mining input,.signal input,.cg-search,.status .shipsel,.tc-sel,.salv-dd-in{
+.editor input,.editor select,.mining input,.signal input,.cg-search,.status .shipsel,.tc-sel,.salv-dd-in,.sb-sel{
   background:var(--input-bg);color:var(--ink);border:1px solid var(--line-2);font-family:var(--mono)}
 .editor input:focus,.editor select:focus,.mining input:focus,.signal input:focus,.cg-search:focus,
-.status .shipsel:focus,.tc-sel:focus,.edc-in:focus,.salv-dd-in:focus{outline:none;border-color:var(--cyan);
+.status .shipsel:focus,.tc-sel:focus,.edc-in:focus,.salv-dd-in:focus,.sb-sel:focus{outline:none;border-color:var(--cyan);
   box-shadow:var(--focus-ring)}
 /* shared floating-panel chrome — ship combobox, the Type filter menu */
 .shipmenu,.th-menu,.salv-dd-list{background:var(--panel-2);border:1px solid var(--line-2);
@@ -832,10 +832,6 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 
 /* ---- Mining tab (RS / composition tools) + Signal ID page (shares the tool styling) ---- */
 .mining,.signal{display:flex;flex-direction:column;gap:14px}
-/* each sub-tool + its results stack with the same gap as the tab as a whole */
-.msub{display:flex;flex-direction:column;gap:14px}
-.msub.hide{display:none}   /* outrank .msub's display:flex so a hidden sub-tab stays hidden */
-/* sub-tab strip reuses the Archive tab's .arch-tabs/.arch-tab styling */
 .mtool .mform{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:4px 16px 6px}
 .mining input,.signal input{border-radius:2px;padding:8px 10px;font-size:13px}
 .mining input[type=number]{width:140px}
@@ -848,7 +844,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
   border:1px solid var(--line-2);border-radius:3px;background:rgba(var(--cyan-rgb),.04)}
 .sb-lbl{font-family:var(--display);font-weight:600;letter-spacing:.05em;color:var(--ink-2);
   display:inline-flex;align-items:center;gap:3px}
-.sb-sel{border-radius:2px;padding:6px 8px;font-size:13px;background:var(--panel);color:var(--ink);border:1px solid var(--line-2)}
+.sb-sel{border-radius:2px;padding:6px 8px;font-size:13px}   /* bg/border/colour/font from the shared input+select group */
 .sb-status{font-size:12px;color:var(--ink-2);flex:1 1 100%;margin-top:1px}
 .sb-status b{color:var(--ink)}
 .sb-sub{color:var(--amber)}
@@ -859,7 +855,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sb-box .shipsel{width:220px}
 .sb-box .shipsel:hover,.sb-box .shipsel:focus{border-color:var(--cyan)}
 .sb-box .shipmenu{right:auto;left:0;min-width:240px;max-height:320px;overflow:auto}
-.bp-pick{height:460px;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
+.bp-pick{min-height: 100px;max-height:500px;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
 .bp-table{width:100%}
 .bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel);white-space:nowrap}
 .bp-h{cursor:pointer;display:inline-flex;align-items:center;gap:3px}
@@ -875,7 +871,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .bp-prow.bp-on{background:rgba(var(--cyan-rgb),.14)}
 .bp-prow.bp-on:hover{background:rgba(var(--cyan-rgb),.2)}
 /* qty cell: external − / + steppers around the input, native spinners hidden */
-.bp-qcell{display:flex;align-items:center;justify-content:flex-end;gap:4px;cursor:default}
+.bp-qcell{display:flex;align-items:center;gap:4px;cursor:default}
 #blueprint .bp-step{padding:1px 8px;font-size:14px;line-height:1.2}
 #blueprint .bp-qin{width:44px;text-align:center;padding:3px 4px;-moz-appearance:textfield}
 .bp-qin::-webkit-outer-spin-button,.bp-qin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
