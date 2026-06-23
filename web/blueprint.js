@@ -10,6 +10,7 @@ import { html, render, nothing, unsafeHTML } from "./lit.js";
 import { getJSON, writeHeaders } from "./net.js";
 import { registerCombo, comboInputHtml } from "./combobox.js";
 import { locChips, locKey } from "./minerals.js";
+import { encodePlan, decodePlan, planLink } from "./shareplan.js";
 
 let BP_CATALOG = null;        // cached {name, type, …} blueprint catalog for the picker
 let BP_SHIPS = null;          // cached buildable ship names for the shipbuilder dropdown
@@ -22,6 +23,23 @@ const _bpSave = () => { try { localStorage.setItem("bpQty", JSON.stringify(BP_QT
 // "Qty > 0" toggle — when on, the table shows only rows you've given a quantity (the selected
 // builds, e.g. after the shipbuilder), on top of any column filters. Persisted.
 let BP_ONLY = localStorage.getItem("bpOnly") === "1";
+
+// ---- shared read-only snapshot ---- //
+// When the page is opened via a ?code=… link (a plan another Starlogger user shared), the whole
+// Blueprints page flips into a read-only view of the decoded plan. SHARED_PLAN is that {name: qty}
+// snapshot; SHARED_ERR holds a message if the link was corrupt. Kept ENTIRELY separate from
+// BP_QTY/localStorage so viewing someone's shared plan never touches your own saved plan — only an
+// explicit "Import" copies it across. See shareplan.js for the wire format.
+let BP_SHARED = false;
+let SHARED_PLAN = {};
+let SHARED_ERR = null;
+// Called from app.js on boot when the URL carries ?code=… — decode synchronously and arm the
+// read-only view. The actual render happens when activateTab('blueprint') runs initBlueprint().
+export function setSharedPlan(code) {
+  try { SHARED_PLAN = decodePlan(code); SHARED_ERR = null; }
+  catch (_) { SHARED_PLAN = {}; SHARED_ERR = "This shared-plan link is invalid or corrupted — ask for a fresh one."; }
+  BP_SHARED = true;
+}
 
 const _chance = (p) => (p == null ? "" : Math.round(p * 100) + "%");
 
@@ -56,6 +74,12 @@ export async function initBlueprint() {
 function renderBlueprintShell() {
   // Reuse the shared tool-page layout (.mining, alongside Signal/Minerals) so the cards space and
   // the inputs read identically across the tool pages.
+  if (BP_SHARED) {
+    // Read-only snapshot view (opened via a ?code= link) — no edit controls, no filters.
+    mount("blueprint", html`<div class="mining">${sharedPlanTpl()}<div id="mres-plan" class="mres"></div></div>`);
+    renderBpPlan();   // the materials/contracts/deposits below are computed read-only output already
+    return;
+  }
   mount("blueprint", html`<div class="mining">${planToolTpl()}<div id="mres-plan" class="mres"></div></div>`);
   // Paint the materials breakdown now the results div exists (empty-state until a qty is set).
   renderBpPlan();
@@ -132,10 +156,97 @@ function planToolTpl() {
       "Every craftable blueprint. Filter any column (multi-select, like a spreadsheet), click a header " +
       "to sort, click a row to toggle it on, and set a quantity. Materials are summed below across " +
       "everything with a quantity, then ranked by deposit coverage."))}</span>
-      <button class="bp-clear" @click=${() => bpClearList()} title="Reset every quantity to 0">Clear</button></h3>
+      <span class="bp-acts">
+        <button class="bp-share" @click=${() => bpShare()} title="Copy a read-only link to this plan to send to another Starlogger user">Share plan</button>
+        <button class="bp-clear" @click=${() => bpClearList()} title="Reset every quantity to 0">Clear</button>
+      </span></h3>
+    <div class="bp-share-bar" id="bp-share-bar"></div>
     ${shipbuilderTpl()}
     <div class="bp-pick">${blueprintTableTpl()}</div>
   </div>`;
+}
+// Copy a read-only link to the current plan. The plan rides entirely inside the URL (?code=…), so
+// the recipient — another Starlogger user — opens it on THEIR own install and it renders against
+// their catalog; nothing is served from, or connects back to, this instance. The link is always
+// surfaced in a selectable field too, because navigator.clipboard can be blocked over plain http
+// or without a user gesture; that field is the reliable fallback.
+let _shareTimer = 0;
+async function bpShare() {
+  const bar = $("bp-share-bar"); if (!bar) return;
+  const plan = {};
+  for (const [name, q] of Object.entries(BP_QTY)) if (q > 0) plan[name] = q;
+  clearTimeout(_shareTimer);
+  if (!Object.keys(plan).length) {
+    bar.innerHTML = `<span class="sb-warn">Set a quantity on a blueprint first, then Share.</span>`;
+    _shareTimer = setTimeout(() => { bar.textContent = ""; }, 4000);
+    return;
+  }
+  const link = planLink(encodePlan(plan));
+  let copied = false;
+  try { await navigator.clipboard.writeText(link); copied = true; } catch (_) {}
+  // Static markup only; the link goes into the input's .value PROPERTY (never interpolated as HTML).
+  bar.innerHTML = copied
+    ? `<span>Read-only link copied — paste it to another Starlogger user.</span><input class="bp-share-link" readonly aria-label="Shareable plan link">`
+    : `<span>Copy this read-only link and send it to another Starlogger user:</span><input class="bp-share-link" readonly aria-label="Shareable plan link">`;
+  const inp = bar.querySelector("input");
+  if (inp) { inp.value = link; inp.focus(); inp.select(); }
+  _shareTimer = setTimeout(() => { bar.textContent = ""; }, 15000);
+}
+// ---- the read-only shared-plan view (opened via a ?code= link) ---- //
+// One row per shared blueprint, resolved against THIS install's catalog for the metadata; the
+// materials/contracts/deposits cards below are produced by the same renderBpPlan() as the editable
+// planner (it reads SHARED_PLAN while BP_SHARED is on). No qty inputs, sort, or filters — a snapshot.
+function sharedPlanTpl() {
+  if (SHARED_ERR) {
+    return html`<div class="card mtool"><h3><span>Shared plan</span></h3>
+      <div class="bp-share-bar"><span class="sb-warn">${SHARED_ERR}</span>
+        <button class="bp-clear" @click=${() => exitSharedPlan()}>Back to my plan</button></div></div>`;
+  }
+  const loaded = BP_CATALOG != null;   // suppress "(not in your catalog)" until the catalog is in
+  const byName = new Map((BP_CATALOG || []).map(b => [b.name, b]));
+  const names = Object.keys(SHARED_PLAN);
+  const head = BP_COLS.map(c => html`<th class=${_bpRA(c.key) ? "lt-num" : ""}>${c.label}</th>`);
+  const rows = names.map(name => {
+    const b = byName.get(name);
+    const cells = BP_COLS.map(c => {
+      const v = b ? _bpCell(b, c.key) : (c.key === "name" ? name : "");
+      return html`<td class=${_bpRA(c.key) ? "lt-num" : ""}>${c.key === "name"
+        ? html`<b>${v}</b>${(loaded && !b) ? html` <span class="mn-dim" title="No blueprint by this name in your catalog — your game data may differ from the sharer's.">(not in your catalog)</span>` : nothing}`
+        : v}</td>`;
+    });
+    return html`<tr>${cells}<td class="lt-num">${SHARED_PLAN[name]}</td></tr>`;
+  });
+  return html`<div class="card mtool">
+    <h3><span>Shared plan ${unsafeHTML(hintIcon(
+      "A read-only blueprint plan another Starlogger user shared with you via a ?code= link. It's a " +
+      "snapshot resolved against YOUR catalog — nothing connects back to their instance. Import it to " +
+      "copy these picks into your own editable plan."))}</span>
+      <span class="bp-shared-badge">read-only snapshot</span></h3>
+    <div class="bp-share-bar">
+      <span>${names.length} blueprint${names.length === 1 ? "" : "s"} in this shared plan.</span>
+      <button class="bp-share primary" @click=${() => importSharedPlan()}>Import into my plan</button>
+      <button class="bp-clear" @click=${() => exitSharedPlan()}>Back to my plan</button>
+    </div>
+    <div class="bp-pick"><table class="logtable bp-table"><thead><tr>${head}<th class="lt-num">Qty</th></tr></thead><tbody>${rows}</tbody></table></div>
+  </div>`;
+}
+// Copy the shared plan into your own (editable) plan, then drop out of read-only mode. Replaces
+// rather than merges (a clear mental model: "load this plan"); confirm first if you'd clobber an
+// existing plan.
+function importSharedPlan() {
+  const incoming = { ...SHARED_PLAN };
+  if (!Object.keys(incoming).length) { exitSharedPlan(); return; }
+  const hasOwn = Object.values(BP_QTY).some(q => q > 0);
+  if (hasOwn && !window.confirm("Replace your current blueprint plan with this shared one?")) return;
+  BP_QTY = incoming; _bpSave();
+  exitSharedPlan();   // leaves shared mode → repaints your editable planner with the imported picks
+}
+// Leave the read-only snapshot and return to your own plan. Strips ?code= from the address bar so
+// a reload returns to your plan, not the snapshot.
+function exitSharedPlan() {
+  BP_SHARED = false; SHARED_PLAN = {}; SHARED_ERR = null;
+  try { history.replaceState(null, "", "/blueprint"); } catch (_) {}
+  renderBlueprintShell();
 }
 let _bpTimer = 0;
 // Set the blueprint at catalog index i to quantity n (0 clears it): update the row state + input in
@@ -297,9 +408,10 @@ const _miningDur = (s) => {
 // painted into the results div below the table.
 async function renderBpPlan() {
   const out = "mres-plan";
-  const items = Object.entries(BP_QTY).filter(([, q]) => q > 0).map(([name, qty]) => ({ name, qty }));
+  const src = BP_SHARED ? SHARED_PLAN : BP_QTY;   // the shared snapshot drives the cards in read-only mode
+  const items = Object.entries(src).filter(([, q]) => q > 0).map(([name, qty]) => ({ name, qty }));
   if (!items.length) {
-    mount(out, html`<div class="empty">Set a quantity on one or more blueprints to see the materials you'll need.</div>`);
+    mount(out, BP_SHARED ? html`` : html`<div class="empty">Set a quantity on one or more blueprints to see the materials you'll need.</div>`);
     return;
   }
   mount(out, html`<div class="empty">summing materials…</div>`);

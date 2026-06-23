@@ -4,7 +4,7 @@ import { $, num, mount, tabBarTpl } from "./dom.js";
 import { html, nothing, repeat, unsafeHTML, ifDefined } from "./lit.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
 import { initMinerals, locChips, locKey } from "./minerals.js";
-import { initBlueprint } from "./blueprint.js";
+import { initBlueprint, setSharedPlan } from "./blueprint.js";
 import { registerCombo, comboInputHtml } from "./combobox.js";
 import { initSignal, syncSignalSession } from "./signal.js";
 import { initSalvage, renderSalvage } from "./salvage.js";
@@ -1316,6 +1316,22 @@ const LEGACY_HASH = { contracts: "/contracts", cargo: "/cargo", plan: "/plan",
                       archive: "/archive", mining: "/minerals",
                       loading: "/cargo#loading", unloading: "/cargo#unloading",
                       routes: "/plan", grid: "/plan" };
-const _legacy = LEGACY_HASH[location.hash.slice(1)];
-if (location.pathname === "/" && _legacy) history.replaceState(null, "", _legacy);
-activateTab(tabFromPath(location.pathname), { push: false });
+// A ?code=… link carries a read-only blueprint plan shared by another Starlogger user. Decode it
+// and open Blueprints in its read-only snapshot view (resolved against THIS install's catalog —
+// nothing is fetched from the sharer). Takes precedence over the normal path route; the query is
+// then stripped so a reload returns to your own plan rather than re-opening the snapshot.
+const _shareCode = new URLSearchParams(location.search).get("code");
+if (_shareCode) {
+  setSharedPlan(_shareCode);
+  // A shared plan lives on the Blueprints page, which only exists in mining mode — so pin mining
+  // for THIS page load, else the first snapshot's applyTabLayout would bounce the pane back to
+  // Contracts (cargo) or Salvage. In-memory only (no localStorage write): a reload returns the
+  // recipient to their own mode, and Import/Back leave them on their own Blueprints page meanwhile.
+  MODE_OVERRIDE = "mining";
+  activateTab("blueprint", { push: false });
+  try { history.replaceState(null, "", "/blueprint"); } catch (_) {}
+} else {
+  const _legacy = LEGACY_HASH[location.hash.slice(1)];
+  if (location.pathname === "/" && _legacy) history.replaceState(null, "", _legacy);
+  activateTab(tabFromPath(location.pathname), { push: false });
+}

@@ -158,6 +158,74 @@ def test_blueprint_tab_renders_in_mining_mode(page, populated_server):
     assert errors == [], errors
 
 
+def test_share_plan_round_trip(page, populated_server):
+    """A read-only blueprint plan shared via a ?code= link. The whole plan (selected blueprints +
+    quantities) rides INSIDE the link, so the recipient opens it on THEIR own install and it renders
+    against their catalog — the sharer's instance serves nothing. Drives the full loop: pick a qty →
+    Share copies a self-contained localhost link → opening it shows the read-only snapshot → Import
+    copies it into the editable plan."""
+    import json
+    from urllib.parse import urlsplit
+
+    catalog = {"blueprints": [
+        {"name": "Stub A", "type": "FPS Weapons", "subtype": "Rifle", "cls": "", "quality": "A", "size": 1},
+        {"name": "Stub B", "type": "Vehicle Component", "subtype": "Power Plant", "cls": "Military",
+         "quality": "A", "size": 2}]}
+    page.route("**/api/blueprints", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps(catalog)))
+    # The snapshot's materials/contracts/deposits cards POST these; stub them so the read-only view
+    # paints without console errors (their content is unit-tested elsewhere).
+    page.route("**/api/blueprints-plan", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"items": [], "requirements": [], "minerals": []})))
+    page.route("**/api/mining-plan", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"targets": [], "coverage": [], "per_mineral": []})))
+
+    errors = _boot(page, populated_server)
+    _set_mode(page, 'Mining')
+    page.wait_for_selector('#nav a[data-tab="blueprint"]:not(.hide)')
+    page.click('#nav a[data-tab="blueprint"]')
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length > 0")
+
+    # Select Stub B with a quantity of 3 (verifies the quantity travels, not just the selection).
+    page.fill("#blueprint .bp-table tr[data-i='1'] .bp-qin", "3")
+
+    # Share: the link is always surfaced in a selectable field (clipboard may be blocked headless).
+    page.click("#blueprint .bp-share")
+    page.wait_for_function(
+        "() => { const i = document.querySelector('#blueprint .bp-share-link');"
+        " return i && i.value.includes('?code=b1.'); }")
+    link = page.input_value("#blueprint .bp-share-link")
+    assert "localhost" in link and "?code=b1." in link, link
+
+    # Open the link on the same server (keep its ?code=, swap the localhost:port host for the test's
+    # 127.0.0.1:port). This is the recipient opening it on their OWN instance.
+    page.goto(populated_server + "/?" + urlsplit(link).query)
+    page.wait_for_selector("#blueprint .bp-shared-badge")          # read-only snapshot view
+    rows = page.locator("#blueprint .bp-pick table tbody tr")
+    assert rows.count() == 1                                       # only the shared blueprint
+    assert "Stub B" in rows.first.inner_text()
+    assert "(not in your catalog)" not in rows.first.inner_text()  # resolved against the catalog
+    assert "Power Plant" in rows.first.inner_text()                # metadata came from THIS catalog
+    assert rows.first.locator("td.lt-num").last.inner_text().strip() == "3"  # the shared quantity
+
+    # Import into my plan (existing plan present from the share step → confirm dialog).
+    page.on("dialog", lambda d: d.accept())
+    page.click("#blueprint .bp-share.primary")
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length > 0")  # editable again
+    assert page.input_value("#blueprint .bp-table tr[data-i='1'] .bp-qin") == "3"
+    assert errors == [], errors
+
+
+def test_share_plan_bad_code_fails_gracefully(page, populated_server):
+    """A corrupt/truncated ?code= must fail LOUD with a clear message, not a blank page or a
+    console error — the codec throws and the view shows a 'back to my plan' escape hatch."""
+    errors = _boot(page, populated_server)
+    page.goto(populated_server + "/?code=b1.not-valid-base64-@@@")
+    page.wait_for_selector("#blueprint .sb-warn")
+    assert "invalid or corrupted" in page.inner_text("#blueprint .sb-warn")
+    assert errors == [], errors
+
+
 def test_salvage_tab_dropdown_lists_ships(page, populated_server):
     """The Salvage tab is hidden in cargo mode, so force salvage via setMode (a bridged handler),
     then drive the ship picker: a searchable combobox (mirroring the blueprint picker) over a

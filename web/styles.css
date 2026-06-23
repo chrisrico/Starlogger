@@ -857,6 +857,17 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sb-box .shipmenu{right:auto;left:0;min-width:240px;max-height:320px;overflow:auto}
 .bp-pick{min-height: 100px;max-height:500px;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
 .bp-table{width:100%}
+/* share a read-only plan: header actions + the link/feedback bar under the header. The bar is
+   collapsed when empty (only shown after Share / in the shared-plan view). */
+.bp-acts{display:inline-flex;gap:8px;align-items:center}
+.bp-share-bar:empty{display:none}
+.bp-share-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+  margin:0 16px 10px;font-size:12px;color:var(--ink-2)}
+.bp-share-link{flex:1 1 280px;min-width:200px;font-family:var(--mono);font-size:12px;
+  padding:6px 8px;border-radius:2px;background:var(--panel-2);color:var(--ink);border:1px solid var(--line-2)}
+.bp-shared-badge{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--cyan);border:1px solid rgba(var(--cyan-rgb),.4);border-radius:3px;padding:2px 7px;
+  background:rgba(var(--cyan-rgb),.06);white-space:nowrap}
 .bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel);white-space:nowrap}
 .bp-h{cursor:pointer;display:inline-flex;align-items:center;gap:3px}
 .bp-h:hover{color:var(--cyan)}
