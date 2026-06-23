@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 import time
 
+from .acquired import merge_acquired
 from .config import SESSIONS_KEEP, SESSIONS_PATH
 from .jsonstore import atomic_write, load_cached, read_json
 from .overrides import apply_override, get_overrides
@@ -34,7 +35,11 @@ _write_lock = threading.Lock()  # serialize sessions.json writers (live tailer +
 #    replacing the keyword heuristic where a template matches.
 # 3: `type`/`icon` now also resolve named/scripted ContractGenerator missions (guild & story
 #    contracts) via their debugName -- see contracts.decode / scdata.build_contract_generators.
-ARCHIVE_SCHEMA = 3
+# 4: archive_session now folds parsed "Received Blueprint:" acquisitions into the cumulative
+#    acquired_blueprints.json (see acquired.merge_acquired). This bump exists only to force the
+#    backfill to re-parse every logbackup once, backfilling that file with historical
+#    acquisitions; the session-summary shape is unchanged.
+ARCHIVE_SCHEMA = 4
 
 
 def _session_key(state: State) -> str:
@@ -228,6 +233,10 @@ def load_sessions(path: str = SESSIONS_PATH) -> list:
 
 def archive_session(state: State, path: str = SESSIONS_PATH) -> None:
     summary = build_summary(state)
+    # Fold this session's acquired blueprints into the cumulative owned record. Runs before
+    # reset() clears state.blueprints; idempotent, so the per-batch live upsert and the
+    # session-end / backfill calls can't double-count. (Separate file from sessions.json.)
+    merge_acquired(state.blueprints)
     with _write_lock:  # read-modify-write is atomic vs. other archiving threads
         arch = _read_archive(path)
         # replace an existing entry with the same key, else append

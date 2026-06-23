@@ -66,6 +66,11 @@ SALVAGE_SHIPS_PATH = os.path.join(DATA_DIR, "salvage_ships.json")
 # extract (links a blueprint -> the minerals it needs -> the rocks that yield them).
 # See blueprints.py.
 BLUEPRINTS_PATH = os.path.join(DATA_DIR, "blueprints.json")
+# Crafting blueprints the player has ACQUIRED, parsed from Game.log "Received Blueprint:"
+# HUD notifications and accumulated (union, never erodes) across every session + logbackup.
+# Player-derived ownership record -- distinct from the static blueprints.json catalog and
+# from the per-session sessions.json archive. See acquired.py.
+ACQUIRED_BLUEPRINTS_PATH = os.path.join(DATA_DIR, "acquired_blueprints.json")
 # Contract template taxonomy + cargo manifests, from the same full DataCore extract
 # (the authoritative grade/route/SCU-cap/rep/legal table behind contract classification).
 # See contracts.py.

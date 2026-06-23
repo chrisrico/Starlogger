@@ -126,6 +126,16 @@ END_MISSION = re.compile(
 )
 AWARD = re.compile(r'Added notification "Awarded\s*(?P<amt>\d+)\s*aUEC')
 
+# A crafting blueprint the player acquired -- the HUD notification "Received Blueprint:
+# <name>: " on the mission/comms bus. Anchor on the SHUDEvent "Added notification" form so
+# the UI-lifecycle echoes (UpdateNotificationItem ... Action: Next/StartFade/Remove) and the
+# bare quoted re-print don't double-count: this matches exactly once per acquisition. The
+# trailing ": " before the closing quote is an empty count field. (This message type isn't in
+# docs/game-log-catalog.md -- it predates the catalog.) Locked by tests/test_blueprints_acquired.py.
+BLUEPRINT_RECEIVED = re.compile(
+    r'Added notification "Received Blueprint:\s*(?P<name>.*?)\s*:\s*"\s*\[\d+\]'
+)
+
 # Manual commodity-terminal trades (NOT mission cargo). The game logs the player
 # pressing Buy/Sell at a trade kiosk via CEntityComponentCommodityUIProvider. The
 # request line is the only record -- there's no settle/confirm follow-up -- so a
@@ -311,6 +321,25 @@ def clean_title(s: str) -> str:
     s = _TAG.sub("", s)
     s = s.replace("[BP]*", "").replace("*", "")
     return re.sub(r"\s+", " ", s).strip(" :")
+
+
+def norm_bp_name(name: str) -> str:
+    """Normalize a blueprint name for matching log "Received Blueprint:" acquisitions to
+    the static catalog: collapse internal whitespace and lowercase. The single source of
+    this normalization (state, acquired, and the server all route through it) so a name
+    like "Antium Arms Moss Camo " (trailing space) matches the catalog entry."""
+    return re.sub(r"\s+", " ", (name or "").strip()).lower()
+
+
+# A graded-variant prefix the game stamps on some blueprint notifications that the catalog
+# name lacks: "Ind/3/C Surveyor-Max" -> "Surveyor-Max", "Sth/2/A Spicule" -> "Spicule",
+# "S00 Hofstede" -> "Hofstede". Stripped as a fallback when the full name misses the catalog.
+_BP_GRADE_PREFIX = re.compile(r"^(?:[A-Za-z]{1,4}/\d+/[A-Za-z0-9]+|S\d+)\s+")
+
+
+def strip_bp_grade(name: str) -> str:
+    """Drop a leading grade-code prefix from a blueprint name (see _BP_GRADE_PREFIX)."""
+    return _BP_GRADE_PREFIX.sub("", name or "")
 
 
 def classify_end(*tokens: str | None, default: str = "completed") -> str:

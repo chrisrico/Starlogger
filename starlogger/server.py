@@ -23,7 +23,9 @@ from .settings import describe as describe_settings, set_setting
 from .settings import get_ship_equipment, set_ship_equipment
 from .settings import resolve_str as settings_str
 from .settings import update as update_settings
+from .acquired import acquired_index, resolve_owned
 from .blueprints import aggregate_blueprints, blueprint_catalog, lookup_blueprint
+from .patterns import norm_bp_name
 from .shipbuild import ship_build_plan
 from .contracts import load_contracts
 from .music import load_curation, load_music, set_curation
@@ -476,8 +478,18 @@ def create_app(state: State, log_path: str | None = None, presence=None,
 
     @app.get("/api/blueprints")
     def api_blueprints():
-        # {name, category} rows for the planner's grouped (type/size) picker.
-        return jsonify({"blueprints": blueprint_catalog()})
+        # The full table catalog, each row tagged `acquired` (+ `acquired_at`) from the
+        # player's parsed "Received Blueprint:" history (cumulative file ∪ live session),
+        # reconciled to catalog names (exact, else grade-prefix-stripped). See acquired.py.
+        rows = blueprint_catalog()
+        owned = resolve_owned(acquired_index(state),
+                              (norm_bp_name(r["name"]) for r in rows))
+        for r in rows:
+            k = norm_bp_name(r["name"])
+            r["acquired"] = k in owned
+            if r["acquired"]:
+                r["acquired_at"] = owned[k]
+        return jsonify({"blueprints": rows})
 
     @app.get("/api/blueprint")
     def api_blueprint():

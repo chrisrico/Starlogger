@@ -27,6 +27,10 @@ class State:
         self.version_cv = threading.Condition(self.lock)
         self.missions: dict[str, Mission] = {}
         self.trades: dict[str, Trade] = {}  # manual terminal trades this session
+        # Crafting blueprints acquired this session, from "Received Blueprint:" HUD
+        # notifications. Keyed by normalized name -> {name, acquired_at}; folded into the
+        # cumulative acquired_blueprints.json at session end (see acquired.merge_acquired).
+        self.blueprints: dict[str, dict] = {}
         self.kiosk_names: dict[str, str] = {}  # kioskId -> place name (from kiosk entity)
         self.travel_routes: list[dict] = []  # quantum route calcs (ts, ship, frm, to)
         self.travel_arrivals: list[dict] = []  # quantum drive arrivals (ts, ship)
@@ -95,13 +99,15 @@ class State:
         otherwise the account/player name is kept."""
         with self.lock:
             # archive the session about to be cleared, if it had any activity
-            if self.on_session_end and (self.missions or self.total_awarded or self.trades):
+            if self.on_session_end and (self.missions or self.total_awarded
+                                        or self.trades or self.blueprints):
                 try:
                     self.on_session_end(self)
                 except Exception as e:
                     print(f"[archive] session-end hook failed: {e}")
             self.missions.clear()
             self.trades.clear()
+            self.blueprints.clear()
             self.kiosk_names.clear()
             self.travel_routes.clear()
             self.travel_arrivals.clear()
@@ -164,6 +170,8 @@ class State:
         if self._trade(line, ts):
             return
         if self._travel(line, ts):
+            return
+        if self._blueprint(line, ts):
             return
         self._mission(line, ts)
 
@@ -248,7 +256,8 @@ class State:
         Locked by tests/test_state.py::test_fastshutdown_archives_once_not_twice."""
         if not patterns.SHUTDOWN.search(line):
             return False
-        if self.logged_in or self.missions or self.total_awarded or self.trades:
+        if (self.logged_in or self.missions or self.total_awarded
+                or self.trades or self.blueprints):
             self.reset()  # keeps player name; fires the session-end (archive) hook
         self.logged_in = False
         self.game_running = False  # clean quit-to-desktop: the game process is gone
@@ -391,6 +400,26 @@ class State:
             self.travel_arrivals.append({"ts": ts, "ship": m.group("ship")})
             return True
         return False
+
+    def _blueprint(self, line: str, ts: str | None) -> bool:
+        """Record a crafting blueprint the player acquired, from its "Received Blueprint:"
+        HUD notification. Anchored (in the pattern) on the SHUDEvent "Added notification"
+        form so the UI-lifecycle echoes and the bare re-print don't double-count -- one
+        match per acquisition. Deduped within the session by normalized name (earliest ts
+        kept); the cumulative cross-session union lives in acquired.merge_acquired."""
+        m = patterns.BLUEPRINT_RECEIVED.search(line)
+        if not m:
+            return False
+        name = m.group("name").strip()
+        if not name:
+            return True
+        key = patterns.norm_bp_name(name)
+        rec = self.blueprints.get(key)
+        if rec is None:
+            self.blueprints[key] = {"name": name, "acquired_at": ts}
+        elif ts and (not rec["acquired_at"] or ts < rec["acquired_at"]):
+            rec["acquired_at"] = ts
+        return True
 
     def _mission(self, line: str, ts: str | None) -> None:
         m = patterns.MARKER.search(line)

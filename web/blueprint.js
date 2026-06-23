@@ -12,9 +12,13 @@ import { registerCombo, comboInputHtml } from "./combobox.js";
 import { locChips, locKey } from "./minerals.js";
 import { encodePlan, decodePlan, planLink } from "./shareplan.js";
 
-let BP_CATALOG = null;        // cached {name, type, …} blueprint catalog for the picker
+let BP_CATALOG = null;        // cached {name, type, …, acquired} blueprint catalog for the picker
 let BP_SHIPS = null;          // cached buildable ship names for the shipbuilder dropdown
 let BP_INIT = false;
+// Names of blueprints the player already owns (b.acquired from /api/blueprints, parsed from the
+// game log). Used to drop them from the "Reward contracts" card — no point showing how to earn
+// a blueprint you've got.
+let ACQ_NAMES = new Set();
 // Per-blueprint build quantity, keyed by blueprint name. Persisted so a planned crafting run
 // survives a reload. The whole catalog is one table with an inline qty input per row; the
 // materials breakdown is summed from the rows whose quantity > 0 — Clear resets every qty to 0.
@@ -23,6 +27,11 @@ const _bpSave = () => { try { localStorage.setItem("bpQty", JSON.stringify(BP_QT
 // "Qty > 0" toggle — when on, the table shows only rows you've given a quantity (the selected
 // builds, e.g. after the shipbuilder), on top of any column filters. Persisted.
 let BP_ONLY = localStorage.getItem("bpOnly") === "1";
+// Show/hide the Acquired column (the one toggleable column); persisted, default on. The column
+// stays in BP_COLS for sort/filter/the row predicate — only its TH/TD rendering is gated — so a
+// header funnel filter still works while it's shown; we clear that filter when hiding it so there
+// can't be an active filter on a column you can't see.
+let BP_SHOW_ACQ = localStorage.getItem("bpShowAcq") !== "0";
 
 // ---- shared read-only snapshot ---- //
 // When the page is opened via a ?code=… link (a plan another Starlogger user shared), the whole
@@ -54,6 +63,7 @@ export async function initBlueprint() {
     renderBlueprintShell();
     try { BP_CATALOG = (await getJSON("/api/blueprints")).blueprints || []; }
     catch (_) { BP_CATALOG = []; }
+    ACQ_NAMES = new Set((BP_CATALOG || []).filter(b => b.acquired).map(b => b.name));
     // Buildable ships for the shipbuilder combobox: those with craftable components / a radar
     // (concepts excluded), as {name, mfr} sorted by manufacturer then name — matching the header
     // ship picker's grouping so the two dropdowns read the same.
@@ -93,24 +103,36 @@ function renderBlueprintShell() {
 const BP_COLS = [
   { key: "name", label: "Name" }, { key: "type", label: "Type" }, { key: "subtype", label: "Subtype" },
   { key: "cls", label: "Class" }, { key: "quality", label: "Quality" }, { key: "size", label: "Size" },
+  { key: "acquired", label: "Acquired" },
 ];
+// The columns actually rendered: all of BP_COLS, minus Acquired when its toggle is off. Sort,
+// filter, and _bpRowShown still walk the full BP_COLS so a hidden column's filter is honored.
+const _bpCols = () => (BP_SHOW_ACQ ? BP_COLS : BP_COLS.filter(c => c.key !== "acquired"));
 let BP_FILTERS = {};   // col -> Set of EXCLUDED values (unchecked in its dropdown); empty/absent = all
 let BP_SORT = null;    // { col, dir: 1 | -1 }
 const _bpNum = (k) => k === "size";
 const _bpRA = (k) => _bpNum(k) || k === "quality";   // right-align the numeric-ish columns
-const _bpCell = (b, k) => { const v = b[k]; return (v === "" || v == null) ? "" : String(v); };
+// Acquired reads as a plain "Yes"/"No" string for the funnel filter + sort; the cell itself
+// renders a ✓ (below). Everything else is its raw value.
+const _bpCell = (b, k) => {
+  if (k === "acquired") return b.acquired ? "Yes" : "No";
+  const v = b[k]; return (v === "" || v == null) ? "" : String(v);
+};
 
 // The blueprint table is built as a lit template, but its rows are then driven imperatively
 // (sort reorders DOM rows, the column filters toggle row style.display, the qty inputs update
 // in place). The static data-col/data-i attributes and the .bp-prow/.bp-qin/.bp-on hooks the
 // handlers re-read off the live DOM are preserved; only the inline on* triggers are @-bindings.
 function blueprintTableTpl() {
-  const head = BP_COLS.map(c =>
+  const cols = _bpCols();
+  const head = cols.map(c =>
     html`<th data-col=${c.key} class=${_bpRA(c.key) ? "lt-num" : ""}><span class="bp-h" @click=${() => bpSort(c.key)}>${c.label}<span class="bp-sort" id="bps-${c.key}"></span></span>${c.key === "name" ? nothing : html`<button class="bp-fbtn" title=${`Filter ${c.label}`} @click=${e => bpFilterOpen(e, c.key)}>${unsafeHTML('<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg>')}</button>`}</th>`);
   const qhead = html`<th class="lt-num" data-col="qty">Qty<button class="bp-fbtn" title="Show only rows with a quantity (Qty > 0)" @click=${e => bpQtyFilter(e)}>${unsafeHTML('<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 2.5h10l-3.8 4.2v3.6l-2.4-1.3V6.7z" fill="currentColor"/></svg>')}</button></th>`;
   const rows = (BP_CATALOG || []).map((b, i) => {
     const q = BP_QTY[b.name] || 0;
-    const cells = BP_COLS.map(c => {
+    const cells = cols.map(c => {
+      if (c.key === "acquired")
+        return html`<td class="bp-acq-cell">${b.acquired ? html`<span class="bp-acq" title=${b.acquired_at ? "Acquired " + b.acquired_at : "Acquired"}>✓</span>` : nothing}</td>`;
       const v = _bpCell(b, c.key);
       return html`<td class=${_bpRA(c.key) ? "lt-num" : ""}>${c.key === "name" ? html`<b>${v}</b>` : v}</td>`;
     });
@@ -157,6 +179,7 @@ function planToolTpl() {
       "to sort, click a row to toggle it on, and set a quantity. Materials are summed below across " +
       "everything with a quantity, then ranked by deposit coverage."))}</span>
       <span class="bp-acts">
+        <button class="bp-clear" @click=${() => bpToggleAcq()} title="Show or hide the Acquired column (blueprints you've received, read from the game log)">${BP_SHOW_ACQ ? "Hide acquired" : "Show acquired"}</button>
         <button class="bp-share" @click=${() => bpShare()} title="Copy a read-only link to this plan to send to another Starlogger user">Share plan</button>
         <button class="bp-clear" @click=${() => bpClearList()} title="Reset every quantity to 0">Clear</button>
       </span></h3>
@@ -205,10 +228,12 @@ function sharedPlanTpl() {
   const loaded = BP_CATALOG != null;   // suppress "(not in your catalog)" until the catalog is in
   const byName = new Map((BP_CATALOG || []).map(b => [b.name, b]));
   const names = Object.keys(SHARED_PLAN);
-  const head = BP_COLS.map(c => html`<th class=${_bpRA(c.key) ? "lt-num" : ""}>${c.label}</th>`);
+  // A shared plan is someone else's snapshot — ownership ("Acquired") isn't meaningful here.
+  const cols = BP_COLS.filter(c => c.key !== "acquired");
+  const head = cols.map(c => html`<th class=${_bpRA(c.key) ? "lt-num" : ""}>${c.label}</th>`);
   const rows = names.map(name => {
     const b = byName.get(name);
-    const cells = BP_COLS.map(c => {
+    const cells = cols.map(c => {
       const v = b ? _bpCell(b, c.key) : (c.key === "name" ? name : "");
       return html`<td class=${_bpRA(c.key) ? "lt-num" : ""}>${c.key === "name"
         ? html`<b>${v}</b>${(loaded && !b) ? html` <span class="mn-dim" title="No blueprint by this name in your catalog — your game data may differ from the sharer's.">(not in your catalog)</span>` : nothing}`
@@ -400,6 +425,14 @@ function bpQtyFilter(e) {
   try { localStorage.setItem("bpOnly", BP_ONLY ? "1" : "0"); } catch (_) {}
   _bpApplyFilter();
 }
+// Show/hide the Acquired column; persisted. Rebuild the table so the column appears/disappears.
+// Drop any Acquired filter when hiding so there's no active filter on a column you can't see.
+function bpToggleAcq() {
+  BP_SHOW_ACQ = !BP_SHOW_ACQ;
+  try { localStorage.setItem("bpShowAcq", BP_SHOW_ACQ ? "1" : "0"); } catch (_) {}
+  if (!BP_SHOW_ACQ) delete BP_FILTERS.acquired;
+  renderBlueprintShell();   // repaint the table (and tool bar's button label) with the new layout
+}
 const _miningDur = (s) => {
   s = Math.round(s || 0); const m = Math.floor(s / 60), sec = s % 60;
   return m ? `${m}m${sec ? " " + sec + "s" : ""}` : `${sec}s`;
@@ -432,7 +465,8 @@ const _BP_SRC_CAP = 6;
 const _bpSource = (s) => (typeof s === "string") ? { faction: s, contracts: [] } : (s || {});
 function contractsHtml(agg) {
   let withSrc = 0, noSrc = 0;
-  const rows = (agg.items || []).filter(it => it.found).map(it => {
+  // Skip blueprints you've already acquired — no point showing how to earn one you own.
+  const rows = (agg.items || []).filter(it => it.found && !ACQ_NAMES.has(it.name)).map(it => {
     const srcs = (it.sources || []).map(_bpSource).filter(s => s.faction);
     if (!srcs.length) { noSrc++; return ""; }
     withSrc++;

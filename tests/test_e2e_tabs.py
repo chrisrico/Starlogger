@@ -353,14 +353,16 @@ def test_blueprint_table_populates_when_catalog_loads_late(page, populated_serve
 
 
 def test_blueprint_table_columns_and_filter(page, populated_server):
-    """The Blueprints table exposes Name/Type/Subtype/Class/Quality/Size columns, each with a
-    spreadsheet-style multi-select filter; unchecking a value hides its rows."""
+    """The Blueprints table exposes Name/Type/Subtype/Class/Quality/Size/Acquired columns, each
+    with a spreadsheet-style multi-select filter; unchecking a value hides its rows. Acquired
+    blueprints (from the game log) render a \u2713."""
     import json
     rows = [
         {"name": "Mil Shield", "type": "Vehicle Component", "subtype": "Shield",
-         "cls": "Military", "quality": "A", "size": 2},
+         "cls": "Military", "quality": "A", "size": 2, "acquired": True,
+         "acquired_at": "2026-06-22T06:33:18Z"},
         {"name": "Civ Shield", "type": "Vehicle Component", "subtype": "Shield",
-         "cls": "Civilian", "quality": "B", "size": 2},
+         "cls": "Civilian", "quality": "B", "size": 2, "acquired": False},
     ]
     # stub the catalog API so the assertion doesn't depend on the shared on-disk cache
     page.route("**/api/blueprints", lambda r: r.fulfill(
@@ -372,8 +374,9 @@ def test_blueprint_table_columns_and_filter(page, populated_server):
     heads = page.eval_on_selector_all(
         "#blueprint .bp-table thead th",
         "ths => ths.map(t => t.textContent.replace(/[\u25be\u25b2\u25bc]/g, '').trim())")
-    assert heads == ["Name", "Type", "Subtype", "Class", "Quality", "Size", "Qty"], heads
+    assert heads == ["Name", "Type", "Subtype", "Class", "Quality", "Size", "Acquired", "Qty"], heads
     assert page.locator("#blueprint .bp-prow").count() == 2
+    assert page.locator("#blueprint .bp-table tbody .bp-acq").count() == 1   # only the acquired row
     # multi-select filter on Class: uncheck "Military" -> only the Civilian row remains
     page.click('#blueprint th[data-col="cls"] .bp-fbtn')
     page.wait_for_selector("#bp-fpop.open")
@@ -384,6 +387,46 @@ def test_blueprint_table_columns_and_filter(page, populated_server):
         "#blueprint .bp-prow",
         "rows => rows.filter(r => r.style.display !== 'none').map(r => r.querySelector('td b').textContent)")
     assert shown == ["Civ Shield"], shown
+    assert errors == []
+
+
+def test_blueprint_acquired_filter_and_column_toggle(page, populated_server):
+    """The Acquired column filters like any other (uncheck "Yes" → only un-owned rows remain) and
+    can be toggled off entirely, which removes it from the header and clears its filter."""
+    import json
+    rows = [
+        {"name": "Mil Shield", "type": "Vehicle Component", "subtype": "Shield",
+         "cls": "Military", "quality": "A", "size": 2, "acquired": True,
+         "acquired_at": "2026-06-22T06:33:18Z"},
+        {"name": "Civ Shield", "type": "Vehicle Component", "subtype": "Shield",
+         "cls": "Civilian", "quality": "B", "size": 2, "acquired": False},
+    ]
+    page.route("**/api/blueprints", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"blueprints": rows})))
+    errors = _boot(page, populated_server)
+    _set_mode(page, 'Mining')
+    page.click('#nav a[data-tab="blueprint"]')
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length === 2")
+    # filter by Acquired: uncheck "Yes" -> only the not-acquired row remains
+    page.click('#blueprint th[data-col="acquired"] .bp-fbtn')
+    page.wait_for_selector("#bp-fpop.open")
+    page.click('#bp-fpop .bp-fopt input[value="Yes"]')
+    page.wait_for_function("() => [...document.querySelectorAll('#blueprint .bp-prow')]"
+                           ".filter(r => r.style.display !== 'none').length === 1")
+    shown = page.eval_on_selector_all(
+        "#blueprint .bp-prow",
+        "rows => rows.filter(r => r.style.display !== 'none').map(r => r.querySelector('td b').textContent)")
+    assert shown == ["Civ Shield"], shown
+    # toggle the column off -> header drops "Acquired" and its filter clears (both rows return)
+    page.click("#blueprint button:has-text('Hide acquired')")
+    page.wait_for_function("() => [...document.querySelectorAll('#blueprint .bp-table thead th')]"
+                           ".every(t => t.textContent.trim() !== 'Acquired')")
+    heads = page.eval_on_selector_all(
+        "#blueprint .bp-table thead th",
+        "ths => ths.map(t => t.textContent.replace(/[▾▲▼]/g, '').trim())")
+    assert heads == ["Name", "Type", "Subtype", "Class", "Quality", "Size", "Qty"], heads
+    page.wait_for_function("() => [...document.querySelectorAll('#blueprint .bp-prow')]"
+                           ".filter(r => r.style.display !== 'none').length === 2")
     assert errors == []
 
 
@@ -418,4 +461,37 @@ def test_reward_contracts_card_renders_per_blueprint(page, populated_server):
     assert "Eckhart Security" in page.locator("#mres-plan .bp-fac").first.text_content()
     assert page.locator("#mres-plan .bp-src .lt-tag").count() == 6           # capped
     assert page.locator("#mres-plan .bp-src", has_text="+2 more").count() == 1
+    assert errors == [], errors
+
+
+def test_reward_contracts_suppressed_for_acquired_blueprint(page, populated_server):
+    """A blueprint the player already owns (acquired=True) is dropped from the 'Reward contracts'
+    card — no point showing how to earn one you have. Its only source would otherwise render, so
+    the whole card is suppressed when it's the lone selected blueprint."""
+    import json
+    page.route("**/api/blueprints", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"blueprints": [
+            {"name": "Owned Cannon", "type": "Vehicle Weapons", "subtype": "Cannon",
+             "cls": "Military", "quality": "A", "size": 3, "acquired": True,
+             "acquired_at": "2026-06-22T06:33:18Z"}]})))
+    page.route("**/api/blueprints-plan", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({
+            "items": [{"name": "Owned Cannon", "qty": 1, "found": True,
+                       "sources": [{"faction": "Eckhart Security", "contracts": ["Contract 1"]}]}],
+            "requirements": [], "minerals": [], "craft_seconds": 0, "total_scu": 0})))
+    page.route("**/api/mining-plan", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"targets": [], "per_mineral": [], "coverage": []})))
+    errors = _boot(page, populated_server)
+    _set_mode(page, 'Mining')
+    page.click('#nav a[data-tab="blueprint"]')
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length === 1")
+    page.click("#blueprint .bp-prow .bp-step[aria-label='One more']")   # qty 0->1 -> recompute plan
+    # the Materials card renders (the plan ran), but no Reward-contracts card for the owned blueprint
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('#mres-plan .card h3 span')]"
+        ".some(s => /Materials needed/i.test(s.textContent))")
+    cards = page.eval_on_selector_all(
+        "#mres-plan .card h3 span", "ss => ss.map(s => s.textContent)")
+    assert not any("Reward contracts" in c for c in cards), cards
     assert errors == [], errors
