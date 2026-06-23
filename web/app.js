@@ -140,12 +140,16 @@ document.addEventListener("keydown", (e) => {
 // on foot, or to plan a haul while still sat in a Prospector). Persisted across sessions.
 let MODE_OVERRIDE = localStorage.getItem("modeOverride") || "auto";   // auto | cargo | mining | salvage
 // The effective mode for this snapshot: a pinned override, else auto-detected. Mining wins (a
-// mining vehicle), then salvage (a salvage vessel OR wrecks detected in the log this session),
-// else cargo. Drives the tab layout and the header readouts/gauge.
+// mining vehicle), then salvage (a salvage vessel), else cargo. Both salvage and mining key off
+// the CURRENT ship (effective_ship, so a crewed salvage/mining ship counts). We deliberately do
+// NOT auto-switch on `detected_salvage`: that's a session-wide log of every wreck sighted and is
+// never cleared mid-session, so a single wreck would lock the dashboard into Salvage mode for the
+// rest of the session — even after switching to a cargo ship (e.g. an Ironclad). The Salvage tab
+// still lists those wrecks; pin "salvage" in the MODE switch if you want it without a salvage ship.
 function effectiveMode(d) {
   if (MODE_OVERRIDE !== "auto") return MODE_OVERRIDE;
   if (d && d.mining_ship) return "mining";
-  if (d && (d.salvage_ship || (d.detected_salvage && d.detected_salvage.length))) return "salvage";
+  if (d && d.salvage_ship) return "salvage";
   return "cargo";
 }
 function effectiveMining(d) { return effectiveMode(d) === "mining"; }  // header keys off this
