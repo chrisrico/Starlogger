@@ -129,16 +129,32 @@ def test_signal_tab_renders_top_level(page, populated_server):
     assert errors == [], errors
 
 
-def test_mining_tab_renders_in_mining_mode(page, populated_server):
-    """The Mining tab is hidden in cargo mode, so force mining via setMode (a bridged
-    handler) — effectiveMining() honours the override without needing a mining ship — then
-    confirm the tab and its tools shell render with no errors."""
+def test_minerals_tab_renders_in_mining_mode(page, populated_server):
+    """The Minerals tab is hidden in cargo mode, so force mining via setMode — effectiveMining()
+    honours the override without needing a mining ship — then confirm the Find tool renders. It's
+    a single-view page now (Blueprints split off to its own page), so there's no sub-tab bar."""
     errors = _boot(page, populated_server)
     _set_mode(page, 'Mining')
-    page.wait_for_selector('#nav a[data-tab="mining"]:not(.hide)')
-    page.click('#nav a[data-tab="mining"]')
-    page.wait_for_function("() => document.querySelector('#mining:not(.hide)') "
-                           "&& document.querySelector('#mining').children.length > 0")
+    page.wait_for_selector('#nav a[data-tab="minerals"]:not(.hide)')
+    page.click('#nav a[data-tab="minerals"]')
+    page.wait_for_selector("#minerals input#mf-name")           # the Find tool rendered
+    assert page.locator("#minerals .arch-tabs").count() == 0    # single-view: no sub-tab bar
+    assert errors == [], errors
+
+
+def test_blueprint_tab_renders_in_mining_mode(page, populated_server):
+    """Blueprints is its own top-level page now (Mining mode only). Force mining, open it, and
+    confirm the picker table renders — with no sub-tab bar of its own."""
+    import json
+    page.route("**/api/blueprints", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"blueprints": [
+            {"name": "Stub A", "type": "FPS Weapons", "subtype": "Rifle", "cls": "", "quality": "A", "size": 1}]})))
+    errors = _boot(page, populated_server)
+    _set_mode(page, 'Mining')
+    page.wait_for_selector('#nav a[data-tab="blueprint"]:not(.hide)')
+    page.click('#nav a[data-tab="blueprint"]')
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length > 0")
+    assert page.locator("#blueprint .arch-tabs").count() == 0
     assert errors == [], errors
 
 
@@ -239,22 +255,22 @@ def test_cargo_subtab_toggle(page, populated_server):
     assert errors == [], errors
 
 
-def test_mining_plan_table_populates_when_catalog_loads_late(page, populated_server):
-    """Regression: deep-linking to the Plan sub built the blueprint table before /api/blueprints
-    resolved — activateTab runs applySub→miningSub('plan') synchronously while initMining still
-    awaits the catalog, so the shell builds EMPTY — and the catalog-load path then skipped the
-    rebuild, leaving a permanently empty table. Reproduce via the real deep-link (/mining#plan,
-    mining mode pinned) with the catalog held, then assert the table fills once it arrives."""
+def test_blueprint_table_populates_when_catalog_loads_late(page, populated_server):
+    """Regression: deep-linking to the Blueprints page builds the picker table before
+    /api/blueprints resolves — initBlueprint() builds the shell synchronously while still awaiting
+    the catalog, so it starts EMPTY — and the catalog-load path must then rebuild it (not skip).
+    Reproduce via the real deep-link (/blueprint, mining mode pinned) with the catalog held, then
+    assert the table fills once it arrives."""
     import json
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     held = []
     page.route("**/api/blueprints", lambda r: held.append(r))   # hold the catalog response open
     page.goto(populated_server)
-    page.evaluate("() => localStorage.setItem('modeOverride', 'mining')")   # make /mining reachable
-    page.goto(populated_server + "/mining#plan")         # deep-link: activateTab→applySub→miningSub('plan')
-    page.wait_for_selector("#mining .bp-table")          # shell built synchronously (catalog still held)...
-    assert page.locator("#mining .bp-prow").count() == 0  # ...but empty: exactly the regression's state
+    page.evaluate("() => localStorage.setItem('modeOverride', 'mining')")   # make /blueprint reachable
+    page.goto(populated_server + "/blueprint")           # deep-link: activateTab→initBlueprint()
+    page.wait_for_selector("#blueprint .bp-table")        # shell built synchronously (catalog still held)...
+    assert page.locator("#blueprint .bp-prow").count() == 0  # ...but empty: exactly the regression's state
     for _ in range(60):                                  # let the (held) catalog request register
         if held:
             break
@@ -264,12 +280,12 @@ def test_mining_plan_table_populates_when_catalog_loads_late(page, populated_ser
         {"name": "Stub A", "type": "FPS Weapons", "subtype": "Rifle", "cls": "", "quality": "A", "size": 1},
         {"name": "Stub B", "type": "FPS Weapons", "subtype": "Pistol", "cls": "", "quality": "A", "size": 1},
     ]}))
-    page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length > 0")
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length > 0")
     assert errors == []
 
 
-def test_mining_plan_table_columns_and_filter(page, populated_server):
-    """The Plan table exposes Name/Type/Subtype/Class/Quality/Size columns, each with a
+def test_blueprint_table_columns_and_filter(page, populated_server):
+    """The Blueprints table exposes Name/Type/Subtype/Class/Quality/Size columns, each with a
     spreadsheet-style multi-select filter; unchecking a value hides its rows."""
     import json
     rows = [
@@ -283,22 +299,21 @@ def test_mining_plan_table_columns_and_filter(page, populated_server):
         status=200, content_type="application/json", body=json.dumps({"blueprints": rows})))
     errors = _boot(page, populated_server)
     _set_mode(page, 'Mining')
-    page.click('#nav a[data-tab="mining"]')
-    page.click("#mining .arch-tabs button:has-text('Plan')")  # the Plan sub-tab (lit @click)
-    page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length === 2")
+    page.click('#nav a[data-tab="blueprint"]')
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length === 2")
     heads = page.eval_on_selector_all(
-        "#mining .bp-table thead th",
+        "#blueprint .bp-table thead th",
         "ths => ths.map(t => t.textContent.replace(/[\u25be\u25b2\u25bc]/g, '').trim())")
     assert heads == ["Name", "Type", "Subtype", "Class", "Quality", "Size", "Qty"], heads
-    assert page.locator("#mining .bp-prow").count() == 2
+    assert page.locator("#blueprint .bp-prow").count() == 2
     # multi-select filter on Class: uncheck "Military" -> only the Civilian row remains
-    page.click('#mining th[data-col="cls"] .bp-fbtn')
+    page.click('#blueprint th[data-col="cls"] .bp-fbtn')
     page.wait_for_selector("#bp-fpop.open")
     page.click('#bp-fpop .bp-fopt input[value="Military"]')
-    page.wait_for_function("() => [...document.querySelectorAll('#mining .bp-prow')]"
+    page.wait_for_function("() => [...document.querySelectorAll('#blueprint .bp-prow')]"
                            ".filter(r => r.style.display !== 'none').length === 1")
     shown = page.eval_on_selector_all(
-        "#mining .bp-prow",
+        "#blueprint .bp-prow",
         "rows => rows.filter(r => r.style.display !== 'none').map(r => r.querySelector('td b').textContent)")
     assert shown == ["Civ Shield"], shown
     assert errors == []
@@ -325,10 +340,9 @@ def test_reward_contracts_card_renders_per_blueprint(page, populated_server):
         body=json.dumps({"targets": [], "per_mineral": [], "coverage": []})))
     errors = _boot(page, populated_server)
     _set_mode(page, 'Mining')
-    page.click('#nav a[data-tab="mining"]')
-    page.click("#mining .arch-tabs button:has-text('Plan')")   # the Plan sub-tab (lit @click)
-    page.wait_for_function("() => document.querySelectorAll('#mining .bp-prow').length === 1")
-    page.click("#mining .bp-prow .bp-step[aria-label='One more']")   # qty 0->1 (lit @click bpStep)
+    page.click('#nav a[data-tab="blueprint"]')
+    page.wait_for_function("() => document.querySelectorAll('#blueprint .bp-prow').length === 1")
+    page.click("#blueprint .bp-prow .bp-step[aria-label='One more']")   # qty 0->1 (lit @click bpStep)
     page.wait_for_function(
         "() => [...document.querySelectorAll('#mres-plan .card h3 span')]"
         ".some(s => /Reward contracts/i.test(s.textContent))")

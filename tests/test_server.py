@@ -105,7 +105,7 @@ def test_spa_fallback_serves_shell_for_path_routed_pages(client):
     # primary screens has no file on disk, so the server must serve index.html and let app.js
     # route from the URL. (The shell is the same bytes the "/" route serves.)
     shell = client.get("/").data
-    for path in ("/contracts", "/cargo", "/plan", "/archive", "/mining"):
+    for path in ("/contracts", "/cargo", "/plan", "/archive", "/minerals", "/blueprint"):
         r = client.get(path)
         assert r.status_code == 200, path
         assert r.data == shell, path

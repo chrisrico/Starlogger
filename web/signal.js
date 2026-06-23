@@ -10,7 +10,7 @@ import { html, nothing, unsafeHTML } from "./lit.js";
 import { getJSON } from "./net.js";
 import { S } from "./state.js";
 import { ensureGear } from "./shipequip.js";
-import { mineralUnion, elBadge, mechHtml, feasibilityHtml } from "./mining.js";
+import { mineralUnion, elBadge, mechHtml, feasibilityHtml } from "./minerals.js";
 import { componentsHtml, pullSummary } from "./shipcard.js";
 
 // Recent readings (newest first), persisted in localStorage scoped to the play SESSION — they

@@ -842,7 +842,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mining input#mf-name{min-width:200px}
 /* blueprint picker: one big table (Name/Type/Subtype/Class/Quality/Size + Qty). Columns are
    click-to-sort with a spreadsheet-style multi-select filter; clicking a row toggles its qty. */
-/* the table viewport is user-resizable by height (default 400px, persisted); the card sizes to it */
+/* the table viewport is a fixed-height scroll region; the result cards stack below it */
 /* shipbuilder bar: Ship + component-class pickers that bulk-set the planner's quantities */
 .sb-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 16px 10px;padding:8px 10px;
   border:1px solid var(--line-2);border-radius:3px;background:rgba(var(--cyan-rgb),.04)}
@@ -859,25 +859,25 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .sb-box .shipsel{width:220px}
 .sb-box .shipsel:hover,.sb-box .shipsel:focus{border-color:var(--cyan)}
 .sb-box .shipmenu{right:auto;left:0;min-width:240px;max-height:320px;overflow:auto}
-.bp-pick{height:400px;min-height:140px;resize:vertical;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
+.bp-pick{height:460px;overflow:auto;margin:0 16px 12px;border:1px solid var(--line-2);border-radius:3px}
 .bp-table{width:100%}
 .bp-pick thead th{position:sticky;top:0;z-index:1;background:var(--panel);white-space:nowrap}
 .bp-h{cursor:pointer;display:inline-flex;align-items:center;gap:3px}
 .bp-h:hover{color:var(--cyan)}
 .bp-sort{color:var(--cyan);font-size:9px}
-#mining .bp-fbtn{margin-left:6px;padding:1px 3px;background:none;border:1px solid transparent;
+#blueprint .bp-fbtn{margin-left:6px;padding:1px 3px;background:none;border:1px solid transparent;
   color:var(--ink-2);display:inline-flex;align-items:center;vertical-align:middle}
-#mining .bp-fbtn svg{display:block}
-#mining .bp-fbtn:hover{color:var(--cyan);border-color:var(--cyan)}
-#mining .bp-filtered .bp-fbtn{color:var(--cyan);border-color:var(--cyan)}
+#blueprint .bp-fbtn svg{display:block}
+#blueprint .bp-fbtn:hover{color:var(--cyan);border-color:var(--cyan)}
+#blueprint .bp-filtered .bp-fbtn{color:var(--cyan);border-color:var(--cyan)}
 .bp-prow{cursor:pointer}
 .bp-prow:hover{background:rgba(var(--cyan-rgb),.07)}
 .bp-prow.bp-on{background:rgba(var(--cyan-rgb),.14)}
 .bp-prow.bp-on:hover{background:rgba(var(--cyan-rgb),.2)}
 /* qty cell: external − / + steppers around the input, native spinners hidden */
 .bp-qcell{display:flex;align-items:center;justify-content:flex-end;gap:4px;cursor:default}
-#mining .bp-step{padding:1px 8px;font-size:14px;line-height:1.2}
-#mining .bp-qin{width:44px;text-align:center;padding:3px 4px;-moz-appearance:textfield}
+#blueprint .bp-step{padding:1px 8px;font-size:14px;line-height:1.2}
+#blueprint .bp-qin{width:44px;text-align:center;padding:3px 4px;-moz-appearance:textfield}
 .bp-qin::-webkit-outer-spin-button,.bp-qin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 /* column-filter dropdown (fixed so it escapes the table's scroll clip) */
 .bp-fpop{display:none;position:fixed;z-index:60;width:230px;background:var(--panel-2);

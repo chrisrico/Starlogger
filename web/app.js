@@ -3,7 +3,8 @@
 import { $, num, mount, tabBarTpl } from "./dom.js";
 import { html, nothing, repeat, unsafeHTML, ifDefined } from "./lit.js";
 import { postJSON, postRaw, getJSON } from "./net.js";
-import { initMining, miningSub, locChips, locKey } from "./mining.js";
+import { initMinerals, locChips, locKey } from "./minerals.js";
+import { initBlueprint } from "./blueprint.js";
 import { registerCombo, comboInputHtml } from "./combobox.js";
 import { initSignal, syncSignalSession } from "./signal.js";
 import { initSalvage, renderSalvage } from "./salvage.js";
@@ -44,7 +45,7 @@ let CARGO_SUB = localStorage.getItem("cargoSub") || "";       // "" = auto · "p
 // server.py's SPA fallback) and the sidebar items are genuine <a href> links. A section's
 // sub-tab (Cargo's Loading/Unloading, Mining's Identify/Find/Plan) is view state WITHIN a
 // page, not a page of its own, so it lives in the URL #hash instead of the path.
-const TABS = ["contracts", "signal", "cargo", "plan", "archive", "mining", "salvage"];
+const TABS = ["contracts", "signal", "cargo", "plan", "archive", "minerals", "blueprint", "salvage"];
 const DEFAULT_TAB = "contracts";
 const tabFromPath = (p) => {
   const seg = (p || "/").replace(/^\/+|\/+$/g, "").split("/")[0];
@@ -67,19 +68,19 @@ function activateTab(name, { push = true } = {}) {
   }
   if (name === "archive") activateArchiveTab();
   if (name === "signal") initSignal();
-  if (name === "mining") initMining();
+  if (name === "minerals") initMinerals();
+  if (name === "blueprint") initBlueprint();
   if (name === "salvage") initSalvage();
-  applySub(name, hash.slice(1));                     // restore Loading/Unloading / mining sub
+  applySub(name, hash.slice(1));                     // restore Cargo's Loading/Unloading sub
 }
 // Apply a section's sub-tab from the URL #hash. No (or an unrecognised) hash leaves the
 // section's own default in place — for Cargo that's the auto/persisted phase (cargoSubActive),
 // so the hash acts as an explicit deep-link override rather than the source of truth.
+// (Minerals + Blueprints are single-view pages now — no sub-tabs.)
 function applySub(name, sub) {
   if (name === "cargo") {
     if (sub === "loading") cargoSub("pickup");
     else if (sub === "unloading") cargoSub("dropoff");
-  } else if (name === "mining") {
-    if (["identify", "find", "plan"].includes(sub)) miningSub(sub);
   }
 }
 
@@ -169,7 +170,7 @@ function modeSwitchHtml(d) {
 // Cargo+Plan and slot their own tool tab right after Contracts. Driven from renderAll on every
 // snapshot; idempotent via LAYOUT_MODE so it only touches the DOM on an actual mode change.
 const HAUL_TABS = ["contracts", "signal", "cargo", "plan", "archive"];
-const MINE_TABS = ["contracts", "signal", "mining", "archive"];
+const MINE_TABS = ["contracts", "signal", "minerals", "blueprint", "archive"];
 const SALV_TABS = ["contracts", "signal", "salvage", "archive"];
 const MODE_TABS = { mining: MINE_TABS, salvage: SALV_TABS, cargo: HAUL_TABS };
 let LAYOUT_MODE = null;   // null until the first snapshot picks a layout
@@ -182,10 +183,11 @@ function applyTabLayout(mode) {
     b.classList.toggle("hide", i < 0);
     if (i >= 0) b.style.order = i;   // flex order: keep the visible slots contiguous
   });
-  // If the active tab just got hidden, fall back to the mode's primary tab (mining→Mining,
+  // If the active tab just got hidden, fall back to the mode's primary tab (mining→Minerals,
   // salvage→Salvage, else Contracts). An automatic correction, not a navigation — replace the
   // URL rather than pushing a history entry the user never asked for.
-  if (!order.includes(S.TAB)) activateTab(mode === "cargo" ? "contracts" : mode, { push: false });
+  if (!order.includes(S.TAB))
+    activateTab(mode === "mining" ? "minerals" : mode === "salvage" ? "salvage" : "contracts", { push: false });
 }
 
 
@@ -911,7 +913,7 @@ function oreRow(o) {
 function miningLegs(m) {
   const ores = m.ores || [];
   if (!ores.length) return html`<span class="sub">—</span>`;
-  // locKey() is a handler-free legend string (mining.js) → unsafeHTML.
+  // locKey() is a handler-free legend string (minerals.js) → unsafeHTML.
   return html`<div class="ore-head">collect ${m.ore_any ? html`any <b>one</b> of` : "all of"}</div><div class="orelegs">${ores.map(oreRow)}</div>${unsafeHTML(locKey())}`;
 }
 
@@ -1306,12 +1308,12 @@ window.addEventListener("pagehide", () => {
 
 // ---- initial route resolution (runs last, once all tab state + functions exist) ---- //
 // Map the URL onto the dashboard. Must run after the whole module is initialised —
-// activating archive/mining calls loadSessions()/initMining(), which touch state declared
+// activating archive/minerals calls loadSessions()/initMinerals(), which touch state declared
 // far below the nav setup. Old #hash bookmarks (the pre-path scheme, plus the pre-Cargo/Plan-
 // merge #loading/#unloading/#routes/#grid) are redirected to their new path form first so
 // shared links keep working; then the path drives activateTab.
 const LEGACY_HASH = { contracts: "/contracts", cargo: "/cargo", plan: "/plan",
-                      archive: "/archive", mining: "/mining",
+                      archive: "/archive", mining: "/minerals",
                       loading: "/cargo#loading", unloading: "/cargo#unloading",
                       routes: "/plan", grid: "/plan" };
 const _legacy = LEGACY_HASH[location.hash.slice(1)];
