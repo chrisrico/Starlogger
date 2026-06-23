@@ -882,7 +882,7 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .bp-prow.bp-on{background:rgba(var(--cyan-rgb),.14)}
 .bp-prow.bp-on:hover{background:rgba(var(--cyan-rgb),.2)}
 /* acquired cell: a styled checkbox (cyan accent), clicking it never toggles the row's qty */
-.bp-acq-cell{text-align:center;cursor:default}
+.bp-acq-cell{cursor:default}
 .bp-acq-cell input.bp-acq{width:16px;height:16px;cursor:pointer;accent-color:var(--cyan);vertical-align:middle}
 /* qty cell: external − / + steppers around the input, native spinners hidden */
 .bp-qcell{display:flex;align-items:center;gap:4px;cursor:default}
@@ -933,6 +933,10 @@ tr.editrow td{background:rgba(5,10,20,.7);padding:0}
 .mrow{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;line-height:1.5}
 .mrow .mk{flex:0 0 auto;min-width:120px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--ink-3)}
+/* The value column of an .mrow (e.g. per-ingredient sources): fill the rest of the row and wrap
+   INTERNALLY, so a wide value (a long "Mined on" chip block) never wraps below the .mk label and
+   loses its column-2 indentation. Mirrors .bp-srcs in the reward card. */
+.mrow-v{flex:1 1 0;min-width:0}
 .mels{display:flex;flex-wrap:wrap;gap:6px}
 .mn-el{font-family:var(--mono);font-size:11.5px;color:var(--ink-1);background:var(--panel-2);
   border:1px solid var(--line);border-radius:3px;padding:2px 7px}

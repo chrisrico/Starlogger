@@ -543,7 +543,7 @@ function planResultTpl(r) {
     const best = (p.rocks || []).slice(0, 3).map(x =>
       `${esc(x.name)} <span class="mn-dim">(RS ${num(x.rs)}${x.probability != null ? ", " + _chance(x.probability) : ""})</span>`).join("<br>");
     return `<div class="mrow"><span class="mk">${esc(p.mineral)}</span>
-      <div>${best || '<span class="mn-dim">no source found</span>'}${locChips(p.locations)}</div></div>`;
+      <div class="mrow-v">${best || '<span class="mn-dim">no source found</span>'}${locChips(p.locations)}</div></div>`;
   }).join("");
   const covTable = logTable(
     th("Deposit", false, "A rock deposit / cluster type you can mine") +
